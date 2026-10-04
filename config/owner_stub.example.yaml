@@ -1,0 +1,30 @@
+# TEMPORARY — replaced by resume upload in Module 5.
+#
+# Copy this file to owner_stub.yaml (same folder) and fill it in.
+# owner_stub.yaml is git-ignored, so your details never get committed.
+#
+# Module 1 uses it to judge big companies as a step up / lateral / step down
+# relative to YOUR career. Dates are "YYYY-MM" and must stay in quotes.
+
+name: "Your Name"
+location: "Bengaluru, India"
+
+# The field you build your career in. "Step-up brand" is judged within this
+# field (e.g. for analytics, Uber can beat Pfizer).
+career_field: "analytics / data science"
+
+current_role:
+  title: "Senior Associate"
+  company: "Current Company"
+  started: "2024-03"
+
+# Most recent first. Include your current job. end: null means "present".
+employment_history:
+  - company: "Current Company"
+    title: "Senior Associate"
+    start: "2024-03"
+    end: null
+  - company: "Previous Company"
+    title: "Analyst"
+    start: "2021-07"
+    end: "2024-02"

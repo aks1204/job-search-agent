@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job agent — console</title>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F6F7F5; --card:#FFFFFF; --ink:#1B211F; --sub:#5E6763; --faint:#8B938F;
+  --line:#E3E6E2; --line2:#CFD4D0;
+  --spruce:#152722; --spruce-2:#1D332C; --spruce-text:#C9D6CF; --spruce-dim:#7E948B;
+  --red:#B3382C; --red-bg:#F9ECEA;
+  --blue:#2F5FB3; --blue-bg:#EBF0F8;
+  --green:#2E7D4F; --green-bg:#EAF3EC;
+  --amber:#9A6A12; --amber-bg:#F7F0E0;
+  --r:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'Schibsted Grotesk',system-ui,sans-serif;background:var(--paper);color:var(--ink);font-size:14px;line-height:1.5}
+button{font:inherit;cursor:pointer;border:1px solid var(--line2);background:#fff;color:var(--ink);border-radius:8px;padding:5px 13px;font-size:12.5px;font-weight:500;transition:background .12s}
+button:hover{background:#F0F2EF}
+button.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+button.primary:hover{background:#31403B}
+button:focus-visible,a:focus-visible,.nav button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.app{display:flex;min-height:100vh}
+.side{width:212px;flex-shrink:0;background:var(--spruce);color:var(--spruce-text);padding:18px 10px;display:flex;flex-direction:column;gap:2px}
+.brand{padding:4px 12px 16px;font-weight:600;font-size:15px;color:#fff;letter-spacing:.2px}
+.brand small{display:block;font-weight:400;font-size:11px;color:var(--spruce-dim);margin-top:2px}
+.nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;border:none;color:var(--spruce-text);padding:8px 12px;border-radius:8px;font-size:13.5px;font-weight:400}
+.nav button:hover{background:var(--spruce-2)}
+.nav button.on{background:var(--spruce-2);color:#fff;font-weight:500}
+.nav .badge{margin-left:auto;font-size:11px;font-weight:600;padding:1px 7px;border-radius:99px}
+.badge.b-red{background:#C9564A;color:#fff}
+.badge.b-blue{background:#4A76C4;color:#fff}
+.side .foot{margin-top:auto;padding:10px 12px;font-size:11px;color:var(--spruce-dim);line-height:1.6}
+.main{flex:1;min-width:0;padding:26px 30px 60px;max-width:860px}
+.screen{display:none}.screen.on{display:block}
+h1{font-size:19px;font-weight:600;margin-bottom:2px}
+.sub{color:var(--sub);font-size:13px;margin-bottom:18px}
+.tabs{display:flex;gap:4px;margin:14px 0 14px;flex-wrap:wrap}
+.tabs button{border:none;background:none;color:var(--sub);padding:6px 13px;border-radius:8px;font-weight:500}
+.tabs button.on{background:#E7EBE7;color:var(--ink)}
+.tabs button:hover{background:#EDF0ED}
+.card{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--line2);border-radius:0 var(--r) var(--r) 0;padding:12px 14px;margin-bottom:9px}
+.card.s-blue{border-left-color:var(--blue)}
+.card.s-red{border-left-color:var(--red)}
+.card.s-green{border-left-color:var(--green)}
+.card.s-none{border-left:1px solid var(--line);border-radius:var(--r)}
+.card .top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.card .ttl{font-weight:600;font-size:14px}
+.card .score{font-weight:600;font-size:14px;color:var(--ink)}
+.card .det{color:var(--sub);font-size:12.5px;margin-top:2px}
+.card .act{margin-top:9px;display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.chip{font-size:11.5px;font-weight:600;padding:2px 10px;border-radius:99px;white-space:nowrap}
+.ch-red{background:var(--red-bg);color:var(--red)}
+.ch-blue{background:var(--blue-bg);color:var(--blue)}
+.ch-green{background:var(--green-bg);color:var(--green)}
+.ch-amber{background:var(--amber-bg);color:var(--amber)}
+.ch-gray{background:#EEF0ED;color:var(--sub)}
+.row{display:flex;justify-content:space-between;align-items:center;padding:9px 2px;border-bottom:1px solid var(--line);gap:10px}
+.row:last-child{border-bottom:none}
+.sect{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin-bottom:14px}
+.sect h3{font-size:12px;font-weight:600;color:var(--faint);letter-spacing:.05em;margin-bottom:8px}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.kv:last-child{border-bottom:none}
+.kv .k{color:var(--sub)}
+.note{font-size:12px;color:var(--faint);margin-top:8px}
+.toggle{position:relative;width:36px;height:20px;border-radius:99px;background:#D6DAD6;border:none;padding:0;flex-shrink:0}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s}
+.toggle.on{background:var(--green)}
+.toggle.on::after{left:18px}
+.qbar{height:5px;border-radius:99px;background:#E7EAE6;overflow:hidden;flex:1;max-width:130px}
+.qbar i{display:block;height:100%;background:var(--green)}
+.mailbtn{border:none;background:none;color:var(--blue);font-weight:500;padding:0;font-size:12.5px}
+.mailbtn:hover{text-decoration:underline;background:none}
+.draftbox{background:#FBFCFA;border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;font-size:13px;line-height:1.65;margin:10px 0}
+.draftbox .hdr{font-size:12px;color:var(--sub);border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:10px}
+.stepper{display:flex;align-items:center;gap:10px;margin:12px 0 4px}
+.filters{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.filters button{font-size:12px;padding:4px 11px;border-radius:99px}
+.filters button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.empty{color:var(--faint);font-size:13px;padding:22px 4px;text-align:center}
+.topbar{display:none}
+@media (max-width:880px){
+  .app{flex-direction:column}
+  .side{width:100%;flex-direction:row;align-items:center;overflow-x:auto;padding:8px 10px;gap:4px}
+  .brand{padding:0 10px;white-space:nowrap}
+  .brand small{display:none}
+  .nav{display:flex;gap:2px}
+  .nav button{white-space:nowrap;padding:7px 11px}
+  .side .foot{display:none}
+  .main{padding:18px 14px 50px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">Job agent<small>self-hosted · running 24/7</small></div>
+    <nav class="nav" id="nav" aria-label="Screens">
+      <button data-s="jobs" class="on">Jobs <span class="badge b-blue" id="bJobs">4</span></button>
+      <button data-s="review">Review <span class="badge b-red" id="bRev">5</span></button>
+      <button data-s="companies">Companies</button>
+      <button data-s="profile">Profile</button>
+      <button data-s="memory">Memory</button>
+      <button data-s="audit">Audit log</button>
+      <button data-s="settings">Settings</button>
+    </nav>
+    <div class="foot">Last sync 19:42 · all sources healthy<br>Next summary mail 20:00</div>
+  </aside>
+  <main class="main">
+<!-- JOBS -->
+<section class="screen on" id="s-jobs">
+  <h1>Jobs</h1>
+  <div class="sub">Scored openings from your watched companies</div>
+  <div class="tabs" id="jobTabs">
+    <button data-t="inbox" class="on">Inbox <span id="cInbox">3</span></button>
+    <button data-t="fast">Fast lane 1</button>
+    <button data-t="maybe">Maybe 34</button>
+    <button data-t="applied">Applied 3</button>
+  </div>
+
+  <div class="jt" id="jt-inbox">
+    <div class="card s-blue" id="job-uber">
+      <div class="top"><span class="ttl">Senior Analyst · Uber</span><span class="score">78</span></div>
+      <div class="det">Lateral, step-up brand · flag: hours confirm · comp unverified</div>
+      <div class="act"><button onclick="draftOutreach('job-uber','Uber')">Draft outreach</button><button onclick="skipJob('job-uber')">Skip</button></div>
+    </div>
+    <div class="card s-blue" id="job-fin">
+      <div class="top"><span class="ttl">Strategy Associate · Nimbus (fintech, seed)</span><span class="score">71</span></div>
+      <div class="det">Progression family · services-flavored (−10) · comp unverified</div>
+      <div class="act"><button onclick="draftOutreach('job-fin','Nimbus')">Draft outreach</button><button onclick="skipJob('job-fin')">Skip</button></div>
+    </div>
+    <div class="card s-blue" id="job-groww">
+      <div class="top"><span class="ttl">Data Analyst · Groww</span><span class="score">67</span></div>
+      <div class="det">Lateral · senior-level ✓ · brand: domain step-up (marginal)</div>
+      <div class="act"><button onclick="draftOutreach('job-groww','Groww')">Draft outreach</button><button onclick="skipJob('job-groww')">Skip</button></div>
+    </div>
+  </div>
+
+  <div class="jt" id="jt-fast" style="display:none">
+    <div class="card s-red">
+      <div class="top"><span class="ttl">Sr. Product Analyst · Cascade AI</span><span class="score">91</span></div>
+      <div class="det">Progression family · comp +45% est. · remote, 3h PST overlap · drafts auto-prepared</div>
+      <div class="act"><span class="chip ch-red">5 drafts awaiting review</span><button class="primary" onclick="go('review')">Review drafts</button></div>
+    </div>
+  </div>
+
+  <div class="jt" id="jt-maybe" style="display:none">
+    <div class="card s-none"><div class="top"><span class="ttl">Business Analyst · Meesho</span><span class="score">58</span></div><div class="det">Lateral, brand comparable · not senior-level</div><div class="act"><button onclick="rescue(this)">Move to Inbox</button></div></div>
+    <div class="card s-none"><div class="top"><span class="ttl">Analytics Consultant · Tiger Analytics</span><span class="score">52</span></div><div class="det">Services-flavored (−10) · mid-tier brand</div><div class="act"><button onclick="rescue(this)">Move to Inbox</button></div></div>
+    <div class="card s-none"><div class="top"><span class="ttl">Product Analyst · early-stage stealth</span><span class="score">49</span></div><div class="det">Progression family · viability unverified</div><div class="act"><button onclick="rescue(this)">Move to Inbox</button></div></div>
+    <div class="empty">+31 more · thumbs-up here teaches the scorer</div>
+  </div>
+
+  <div class="jt" id="jt-applied" style="display:none">
+    <div class="card s-green"><div class="top"><span class="ttl">Sr. Product Analyst · Cascade AI</span><span class="chip ch-green">conversation live</span></div><div class="det">Applied 26 Aug ✓ confirmed · Priya replied — interested · your move</div><div class="act"><button class="mailbtn">Open thread in Gmail</button></div></div>
+    <div class="card s-green"><div class="top"><span class="ttl">Senior Analyst · Razorpay</span><span class="chip ch-blue">in review · day 6</span></div><div class="det">Applied 24 Aug ✓ confirmed · outreach: wave 3 done, no replies</div></div>
+    <div class="card s-green"><div class="top"><span class="ttl">Data Platform Analyst · Groww</span><span class="chip ch-gray">silent · 12 days</span></div><div class="det">Applied 18 Aug ✓ confirmed · campaign complete, 5 delivered</div></div>
+  </div>
+</section>
+
+<!-- REVIEW -->
+<section class="screen" id="s-review">
+  <h1>Review</h1>
+  <div class="sub">Every email needs your approval before it sends</div>
+  <div class="card s-red">
+    <div class="top"><span class="ttl">Sr. Product Analyst · Cascade AI — outreach campaign</span><span class="chip ch-red" id="revLeft">5 pending</span></div>
+    <div class="det">One draft, name-swapped per recipient · waves: day 0 (2) · day 1 (2) · day 2 (1) · resume attached: Resume_AK.pdf</div>
+  </div>
+  <div class="stepper">
+    <button onclick="stepDraft(-1)" aria-label="Previous draft">←</button>
+    <span id="stepLbl" style="font-weight:600;font-size:13px">Draft 1 of 5 — Arjun (co-founder) · wave 1</span>
+    <button onclick="stepDraft(1)" aria-label="Next draft">→</button>
+  </div>
+  <div class="draftbox">
+    <div class="hdr">To: <span id="dTo">arjun@cascade.dev</span> · Subject: Sr. Product Analyst (REQ-4521) — analytics + AI background from ZS · 📎 Resume_AK.pdf</div>
+    <div>Hi <b id="dName">Arjun</b>,</div><br>
+    <div>I applied to the Senior Product Analyst role this morning — reaching out directly because the overlap with my background is unusually specific.</div><br>
+    <div>At ZS I've spent 2+ years building decision-analytics pipelines end to end; Cascade's posting asks for exactly that, and while I haven't shipped product analytics per se, my pipeline work covers the hard half of it. Your debugging-for-ML-teams problem is the kind of data problem I want to own.</div><br>
+    <div>Could we find 15 minutes this week? My application is in under REQ-4521.</div><br>
+    <div>— Aman</div>
+  </div>
+  <div class="act" style="display:flex;gap:8px;align-items:center">
+    <button class="primary" id="apprBtn" onclick="approveDraft()">Approve this email</button>
+    <button>Edit</button><button>Skip recipient</button>
+    <span class="note" id="apprNote">0 of 5 approved · waves start when all reviewed</span>
+  </div>
+</section>
+<!-- COMPANIES -->
+<section class="screen" id="s-companies">
+  <h1>Companies</h1>
+  <div class="sub">The living watchlist — grown by scouts, pruned by gardening</div>
+  <div class="sect"><h3>WATCHLIST · 47 ACTIVE</h3>
+    <div class="row"><div><b>Cascade AI</b> <span class="note">seed · 18 ppl · via YC scout</span></div><div style="display:flex;gap:8px;align-items:center"><span class="chip ch-green">active · 6-hourly</span><span class="chip ch-blue">lever ✓</span></div></div>
+    <div class="row"><div><b>Uber</b> <span class="note">MNC · seed list</span></div><div style="display:flex;gap:8px"><span class="chip ch-green">active · 6-hourly</span><span class="chip ch-blue">adapter ✓</span></div></div>
+    <div class="row"><div><b>Zamp</b> <span class="note">series A · via aggregator scout</span></div><div style="display:flex;gap:8px"><span class="chip ch-green">active</span><span class="chip ch-blue">ashby ✓</span></div></div>
+    <div class="row"><div><b>Nimbus</b> <span class="note">seed · via HN scout · contact captured</span></div><div style="display:flex;gap:8px"><span class="chip ch-amber">demoted · weekly</span></div></div>
+    <div class="row"><div><b>OldCo Labs</b> <span class="note">90-day silent</span></div><div><span class="chip ch-gray">archived</span></div></div>
+  </div>
+  <div class="sect"><h3>RECENT VERDICTS · TAP TO OVERRIDE</h3>
+    <div class="row"><div><b>Passed — Cascade AI</b><div class="note">novelty: "differentiated ML-infra problem" · viability: raised Mar 2026</div></div><button onclick="override(this,'rejected')">Override → reject</button></div>
+    <div class="row"><div><b>Rejected — Foodster</b><div class="note">category blocklist: food delivery · 0 LLM calls spent</div></div><button onclick="override(this,'passed')">Override → pass</button></div>
+    <div class="row"><div><b>Rejected — BrightCRM</b><div class="note">novelty borderline → your reject-when-unsure policy</div></div><button onclick="override(this,'passed')">Override → pass</button></div>
+  </div>
+  <div class="note">Overrides become precedents — future judgments learn your taste.</div>
+</section>
+
+<!-- PROFILE -->
+<section class="screen" id="s-profile">
+  <h1>Aman K.</h1>
+  <div class="sub">New Delhi, IN · aman@gmail.com ✓ · linkedin/in/amank · github/amank</div>
+  <div class="sect" style="display:flex;justify-content:space-between;align-items:center">
+    <div><b>Resume_AK.pdf</b><div class="note">uploaded 12 Jun 2026 · parsed ✓ · PDF only</div></div>
+    <button>Replace</button>
+  </div>
+  <div class="sect"><h3>EMPLOYMENT HISTORY · DRIVES BRAND &amp; LADDER RULES</h3>
+    <div class="kv"><span><b>ZS Associates</b> — Sr. Analyst, Decision Analytics</span><span>Mar 2026 – now · <b>tenure 6 mo · current rung</b></span></div>
+    <div class="kv"><span><b>ZS Associates</b> — Decision Analytics Associate</span><span>Jul 2024 – Mar 2026 · promoted ↑</span></div>
+    <div class="kv"><span><b>DataCo Analytics</b> — Data Analyst Intern</span><span>Jan – Jun 2024</span></div>
+  </div>
+  <div class="sect"><h3>POWERS YOUR RULES</h3>
+    <div class="kv"><span class="k">Current compensation</span><span>₹ ···· L <span class="chip ch-blue">confirmed 2 mo ago</span></span></div>
+    <div class="kv"><span class="k">Work authorization</span><span>India citizen · no sponsorship needed</span></div>
+    <div class="kv"><span class="k">Notice period</span><span>60 days <span class="chip ch-red">confirm — 7 mo old</span></span></div>
+  </div>
+  <div class="sect"><h3>CAREER DIRECTION PROFILE · DERIVED, YOUR OVERRIDES PERSIST</h3>
+    <div class="kv"><span class="k">Progression families</span><span>Product Analyst · Strategy/BizOps · Founder's Office · AI-Analytics</span></div>
+    <div class="kv"><span class="k">Lateral families</span><span>Data/Business Analyst — senior-level + step-up brand only</span></div>
+    <div class="kv"><span class="k">Excluded</span><span>Reporting-only · QA · pure engineering · manager+ (no track jump)</span></div>
+    <div class="kv"><span class="k">Lateral appetite</span><span>Full strength (fresh promotion, 6 mo tenure)</span></div>
+  </div>
+</section>
+
+<!-- MEMORY -->
+<section class="screen" id="s-memory">
+  <h1>Memory</h1>
+  <div class="sub">Everything learned since day one — edit, pin, or forget any of it</div>
+  <div class="sect"><h3>ANSWERS · ASKED AT MOST ONCE, EVER</h3>
+    <div class="row" id="m1"><div><b>Expected annual CTC</b><div class="note">₹28–32 L dep. on equity · learned 14 Sep · used 7×</div></div><div style="display:flex;gap:6px"><button>Edit</button><button onclick="forget('m1')">Forget</button></div></div>
+    <div class="row" id="m2"><div><b>Open to relocation</b><div class="note">No, remote or Delhi NCR · learned 2 Oct · used 3×</div></div><div style="display:flex;gap:6px"><button>Edit</button><button onclick="forget('m2')">Forget</button></div></div>
+  </div>
+  <div class="sect"><h3>PRECEDENTS · YOUR JUDGMENT, REMEMBERED</h3>
+    <div class="row" id="m3"><div><b>Uber &gt; Pfizer for analytics careers</b><div class="note">from verdict override, 3 Aug · injected into brand judgments</div></div><button onclick="forget('m3')">Forget</button></div>
+    <div class="row" id="m4"><div><b>"AI CRM clones" ≠ novel</b><div class="note">from thumbs-down ×3 · injected into novelty judgments</div></div><button onclick="forget('m4')">Forget</button></div>
+  </div>
+  <div class="sect"><h3>TASTE SIGNALS · DECAY OVER TIME</h3>
+    <div class="row"><div><b>Skips MNC laterals when startup progression available</b><div class="note">aggregate of 6 skips · weight: brand ↓ trajectory ↑ (logged 11 Aug)</div></div><span class="chip ch-gray">auto</span></div>
+  </div>
+</section>
+<!-- AUDIT -->
+<section class="screen" id="s-audit">
+  <h1>Audit log</h1>
+  <div class="sub">A newspaper, not an inbox — nothing here ever demands you</div>
+  <div class="filters" id="audF">
+    <button data-f="all" class="on">All</button>
+    <button data-f="verdict">Verdicts</button>
+    <button data-f="send">Outreach</button>
+    <button data-f="sys">Housekeeping</button>
+  </div>
+  <div class="sect" id="audList">
+    <div class="row" data-k="send"><div>19:41 · <b>Wave 2 sent — Zamp</b><div class="note">Meera (TA) 14:12, Karan (mgr) 15:38 · staggered · no replies yet</div></div><span class="chip ch-green">done</span></div>
+    <div class="row" data-k="send"><div>14:37 · <b>Reply classified — Cascade AI</b><div class="note">Priya → interested (confidence .93) · 3 pending sends cancelled</div></div><span class="chip ch-green">done</span></div>
+    <div class="row" data-k="verdict"><div>11:02 · <b>Passed — Zamp</b><div class="note">viability: hiring ✓ · novelty: cross-border payments infra "differentiated"</div></div><button style="font-size:11.5px;padding:3px 10px">Override</button></div>
+    <div class="row" data-k="verdict"><div>10:58 · <b>Rejected — Foodster</b><div class="note">category blocklist: food delivery · deterministic, 0 LLM calls</div></div><button style="font-size:11.5px;padding:3px 10px">Override</button></div>
+    <div class="row" data-k="sys"><div>06:00 · <b>Contact sweep</b><div class="note">41 checked · 1 refreshed (R. Mehta left Curefit → A. Sharma found)</div></div><span class="chip ch-gray">auto</span></div>
+    <div class="row" data-k="sys"><div>Yesterday · <b>Bounce breaker self-resolved</b><div class="note">2 bounces → queue re-verified via MyEmailVerifier → resumed 20:40</div></div><span class="chip ch-gray">auto</span></div>
+    <div class="row" data-k="sys"><div>Yesterday · <b>Fact card refreshed — Nimbus</b><div class="note">gardening slow lane · no rule-relevant change → verdict stands</div></div><span class="chip ch-gray">auto</span></div>
+  </div>
+</section>
+
+<!-- SETTINGS -->
+<section class="screen" id="s-settings">
+  <h1>Settings</h1>
+  <div class="sub">Rhythms, keys, and rules — no buried state</div>
+  <div class="sect"><h3>SUMMARY MAIL</h3>
+    <div class="kv"><span class="k">Twice daily</span><span>08:00 · 20:00 IST</span></div>
+    <div class="kv"><span class="k">Quiet-day behavior</span><span>Send short "all quiet" note</span></div>
+  </div>
+  <div class="sect"><h3>REAL-TIME PINGS</h3>
+    <div class="kv"><span class="k">Fast-lane finds</span><button class="toggle on" onclick="this.classList.toggle('on')" aria-label="Toggle fast-lane pings"></button></div>
+    <div class="kv"><span class="k">Recruiter replies</span><button class="toggle on" onclick="this.classList.toggle('on')" aria-label="Toggle reply pings"></button></div>
+    <div class="kv"><span class="k">Quiet hours</span><span>22:00 – 08:00 · queued to morning</span></div>
+  </div>
+  <div class="sect"><h3>API KEYS · POOLED FREE TIERS</h3>
+    <div class="kv"><span class="k">Anthropic (LLM) — required</span><span style="display:flex;gap:8px;align-items:center">sk-ant-···9f2 <span class="chip ch-green">healthy</span></span></div>
+    <div class="kv"><span class="k">Brave Search</span><span style="display:flex;gap:8px;align-items:center;flex:1;justify-content:flex-end"><span class="qbar"><i style="width:23%"></i></span><span class="note">460/2000</span></span></div>
+    <div class="kv"><span class="k">FinalScout</span><span style="display:flex;gap:8px;align-items:center;flex:1;justify-content:flex-end"><span class="qbar"><i style="width:61%"></i></span><span class="note">61% used</span></span></div>
+    <div class="kv"><span class="k">Hunter · Apollo</span><span class="note">reserve pool · untouched this month</span></div>
+    <div class="kv"><span class="k">MyEmailVerifier</span><span style="display:flex;gap:8px;align-items:center;flex:1;justify-content:flex-end"><span class="qbar"><i style="width:12%"></i></span><span class="note">12/100 today</span></span></div>
+  </div>
+  <div class="sect"><h3>RULES · LOCKED IN REPO, READ-ONLY HERE</h3>
+    <div class="kv"><span class="k">company_rules.yaml</span><button>View</button></div>
+    <div class="kv"><span class="k">job_rules.yaml</span><button>View</button></div>
+    <div class="note">Edit the files and restart to change — a deliberate act, no accidental drift.</div>
+  </div>
+  <div class="sect"><h3>YOUR DATA</h3>
+    <div class="kv"><span class="k">Everything lives in your Postgres</span><span style="display:flex;gap:8px"><button>Export all</button><button style="color:var(--red);border-color:var(--red)">Delete all</button></span></div>
+  </div>
+</section>
+
+</main>
+</div>
+<script>
+const drafts=[
+ {n:"Arjun",e:"arjun@cascade.dev",r:"co-founder",w:1},
+ {n:"Priya",e:"priya@cascade.dev",r:"early recruiter",w:1},
+ {n:"Meera",e:"meera.s@cascade.dev",r:"TA",w:2},
+ {n:"Dev",e:"dev.k@cascade.dev",r:"TA",w:2},
+ {n:"Sana",e:"sana@cascade.dev",r:"ops",w:3}];
+let di=0, approved=new Set();
+function go(s){
+ document.querySelectorAll('.screen').forEach(x=>x.classList.remove('on'));
+ document.getElementById('s-'+s).classList.add('on');
+ document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));
+ window.scrollTo({top:0});
+}
+document.getElementById('nav').addEventListener('click',e=>{const b=e.target.closest('button');if(b)go(b.dataset.s)});
+document.getElementById('jobTabs').addEventListener('click',e=>{
+ const b=e.target.closest('button');if(!b)return;
+ document.querySelectorAll('#jobTabs button').forEach(x=>x.classList.toggle('on',x===b));
+ document.querySelectorAll('.jt').forEach(x=>x.style.display='none');
+ document.getElementById('jt-'+b.dataset.t).style.display='block';
+});
+function renderDraft(){
+ const d=drafts[di];
+ document.getElementById('stepLbl').textContent=`Draft ${di+1} of 5 — ${d.n} (${d.r}) · wave ${d.w}`;
+ document.getElementById('dTo').textContent=d.e;
+ document.getElementById('dName').textContent=d.n;
+ const done=approved.has(di);
+ const btn=document.getElementById('apprBtn');
+ btn.textContent=done?'Approved ✓':'Approve this email';
+ btn.disabled=done;
+ btn.style.opacity=done?0.55:1;
+}
+function stepDraft(k){di=(di+k+5)%5;renderDraft()}
+function approveDraft(){
+ approved.add(di);
+ const left=5-approved.size;
+ document.getElementById('revLeft').textContent=left?left+' pending':'campaign armed ✓';
+ document.getElementById('revLeft').className='chip '+(left?'ch-red':'ch-green');
+ document.getElementById('apprNote').textContent=left?`${approved.size} of 5 approved · waves start when all reviewed`:'All 5 approved — wave 1 sends today, waves 2–3 on day 1 and 2. Any reply cancels the rest.';
+ document.getElementById('bRev').textContent=left||'';
+ if(!left)document.getElementById('bRev').style.display='none';
+ if(left){stepDraft(1)}else{renderDraft()}
+ renderDraft();
+}
+function draftOutreach(id,co){
+ const c=document.getElementById(id);
+ c.querySelector('.act').innerHTML='<span class="chip ch-amber">preparing drafts — bench + verification running</span><span class="note">they will land in Review (and your next summary mail)</span>';
+ c.classList.remove('s-blue');c.classList.add('s-red');
+}
+function skipJob(id){
+ const c=document.getElementById(id);c.style.opacity=.35;
+ c.querySelector('.act').innerHTML='<span class="note">Skipped — tap a reason to teach the scorer:</span><button onclick="taught(this)">wrong seniority</button><button onclick="taught(this)">wrong domain</button><button onclick="taught(this)">bad company</button>';
+ const n=document.getElementById('cInbox');n.textContent=Math.max(0,+n.textContent-1);
+ const bj=document.getElementById('bJobs');bj.textContent=Math.max(0,+bj.textContent-1);
+}
+function taught(b){b.parentElement.innerHTML='<span class="chip ch-gray">noted — feeds weight tuning</span>'}
+function rescue(b){const c=b.closest('.card');c.querySelector('.act').innerHTML='<span class="chip ch-blue">moved to Inbox — strong teaching signal ✓</span>';c.classList.remove('s-none');c.classList.add('s-blue')}
+function override(b,to){const r=b.closest('.row');b.outerHTML=`<span class="chip ${to==='passed'?'ch-green':'ch-red'}">overridden → ${to} · precedent stored</span>`}
+function forget(id){const r=document.getElementById(id);r.style.transition='opacity .2s';r.style.opacity=0;setTimeout(()=>r.remove(),220)}
+document.getElementById('audF').addEventListener('click',e=>{
+ const b=e.target.closest('button');if(!b)return;
+ document.querySelectorAll('#audF button').forEach(x=>x.classList.toggle('on',x===b));
+ document.querySelectorAll('#audList .row').forEach(r=>{r.style.display=(b.dataset.f==='all'||r.dataset.k===b.dataset.f)?'flex':'none'});
+});
+renderDraft();
+</script>
+</body>
+</html>

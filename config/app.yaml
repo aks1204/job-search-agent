@@ -1,0 +1,13 @@
+# Platform settings. Read-only in the dashboard: edit this file, then restart.
+# Keep times QUOTED — unquoted 22:00 is parsed by YAML as a number.
+
+timezone: "Asia/Kolkata"
+
+quiet_hours:
+  start: "22:00"
+  end: "08:00"
+
+summary_mail_times: ["08:00", "20:00"]
+
+# How often the scheduler proves it is alive (seconds).
+heartbeat_interval_seconds: 60

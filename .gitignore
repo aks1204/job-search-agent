@@ -1,0 +1,9 @@
+.env
+config/owner_stub.yaml
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+node_modules/
+.next/
+*.bundle
