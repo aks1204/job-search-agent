@@ -76,10 +76,16 @@ services:
       redis:
         condition: service_healthy
 
-  # The scheduler: this is what makes the agent run unattended.
+  # The scheduler: this is what makes the agent run unattended. Its "last ran at" notes live on a
+  # volume, so a restart doesn't reset the timers and a daily run missed while the host was asleep
+  # happens as soon as it's back.
   beat:
     <<: *backend
-    command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=info", "--schedule", "/tmp/celerybeat-schedule"]
+    command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=info",
+              "--schedule", "/var/lib/job-agent/celerybeat-schedule"]
+    volumes:
+      - ./config:/config:ro
+      - beatstate:/var/lib/job-agent
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -89,3 +95,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  beatstate:

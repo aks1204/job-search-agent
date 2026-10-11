@@ -8,8 +8,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     EMBEDDING_CACHE_DIR=/opt/models
 
 RUN useradd --create-home --uid 1000 app \
- && mkdir -p /opt/models \
- && chown app:app /opt/models
+ && mkdir -p /opt/models /var/lib/job-agent \
+ && chown app:app /opt/models /var/lib/job-agent
 
 WORKDIR /app
 COPY requirements.txt requirements-dev.txt ./
