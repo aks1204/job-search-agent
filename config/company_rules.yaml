@@ -38,6 +38,11 @@ startup:
     approach (new technology, an underserved domain, a defensible insight). Reject the
     Nth clone of an existing category with no visible differentiation. When torn, call
     it borderline.
+  # Proven scale-ups (owner decision 2026-10-11): a startup this big is judged like an
+  # established company — on brand/growth vs. your career — so the novelty test and the
+  # category blocklist don't apply (e.g. Urban Company, Zepto, Razorpay).
+  scaleups_as_established: true
+  scaleup_sizes: ["1001-10000", "10000+"]     # employee-count buckets that count as scaled
 
 established:
   # AI compares the company with the owner's employment history (owner_stub.yaml).

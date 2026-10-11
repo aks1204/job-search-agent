@@ -30,6 +30,13 @@ companies:
   - {name: "Asian Paints", domain: "asianpaints.com", type: established}
   - {name: "Maruti Suzuki", domain: "marutisuzuki.com", type: established}
 
+  # Large consumer-internet companies. Judged as established (brand vs. your career):
+  # the category blocklist targets small clones, not companies of this scale.
+  - {name: "Swiggy", domain: "swiggy.com", type: established}
+  - {name: "Nykaa", domain: "nykaa.com", type: established}
+  - {name: "Zepto", domain: "zeptonow.com", type: established}
+  - {name: "Lenskart", domain: "lenskart.com", type: established}
+
   # Listed Indian tech product companies
   - {name: "Freshworks", domain: "freshworks.com", type: established}
   - {name: "Zoho", domain: "zoho.com", type: established}

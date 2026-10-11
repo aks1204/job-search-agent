@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
 from app.core import audit
-from app.models.company import STATUS_CANDIDATE, STATUS_REJECTED, Company
+from app.models.company import STATUS_BLOCKED, STATUS_CANDIDATE, STATUS_REJECTED, Company
 from app.modules.m1_companies.checks import SECTION_OF
+from app.modules.m1_companies.facts import fact_card, value
 from app.modules.m1_companies.override import latest_verdict
 
 # Fresh sightings from these scouts are hiring signals.
@@ -72,10 +73,19 @@ def check_rules_changes(session: Session) -> Counter:
     cfg = get_config()
     current = {s: cfg.rules_section_version(s) for s in ("shared", "startup", "established")}
     counts: Counter = Counter()
-    for company in session.scalars(select(Company).where(Company.status == STATUS_REJECTED)).all():
+    scaleup_sizes = cfg.rules.startup.scaleup_sizes if cfg.rules.startup.scaleups_as_established else []
+    for company in session.scalars(
+        select(Company).where(Company.status.in_((STATUS_REJECTED, STATUS_BLOCKED)))
+    ).all():
         verdict = latest_verdict(session, company.id)
-        if verdict is None or verdict.permanent or verdict.decided_by != "machine":
-            continue
+        if verdict is None or verdict.decided_by != "machine":
+            continue  # owner decisions are never auto-revived
+        if verdict.permanent:
+            # Blocklist rejections are permanent — except that the owner's scale-up rule (2026-10-11)
+            # was written precisely for big companies in blocked categories; give those one re-check.
+            size = value(fact_card(session, company.id), "employee_estimate")
+            if not (verdict.failed_check == "category_blocklist" and size in scaleup_sizes):
+                continue
         section = SECTION_OF.get(verdict.failed_check or "")
         if section and verdict.rules_versions.get(section) != current[section]:
             _requeue(session, company, "rules_change", f"the '{section}' rules changed")

@@ -1,8 +1,9 @@
 name: "Indian unicorns & late-stage startups"
 description: >-
-  Well-funded Indian startups, judged by the startup rules (viability + novelty).
-  Food delivery, quick commerce and pure e-commerce players are left out: your
-  category blocklist rejects them instantly.
+  Well-funded Indian startups. Small ones are judged by the startup rules (viability +
+  novelty); proven scale-ups (1,000+ staff) are judged like established companies on
+  brand vs. your career (company_rules.yaml → startup.scaleups_as_established).
+  Very large consumer players (Swiggy, Zepto, Nykaa, Lenskart) live in india_large.
 companies:
   # Fintech
   - {name: "Razorpay", domain: "razorpay.com", type: startup}

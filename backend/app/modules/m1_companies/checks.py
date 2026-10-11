@@ -14,6 +14,7 @@ SECTION_OF = {
     "viability": "startup",
     "novelty": "startup",
     "brand": "established",
+    "scaleup": "startup",
 }
 
 # Feeder tags that mark a B2B business even when a blocklist keyword also appears

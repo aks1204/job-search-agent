@@ -115,6 +115,31 @@ def test_established_brand_judgment(db_session, http, direction, passed):
     assert [p for _, p in llm.calls] == ["m1.extract_knowledge", "m1.judge_brand"]  # MNCs: no website scrape
 
 
+def test_scaled_startup_in_blocked_category_is_judged_on_brand(db_session, http):
+    """Urban-Company/Zepto case: a 1,000+-person startup isn't blocklisted or novelty-tested."""
+    owner = get_config().owner
+    if owner is None or owner.placeholder_fields():
+        pytest.skip("needs a filled-in config/owner_stub.yaml")
+    company = _new(db_session, "Quickcart", "quickcart-test.in", scout="seeds", type_hint="startup", data={})
+    llm = FakeLLM(
+        CompanyProfile=profile(blocklisted_category="quick_commerce", employee_estimate="1001-10000",
+                               company_stage="startup"),
+        BrandJudgment=BrandJudgment(direction="up", reasoning="Large, fast-growing.", one_liner="Quick commerce"),
+    )
+    v = evaluate(db_session, company, llm=llm, http=http)
+    assert v.passed and v.profile == "established"
+    assert any(c["name"] == "scaleup" for c in v.checks)
+    assert "category_blocklist" not in {c["name"] for c in v.checks}
+    assert [p for _, p in llm.calls] == ["m1.extract_website", "m1.judge_brand"]
+
+
+def test_small_startup_in_blocked_category_is_still_blocked(db_session, http):
+    company = _new(db_session, "Tinycart", "tinycart-test.in", scout="seeds", type_hint="startup", data={})
+    llm = FakeLLM(CompanyProfile=profile(blocklisted_category="quick_commerce", employee_estimate="11-50"))
+    v = evaluate(db_session, company, llm=llm, http=http)
+    assert v.failed_check == "category_blocklist" and v.permanent
+
+
 def test_override_flips_status_and_becomes_a_precedent_used_next_time(db_session, http):
     company = _new(db_session, "Clonely", "clonely-test.io")
     evaluate(db_session, company, llm=FakeLLM(CompanyProfile=profile(), NoveltyJudgment=novelty("clone")), http=http)

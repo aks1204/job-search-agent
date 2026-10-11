@@ -224,6 +224,10 @@ class StartupRules(Strict):
     })
     novelty_borderline: PassOrReject = "reject"
     novelty_guidance: str = "Pass genuinely novel problems; reject undifferentiated clones."
+    # Proven scale-ups (owner decision 2026-10-11) are judged like established companies:
+    # on brand/growth vs. the owner's career, not on novelty or the category blocklist.
+    scaleups_as_established: bool = True
+    scaleup_sizes: list[str] = Field(default_factory=lambda: ["1001-10000", "10000+"])
 
 
 class EstablishedRules(Strict):

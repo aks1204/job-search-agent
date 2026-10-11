@@ -96,7 +96,7 @@ def _require_owner(cfg):
     return owner
 
 
-def _profile_for(company: Company, card: dict) -> str:
+def _base_profile(company: Company, card: dict) -> str:
     if company.type in ("startup", "established"):
         return company.type
     stage = value(card, "company_stage")
@@ -105,6 +105,16 @@ def _profile_for(company: Company, card: dict) -> str:
     if value(card, "employee_estimate") in ("1001-10000", "10000+"):
         return "established"
     return "startup"
+
+
+def _profile_for(company: Company, card: dict, rules) -> tuple[str, str | None]:
+    """(profile, why a startup is judged as established — or None)."""
+    profile = _base_profile(company, card)
+    if profile == "startup" and rules.startup.scaleups_as_established:
+        size = value(card, "employee_estimate")
+        if size in rules.startup.scaleup_sizes:
+            return "established", f"proven scale-up ({size} employees): judged on brand, not novelty/blocklist"
+    return profile, None
 
 
 def _feeder_tags(company: Company) -> list[str]:
@@ -154,7 +164,7 @@ def evaluate(
         company.status = STATUS_PASSED if passed else (STATUS_BLOCKED if verdict.permanent else STATUS_REJECTED)
         company.reeval_reason = None
         if company.type == "unknown":
-            company.type, company.type_source = profile, "evaluator"
+            company.type, company.type_source = profile, "evaluator"  # a scale-up keeps type "startup" if known
         audit.record(
             session, "m1", "company_verdict",
             f"{'Kept' if passed else 'Rejected'} {company.name}: {summary}",
@@ -168,7 +178,7 @@ def evaluate(
     # 1 — free: what the scouts already know.
     apply_feeder_facts(session, company)
     card = fact_card(session, company.id)
-    profile = _profile_for(company, card)
+    profile, _ = _profile_for(company, card, rules)
     if profile == "established":
         _require_owner(cfg)  # fail before spending anything
     if profile == "startup":
@@ -180,7 +190,9 @@ def evaluate(
     # 2 — enrich (one cheap AI read), then re-derive the profile from richer facts.
     enrich(session, company, llm=tracked_llm, http=http, profile=profile)
     card = fact_card(session, company.id)
-    profile = _profile_for(company, card)
+    profile, scaleup_note = _profile_for(company, card, rules)
+    if scaleup_note:
+        checks.append(C.Check("scaleup", "pass", scaleup_note))
 
     # 3 — shared checks.
     for check in (C.avoid_list(card, rules), C.geography(card, rules)):
