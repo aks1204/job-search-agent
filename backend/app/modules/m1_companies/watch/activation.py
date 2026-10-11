@@ -31,7 +31,7 @@ from app.modules.m1_companies.watch.sync import SyncResult, aggregator_jobs, syn
 log = logging.getLogger(__name__)
 
 # The ladder: public ATS endpoints → Workday / Oracle → per-company adapters → aggregator floor.
-LADDER = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "oracle", "adapter")
+LADDER = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "oracle", "eightfold", "adapter")
 GUESSABLE = ("greenhouse", "lever", "ashby", "smartrecruiters")
 
 
@@ -57,6 +57,13 @@ Give the board URLs you are confident about for THIS company (match the name and
 checked live, so never invent one. For Workday, the tenant and site name matter most
 (https://TENANT.wdN.myworkdayjobs.com/SITE); the server number N is corrected automatically if it has changed.
 Answer in the requested JSON format."""
+
+
+def _spec(hint: dict, company: Company) -> FeedSpec:
+    site = hint.get("site")
+    if hint["vendor"] == "eightfold":
+        site = company.domain  # Eightfold's search API is keyed by the employer's domain
+    return FeedSpec(hint["vendor"], hint["slug"], site, hint.get("host"))
 
 
 def _label(hint: dict) -> str:
@@ -101,13 +108,13 @@ def _candidates(company: Company, discovery: Discovery | None, *, llm=None, sess
                                    f"previous {previous.method}/{previous.slug}", source_rank=1))
     if discovery:
         for h in discovery.scan.ats_hints:
-            found.append(FeedCandidate(FeedSpec(h["vendor"], h["slug"], h.get("site"), h.get("host")),
+            found.append(FeedCandidate(_spec(h, company),
                                        discovery.on_company_site, f"{discovery.how}: {_label(h)}"))
     if company.domain in get_config().adapters:
         found.append(FeedCandidate(FeedSpec("adapter"), True, "community adapter", source_rank=1))
     if not any(c.linked_from_site for c in found):  # only pay for AI suggestions when the site gave us nothing
         for h in _ai_suggestions(company, llm, session, notes):
-            found.append(FeedCandidate(FeedSpec(h["vendor"], h["slug"], h.get("site"), h.get("host")), False,
+            found.append(FeedCandidate(_spec(h, company), False,
                                        f"AI-suggested {_label(h)}", source_rank=2))
     for vendor in GUESSABLE:  # last resort; skipped once a better candidate is confirmed
         for slug in slug_guesses(company):

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
 # Reading methods, cheapest reliable rung first (spec §1.5 step 2).
-METHODS = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "oracle", "adapter", "aggregator")
+METHODS = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "oracle", "eightfold", "adapter", "aggregator")
 
 
 class CompanyFeed(Base):

@@ -149,6 +149,58 @@ def test_oracle_reader_resolves_site_number_and_searches_roles(http):
     assert "siteNumber=CX_7" in sent and "findReqs;" in sent and "%22Data%20Analyst%22" in sent
 
 
+def test_template_snippets_are_not_vendor_links_but_vanity_oracle_is():
+    """Amex: a stale JS template mentions eightfold; the real board is Oracle on careers.americanexpress.com."""
+    from app.core.hosts import ats_hints_in, detect_vendors
+
+    page = ('<script>const u = `https://aexp.eightfold.ai/careers?location=${country}&query=${Title}`;</script>'
+            '<div data-apibaseurl="https://egug.fa.us2.oraclecloud.com:443" data-sitenumber="CX_1"></div>')
+    assert "eightfold" not in detect_vendors(page) and "oracle" in detect_vendors(page)
+    assert ats_hints_in(page) == [{"vendor": "oracle", "slug": "CX_1", "site": "CX_1", "host": "egug.fa.us2.oraclecloud.com"}]
+
+
+def test_eightfold_hint():
+    from app.core.hosts import ats_hint
+
+    assert ats_hint("https://morganstanley.eightfold.ai/careers") == {"vendor": "eightfold", "slug": "morganstanley"}
+
+
+def test_eightfold_reader_searches_india_then_anywhere(http):
+    client, mock = http
+    calls = []
+
+    def respond(request):
+        calls.append(dict(request.url.params))
+        pid = 1 if request.url.params["location"] == "India" else 2
+        return httpx.Response(200, json={"status": 200, "data": {"count": 1, "positions": [
+            {"id": 549796856000 + pid, "name": f"Data Analyst {pid}", "locations": ["Mumbai, India"],
+             "department": "Data", "positionUrl": f"/careers/job/{549796856000 + pid}", "postedTs": 1790000000}]}})
+
+    mock.get("https://morganstanley.eightfold.ai/api/pcsx/search").mock(side_effect=respond)
+    from app.modules.m1_companies.watch.readers import read_eightfold
+
+    r = read_eightfold(client, FeedSpec("eightfold", "morganstanley", "morganstanley.com"), ["Data Analyst"])
+
+    assert [c["location"] for c in calls] == ["India", ""]  # short pages → no second India page
+    assert all(c["domain"] == "morganstanley.com" for c in calls)
+    assert [j.url for j in r.jobs] == ["https://morganstanley.eightfold.ai/careers/job/549796856001",
+                                       "https://morganstanley.eightfold.ai/careers/job/549796856002"]
+
+
+def test_oracle_reader_with_known_site_number_skips_the_board_page(http):
+    import re
+
+    client, mock = http
+    host = "egug.fa.us2.oraclecloud.com"
+    searches = mock.get(url__regex=rf"https://{re.escape(host)}/hcmRestApi/.*").respond(json={"items": [
+        {"requisitionList": [{"Id": "26014446", "Title": "SrAnalyst Data Governance&Mgmt",
+                              "PrimaryLocation": "Bengaluru, KA, India"}]}]})
+    from app.modules.m1_companies.watch.readers import read_oracle
+
+    r = read_oracle(client, FeedSpec("oracle", "CX_1", "CX_1", host), ["Data Analyst"])
+    assert r.jobs[0].title == "SrAnalyst Data Governance&Mgmt" and searches.call_count == 1
+
+
 # --- careers discovery -----------------------------------------------------
 
 def test_scan_page_finds_job_links_and_ats():

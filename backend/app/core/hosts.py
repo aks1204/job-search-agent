@@ -60,7 +60,17 @@ _ATS_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("oracle", re.compile(
         r"^([a-z0-9-]+\.fa(?:\.[a-z0-9-]+)*\.oraclecloud\.com)/hcmUI/CandidateExperience/[a-z]{2}(?:-[a-z]{2})?/sites/([\w-]+)",
         re.I)),
+    ("eightfold", re.compile(r"^([\w-]+)\.eightfold\.ai/careers", re.I)),
 ]
+
+# Template-literal fragments in page scripts (e.g. "aexp.eightfold.ai/careers?location=${country}") are
+# code, not live links — on Amex's page that stale snippet named the wrong vendor. Drop them before scanning.
+_TEMPLATE_TOKEN = re.compile(r"[^\s\"'`<>]*\$\{[^}]*\}[^\s\"'`<>]*")
+
+# Oracle boards on a company's own (vanity) domain, e.g. careers.americanexpress.com/en/sites/CX_1/jobs,
+# name their real Oracle server and site number in data attributes.
+_ORACLE_API_BASE = re.compile(r'data-apibaseurl="https?://([a-z0-9.-]+\.oraclecloud\.com)', re.I)
+_ORACLE_SITE_NUMBER = re.compile(r'data-sitenumber="([\w-]+)"', re.I)
 
 # Path segments that look like slugs but aren't.
 _NOT_SLUGS = {"embed", "api", "js", "v0", "v1", "jobs", "careers", "job", "apply", "www", "app", "widget", "en-us"}
@@ -69,7 +79,8 @@ _NOT_SLUGS = {"embed", "api", "js", "v0", "v1", "jobs", "careers", "job", "apply
 ATS_URL = re.compile(
     # Scheme optional: server-rendered JSON sometimes carries bare hosts ("lilly.wd115.myworkdayjobs.com/LLY/…").
     r"(?<![\w.-])(?:(?:https?:)?//)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:greenhouse\.io|lever\.co|ashbyhq\.com|"
-    r"workable\.com|smartrecruiters\.com|recruitee\.com|myworkdayjobs\.com|oraclecloud\.com)(?:/[^\s\"'<>)\\]*)?",
+    r"workable\.com|smartrecruiters\.com|recruitee\.com|myworkdayjobs\.com|oraclecloud\.com|eightfold\.ai)"
+    r"(?:/[^\s\"'<>)\\]*)?",
     re.I,
 )
 
@@ -83,7 +94,7 @@ VENDOR_SIGNATURES: dict[str, re.Pattern] = {name: re.compile(p, re.I) for name, 
     "workable": r"apply\.workable\.com/",
     "recruitee": r"[\w-]+\.recruitee\.com",
     "workday": r"\.myworkdayjobs\.com",
-    "oracle": r"\.oraclecloud\.com/hcmUI/CandidateExperience",
+    "oracle": r"(?:\.oraclecloud\.com/hcmUI/CandidateExperience|data-apibaseurl=\"https?://[\w.-]+\.oraclecloud\.com)",
     "successfactors": r"(?:career\d*\.successfactors\.(?:com|eu)|jobs\.sap\.com|/sfcareer/)",
     "icims": r"[\w-]+\.icims\.com",
     "taleo": r"[\w-]+\.taleo\.net",
@@ -105,8 +116,12 @@ VENDOR_SIGNATURES: dict[str, re.Pattern] = {name: re.compile(p, re.I) for name, 
 }.items()}
 
 
+def _scannable(raw_html: str) -> str:
+    return _TEMPLATE_TOKEN.sub(" ", raw_html.replace("\\/", "/"))
+
+
 def detect_vendors(raw_html: str) -> set[str]:
-    text = raw_html.replace("\\/", "/")
+    text = _scannable(raw_html)
     return {name for name, pattern in VENDOR_SIGNATURES.items() if pattern.search(text)}
 
 
@@ -174,10 +189,13 @@ def ats_hint(url: str | None) -> dict | None:
 
 def ats_hints_in(raw_html: str) -> list[dict]:
     """Every distinct ATS board referenced anywhere in a page."""
-    text = raw_html.replace("\\/", "/")
+    text = _scannable(raw_html)
     seen, hints = set(), []
-    for m in ATS_URL.finditer(text):
-        hint = ats_hint(m.group(0))
+    found = [ats_hint(m.group(0)) for m in ATS_URL.finditer(text)]
+    api, site = _ORACLE_API_BASE.search(text), _ORACLE_SITE_NUMBER.search(text)
+    if api and site:  # Oracle board served from the company's own domain
+        found.append({"vendor": "oracle", "slug": site.group(1), "site": site.group(1), "host": api.group(1).lower()})
+    for hint in found:
         if hint:
             key = (hint["vendor"], hint["slug"].lower(), hint.get("site"))
             if key not in seen:

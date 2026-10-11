@@ -206,14 +206,17 @@ def read_oracle(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_p
     """Oracle Recruiting Cloud (e.g. Uber). The public site name (UberCareers) maps to an internal
     site number (CX_1) printed in the board page; the jobs API is then searched with the owner's roles."""
     host, site = spec.host, spec.slug
-    page = http.get(f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/jobs")
-    if page.status_code == 404:
-        raise FeedNotFound(site)
-    page.raise_for_status()
-    m = _ORACLE_SITE_NUMBER.search(page.text)
-    if not m:
-        raise FeedNotFound(f"{site}: no site number on the board page")
-    site_number = m.group(1)
+    if spec.site:  # vanity-domain boards already told us the site number (e.g. Amex: CX_1)
+        site_number = spec.site
+    else:
+        page = http.get(f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/jobs")
+        if page.status_code == 404:
+            raise FeedNotFound(site)
+        page.raise_for_status()
+        m = _ORACLE_SITE_NUMBER.search(page.text)
+        if not m:
+            raise FeedNotFound(f"{site}: no site number on the board page")
+        site_number = m.group(1)
 
     seen: dict[str, RawJob] = {}
     for query in roles or [""]:
@@ -241,6 +244,44 @@ def read_oracle(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_p
                     )
             if len(reqs) < 25:
                 break
+    return FetchResult(list(seen.values()))
+
+
+def read_eightfold(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_per_role: int = 2) -> FetchResult:
+    """Eightfold careers sites (e.g. Morgan Stanley). Searched per role, filtered to India (the site's own
+    filter), plus one unfiltered page per role so remote-from-anywhere roles still show up.
+    spec.slug = tenant (morganstanley), spec.site = the company domain the API expects (morganstanley.com)."""
+    tenant, domain = spec.slug, spec.site or f"{spec.slug}.com"
+    seen: dict[str, RawJob] = {}
+    for query in roles or [""]:
+        for location, pages in (("India", pages_per_role), ("", 1)):
+            for p in range(pages):
+                resp = http.get(
+                    f"https://{tenant}.eightfold.ai/api/pcsx/search",
+                    params={"domain": domain, "query": query, "location": location, "start": p * 10},
+                    headers={"Accept": "application/json"},
+                )
+                if resp.status_code == 404:
+                    raise FeedNotFound(f"{tenant}/{domain}")
+                resp.raise_for_status()
+                body = resp.json()
+                positions = (body.get("data") or {}).get("positions") or []
+                for j in positions:
+                    ext = str(j.get("id") or "")
+                    if not ext or ext in seen:
+                        continue
+                    posted = j.get("postedTs") or j.get("creationTs")
+                    seen[ext] = RawJob(
+                        external_id=ext, title=j.get("name") or "",
+                        location="; ".join((j.get("locations") or [])[:3]) or None,
+                        url=f"https://{tenant}.eightfold.ai{j['positionUrl']}" if j.get("positionUrl") else None,
+                        department=j.get("department"),
+                        posted_at=datetime.fromtimestamp(posted, timezone.utc).isoformat() if posted else None,
+                        payload={"ats_job_id": j.get("atsJobId") or j.get("displayJobId"),
+                                 "work_location": j.get("workLocationOption"), "query": query},
+                    )
+                if len(positions) < 10:
+                    break
     return FetchResult(list(seen.values()))
 
 
@@ -341,4 +382,5 @@ READERS = {
     "recruitee": read_recruitee,
     "workday": read_workday,
     "oracle": read_oracle,
+    "eightfold": read_eightfold,
 }
