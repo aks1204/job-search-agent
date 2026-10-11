@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import httpx
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -60,8 +61,9 @@ def slug_guesses(company: Company) -> list[str]:
     return [g for g in dict.fromkeys(guesses) if g and len(g) >= 2][:3]
 
 
-def _ai_suggestions(company: Company, llm, session) -> list[dict]:
+def _ai_suggestions(company: Company, llm, session, notes: list[str]) -> list[dict]:
     if llm is None:
+        notes.append("AI suggestions skipped (no API key)")
         return []
     try:
         urls = llm.structured(
@@ -70,12 +72,17 @@ def _ai_suggestions(company: Company, llm, session) -> list[dict]:
             subject=("company", str(company.id)),
         ).parsed.urls
     except Exception as e:
-        log.info("board suggestions failed for %s: %s", company.name, e)
+        notes.append(f"AI suggestions failed: {type(e).__name__}")
         return []
-    return [h for u in urls[:5] if (h := ats_hint(u))]
+    hints = [h for u in urls[:5] if (h := ats_hint(u))]
+    unusable = [u for u in urls[:5] if not ats_hint(u)]
+    notes.append(f"AI suggested {len(urls)} board(s)" + (f", unusable: {', '.join(unusable)[:160]}" if unusable else ""))
+    return hints
 
 
-def _candidates(company: Company, discovery: Discovery | None, *, llm=None, session=None) -> list[FeedCandidate]:
+def _candidates(company: Company, discovery: Discovery | None, *, llm=None, session=None,
+                notes: list[str] | None = None) -> list[FeedCandidate]:
+    notes = notes if notes is not None else []
     found: list[FeedCandidate] = []
     if discovery:
         for h in discovery.scan.ats_hints:
@@ -84,7 +91,7 @@ def _candidates(company: Company, discovery: Discovery | None, *, llm=None, sess
     if company.domain in get_config().adapters:
         found.append(FeedCandidate(FeedSpec("adapter"), True, "community adapter", source_rank=1))
     if not any(c.linked_from_site for c in found):  # only pay for AI suggestions when the site gave us nothing
-        for h in _ai_suggestions(company, llm, session):
+        for h in _ai_suggestions(company, llm, session, notes):
             found.append(FeedCandidate(FeedSpec(h["vendor"], h["slug"], h.get("site"), h.get("host")), False,
                                        f"AI-suggested {h['vendor']}/{h['slug']}", source_rank=2))
     for vendor in GUESSABLE:  # last resort; skipped once a better candidate is confirmed
@@ -94,20 +101,25 @@ def _candidates(company: Company, discovery: Discovery | None, *, llm=None, sess
     return sorted(unique.values(), key=lambda c: (c.source_rank, LADDER.index(c.spec.method)))
 
 
-def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> FetchResult | None:
+def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[FetchResult | None, str]:
+    """(result, what happened) — the note is kept so a fallback can explain itself."""
     cfg = get_config()
     roles = list(cfg.owner.target_roles) if cfg.owner else []
     try:
         if cand.spec.method == "adapter":
-            return read_adapter(http, cfg.adapters[company.domain])
-        if cand.spec.method == "workday":
-            return read_workday(http, cand.spec, roles, pages_per_role=1)
-        return READERS[cand.spec.method](http, cand.spec, roles)
+            result = read_adapter(http, cfg.adapters[company.domain])
+        elif cand.spec.method == "workday":
+            result = read_workday(http, cand.spec, roles, pages_per_role=1)
+        else:
+            result = READERS[cand.spec.method](http, cand.spec, roles)
     except FeedNotFound:
-        return None
+        return None, "not found"
+    except httpx.HTTPStatusError as e:
+        return None, f"HTTP {e.response.status_code}"
     except Exception as e:
         log.info("candidate %s failed for %s: %s", cand.how, company.name, e)
-        return None
+        return None, f"{type(e).__name__}: {str(e)[:80]}"
+    return result, f"{len(result.jobs)} jobs"
 
 
 def activate(session: Session, company: Company, http: PoliteClient, *, llm=None) -> tuple[CompanyFeed, SyncResult]:
@@ -116,19 +128,20 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
 
     chosen: tuple[FeedCandidate, str] | None = None
     best_jobs = -1
-    rejected_evidence: list[str] = []
+    attempts: list[str] = []  # every board tried and what happened — shown when we fall back
     size = value(fact_card(session, company.id), "employee_estimate")
-    for cand in _candidates(company, discovery, llm=llm, session=session):
+    for cand in _candidates(company, discovery, llm=llm, session=session, notes=attempts):
         if chosen and not cand.linked_from_site:
             break  # never let a guess displace a board the company itself links to
-        result = _try(http, company, cand)
+        result, note = _try(http, company, cand)
         if result is None:
+            attempts.append(f"{cand.how} → {note}")
             continue
         ok, evidence = verify_ownership(company, result, linked_from_site=cand.linked_from_site,
                                         careers_url=discovery.careers_url if discovery else None,
                                         method=cand.spec.method, slug=cand.spec.slug, employee_estimate=size)
         if not ok:
-            rejected_evidence.append(f"{cand.how}: {evidence}")
+            attempts.append(f"{cand.how} → {note}, rejected: {evidence}")
             continue
         # A company's site can link several boards (e.g. a subsidiary's small one next to the main
         # Workday site). Among verified boards, keep the biggest; the ladder order breaks ties.
@@ -150,8 +163,8 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
         n = len(aggregator_jobs(session, company.id))
         note = "custom careers page (browser reader not built yet)" if discovery else "no careers page found"
         feed.ownership_evidence = f"aggregator floor: {note}; {n} recent job-site listings"
-        if rejected_evidence:
-            feed.ownership_evidence += " | rejected: " + "; ".join(rejected_evidence[:3])
+        if attempts:
+            feed.ownership_evidence += " | tried: " + "; ".join(attempts[:10])
     feed.careers_url = discovery.careers_url if discovery else feed.careers_url
     feed.verified_at = now
     feed.needs_reactivation = False
@@ -168,6 +181,7 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
         f"{verb} {company.name} via {feed.method}{change}",
         subject_type="company", subject_id=str(company.id), is_judgment=feed.method != "aggregator",
         detail={"feed_id": feed.id, "method": feed.method, "slug": feed.slug, "careers_url": feed.careers_url,
+                "attempts": attempts,
                 "evidence": feed.ownership_evidence, "discovery": discovery.how if discovery else None},
     )
     first = sync_feed(session, http, feed)  # first sync immediately

@@ -177,7 +177,8 @@ def read_workday(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_
     seen: dict[str, RawJob] = {}
     for query in roles or [""]:
         for page in range(pages_per_role):
-            resp = http.post(endpoint, json={"appliedFacets": {}, "limit": 20, "offset": page * 20, "searchText": query})
+            resp = http.post(endpoint, json={"appliedFacets": {}, "limit": 20, "offset": page * 20, "searchText": query},
+                             headers={"Accept": "application/json"})
             if resp.status_code == 404:
                 raise FeedNotFound(endpoint)
             resp.raise_for_status()
