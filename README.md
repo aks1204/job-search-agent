@@ -2,7 +2,7 @@
 
 A self-hosted AI agent that finds relevant job openings, prepares outreach for your approval, and tracks your pipeline. It runs 24/7 on your own server. Full design: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-> **Status:** Module 0 (platform foundation) ✅ · Module 1 Part 1a (company discovery) — in review.
+> **Status:** Module 0 (platform foundation) ✅ · Module 1 Part 1a (discovery) ✅ · Part 1b (judgment) — in review.
 
 ## You need an always-on host
 
@@ -76,6 +76,32 @@ docker compose exec api python -m app.cli stats           # what's been found + 
 ```
 
 API (via `/docs`): `GET /api/companies`, `GET /api/companies/{id}`, `GET /api/scouts`, `POST /api/scouts/{name}/run`, `GET /api/audit`.
+
+## Company judgment (Module 1, Part 1b)
+
+Every company with a known website gets a **verdict**: keep or reject, with plain-language reasons. Rules live in `config/company_rules.yaml`.
+
+1. **Free checks first.** These use what the scouts already know, such as the YC category tags. A blocked category (e-commerce, food delivery, quick commerce, generic marketplace) is rejected with no AI at all.
+2. **Fact card.** Claude Haiku 5.5 reads a startup's homepage. For established companies it uses general knowledge instead. Every fact is tagged verified, inferred or unknown.
+3. **Shared checks.** The avoid list (IT outsourcing, staffing agencies) and India reachability.
+4. **Startup checks.** Viability: hiring or recently funded, and no distress news. A web search runs only when it could change the answer.
+5. **One AI judgment** with Claude Sonnet 5.5:
+   - for a startup, *novel or clone?* (borderline means reject);
+   - for an established company, *step up, lateral or down compared with your career?* (unknown means reject).
+6. **Your overrides become precedents.** Similar future judgments see them as examples.
+
+At most `max_new_per_day` companies (default 50) are judged per day, in the order: your seeds, HN, YC, then job sites. Each verdict records its exact AI cost.
+
+Rejected companies come back for one re-check if a relevant fact changes or the rule behind the rejection changes. A blocked category and your permanent thumbs-down never come back.
+
+```bash
+docker compose exec api python -m app.cli evaluate --limit 5         # judge 5 now
+docker compose exec api python -m app.cli verdicts --last 20         # see the reasons
+docker compose exec api python -m app.cli override uber.com keep "Great analytics culture"
+docker compose exec api python -m app.cli stats                      # includes AI spend
+```
+
+API: `GET /api/verdicts`, `POST /api/companies/{id}/override`, `POST /api/companies/{id}/evaluate`, `GET /api/llm/usage`.
 
 ## Configuration
 

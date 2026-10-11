@@ -14,6 +14,8 @@ class ScoutContext:
     http: PoliteClient
     config: LoadedConfig
     state: dict  # persisted between runs; mutate freely
+    llm: object | None = None  # set by the runner when an API key exists; None in tests
+    session: object | None = None  # for recording LLM spend
 
 
 class Scout(ABC):

@@ -197,4 +197,8 @@ def intake(session: Session, cand: Candidate) -> str:
     ))
     _add_contacts(session, company.id, cand)
     session.flush()
+    if outcome == "matched":
+        from app.modules.m1_companies.revival import on_new_sighting  # late import: revival → evaluator deps
+
+        on_new_sighting(session, company, cand.scout)
     return outcome

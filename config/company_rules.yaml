@@ -1,0 +1,51 @@
+# Company rules (Module 1 §1.1). LOCKED: read-only in the dashboard.
+# Edit + `docker compose restart`. Changing a section re-evaluates (once) the
+# companies that were rejected under that section.
+#
+# Order of checks: shared (free) → profile deterministic (free) → at most one AI judgment.
+# Every verdict is logged with its reasons and can be overridden; overrides become precedents.
+
+evaluation:
+  max_new_per_day: 50          # companies judged per day (each costs ~2¢ of AI)
+  batch_size: 10               # companies per scheduler tick
+  interval_minutes: 30
+  # Who gets judged first when there's a backlog.
+  source_priority: ["seeds", "hn", "yc", "adzuna", "jooble", "remotive"]
+  search_monthly_budget: 800   # Brave searches/month for funding & distress news
+
+shared:
+  # Business models that are never worth watching. Strategy consulting is NOT on
+  # this list (prestige services are allowed); mass IT outsourcing and staffing are.
+  avoid_business_models: ["it_outsourcing", "staffing_recruiting"]
+  # India-based, or hires remotely from India, or sponsors visas. Lenient at the
+  # company level (strict per-posting checks happen in Module 2).
+  geography_unknown: pass
+
+startup:
+  # Viability: raised within this window OR actively hiring, AND no distress news.
+  funding_window_months: 24
+  viability_unknown: pass
+  # Instant reject, no AI judgment. Keywords match feeder tags (e.g. YC industries);
+  # the website-reading step also classifies these four categories directly.
+  category_blocklist:
+    ecommerce: ["e-commerce", "ecommerce", "d2c", "direct-to-consumer"]
+    food_delivery: ["food delivery", "food-delivery", "restaurant delivery"]
+    quick_commerce: ["quick commerce", "q-commerce", "instant delivery", "10-minute delivery"]
+    generic_marketplace: []    # too broad for keywords — judged by the website-reading step
+  novelty_borderline: reject
+  novelty_guidance: >-
+    Pass startups working on a genuinely novel problem or a clearly differentiated
+    approach (new technology, an underserved domain, a defensible insight). Reject the
+    Nth clone of an existing category with no visible differentiation. When torn, call
+    it borderline.
+
+established:
+  # AI compares the company with the owner's employment history (owner_stub.yaml).
+  keep: ["up", "lateral"]
+  unknown: reject
+  guidance: >-
+    Judge brand, growth and desirability RELATIVE TO THE OWNER'S CAREER FIELD, not in
+    general. "Step-up brand" is domain-relative: for an analytics career, a data-driven
+    tech company like Uber can beat a larger pharma company like Pfizer. Up = clearly
+    stronger brand/learning/growth for this career than their current and past
+    employers; lateral = comparable; down = weaker.

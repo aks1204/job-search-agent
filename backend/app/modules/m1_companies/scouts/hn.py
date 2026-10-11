@@ -10,6 +10,8 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel, Field
+
 from app.core.hosts import ats_hint, is_junk, normalize_domain
 from app.modules.m1_companies.candidate import Candidate, ContactHint
 from app.modules.m1_companies.identity import name_matches_domain
@@ -18,6 +20,7 @@ from app.modules.m1_companies.scouts.base import Scout, ScoutContext
 API = "https://hacker-news.firebaseio.com/v0"
 THREAD_PREFIX = "Ask HN: Who is hiring?"
 THREADS_KEPT = 2  # current + previous month's seen-lists
+LLM_PARSE_PER_RUN = 150  # free-text posts handed to the cheap AI model per run
 
 _HREF = re.compile(r'href="([^"]+)"')
 _TAG = re.compile(r"<[^>]+>")
@@ -139,3 +142,49 @@ class HNScout(Scout):
                 },
                 contacts=[ContactHint(email=e, context=parsed.headline) for e in parsed.emails],
             )
+
+        yield from self._parse_leftovers(ctx, key, entry)
+
+    def _parse_leftovers(self, ctx: ScoutContext, key: str, entry: dict) -> Iterator[Candidate]:
+        """Free-text posts the deterministic parser skipped: the cheap AI model reads them."""
+        if ctx.llm is None or not entry["unparsed"]:
+            return
+        from app.core.llm import LLMError
+
+        for kid in list(entry["unparsed"][:LLM_PARSE_PER_RUN]):
+            entry["unparsed"].remove(kid)
+            comment = self._item(ctx, kid)
+            if not comment or not comment.get("text"):
+                continue
+            try:
+                post = ctx.llm.structured(
+                    "fast", system=HN_SYSTEM, schema=HNPost, purpose="m1.parse_hn",
+                    user=html_to_text(comment["text"])[:4000], session=ctx.session,
+                ).parsed
+            except LLMError:
+                continue
+            name = post.company_name.strip()
+            if not post.is_hiring_post or not name or name.lower() == "unknown" or len(name) > 60:
+                continue
+            emails = [e.lower() for e in post.emails if _EMAIL.fullmatch(e)]
+            yield Candidate(
+                scout=self.name,
+                external_id=f"{key}:{kid}",
+                name=name,
+                domain=None if post.website.lower() == "unknown" else post.website,
+                url=f"https://news.ycombinator.com/item?id={kid}",
+                data={"thread_id": int(key), "comment_id": kid, "posted": comment.get("time"),
+                      "headline": html_to_text(comment["text"])[:300], "parsed_by": "llm"},
+                contacts=[ContactHint(email=e, context="HN post (AI-parsed)") for e in emails],
+            )
+
+
+class HNPost(BaseModel):
+    is_hiring_post: bool = Field(description="True if this comment advertises open roles at a company.")
+    company_name: str = Field(description="The hiring company's name, or 'unknown'.")
+    website: str = Field(description="The company's own website domain, or 'unknown'. Never a job board or ATS link.")
+    emails: list[str] = Field(description="Contact email addresses written in the post (de-obfuscate 'x [at] y').")
+
+
+HN_SYSTEM = """You read one comment from Hacker News "Who is hiring?" and extract the hiring company.
+Only use what the comment says. Answer in the requested JSON format."""

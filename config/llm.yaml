@@ -1,0 +1,21 @@
+# AI settings. Model IDs live in .env (LLM_FAST_MODEL / LLM_JUDGE_MODEL).
+#   fast  = cheap extraction (reading websites, parsing posts)   → Claude Haiku 5.5
+#   judge = judgment calls (keep/reject verdicts)                 → Claude Sonnet 5.5
+
+fast:
+  effort: "low"
+  max_tokens: 4000
+
+judge:
+  effort: "medium"
+  max_tokens: 8000
+
+# Retry on another model if the judge model declines a request (Claude API only).
+server_side_fallback: true
+
+# USD per million tokens: [input, output, cache_read, cache_write]. Used only to
+# report spend; check https://www.anthropic.com/pricing if these look stale.
+prices:
+  claude-haiku-5-5: [0.10, 0.50, 0.01, 0.125]
+  claude-sonnet-5-5: [2.00, 10.00, 0.20, 2.50]
+  claude-haiku-4-5: [1.00, 5.00, 0.10, 1.25]

@@ -1,7 +1,12 @@
 # Import every model here so Alembic sees the full metadata.
 from app.models.audit import AuditLog
 from app.models.company import Company, CompanySighting, ContactLead
+from app.models.llm_call import LLMCall
 from app.models.memory import MemoryEntry
 from app.models.scout import ScoutRun, ScoutState
+from app.models.verdict import CompanyFact, CompanyVerdict
 
-__all__ = ["AuditLog", "Company", "CompanySighting", "ContactLead", "MemoryEntry", "ScoutRun", "ScoutState"]
+__all__ = [
+    "AuditLog", "Company", "CompanyFact", "CompanySighting", "CompanyVerdict", "ContactLead",
+    "LLMCall", "MemoryEntry", "ScoutRun", "ScoutState",
+]

@@ -11,6 +11,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.config_loader import get_config
 from app.core.http import PoliteClient
+from app.core.llm import LLM
 from app.db import get_session_factory, session_scope
 from app.models.scout import ScoutRun, ScoutState
 from app.modules.m1_companies.candidate import Candidate
@@ -72,7 +73,10 @@ def run_scout(name: str, *, http: PoliteClient | None = None) -> dict:
             state_row = ScoutState(scout=name, state={})
             session.add(state_row)
         state = copy.deepcopy(state_row.state)
-        ctx = ScoutContext(http=client, config=cfg, state=state)
+        ctx = ScoutContext(
+            http=client, config=cfg, state=state, session=session,
+            llm=LLM() if LLM.available() else None,
+        )
 
         def save_state() -> None:
             state_row.state = copy.deepcopy(state)

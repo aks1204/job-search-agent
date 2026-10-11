@@ -15,7 +15,7 @@ from typing import Any, TypeVar
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from app.config_schemas import AppConfig, OwnerStub, ScoutsConfig, SeedList
+from app.config_schemas import AppConfig, CompanyRules, LLMConfig, OwnerStub, ScoutsConfig, SeedList
 from app.settings import get_settings
 
 M = TypeVar("M", bound=BaseModel)
@@ -40,10 +40,16 @@ class LoadedConfig:
     scouts: ScoutsConfig
     seeds: SeedList
     owner: OwnerStub | None  # None until config/owner_stub.yaml exists
+    rules: CompanyRules
+    llm: LLMConfig
 
     def file_version(self, name: str) -> str | None:
         f = self.files.get(name)
         return f.version if f else None
+
+    def rules_section_version(self, section: str) -> str:
+        """Hash of one company_rules section (defaults included), for targeted re-evaluation."""
+        return _hash(self.rules.model_dump(mode="json")[section])
 
 
 def _hash(data: Any) -> str:
@@ -81,6 +87,8 @@ def load_config(config_dir: Path) -> LoadedConfig:
         scouts=_validate(files, "scouts", ScoutsConfig) or ScoutsConfig(),
         seeds=_validate(files, "seed_companies", SeedList) or SeedList(),
         owner=_validate(files, "owner_stub", OwnerStub),
+        rules=_validate(files, "company_rules", CompanyRules) or CompanyRules(),
+        llm=_validate(files, "llm", LLMConfig) or LLMConfig(),
     )
 
 

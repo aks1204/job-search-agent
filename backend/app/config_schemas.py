@@ -157,3 +157,61 @@ class ScoutsConfig(Strict):
     company_name_skiplist: list[str] = Field(
         default_factory=lambda: ["confidential", "company name withheld", "undisclosed", "stealth", "hiring company"]
     )
+
+
+# --- company_rules.yaml ----------------------------------------------------
+
+PassOrReject = Literal["pass", "reject"]
+
+
+class EvaluationRules(Strict):
+    max_new_per_day: int = Field(50, ge=0)
+    batch_size: int = Field(10, ge=1, le=100)
+    interval_minutes: int = Field(30, ge=5)
+    source_priority: list[str] = Field(default_factory=lambda: list(SCOUT_NAMES))
+    search_monthly_budget: int = 800
+
+
+class SharedRules(Strict):
+    avoid_business_models: list[str] = Field(default_factory=lambda: ["it_outsourcing", "staffing_recruiting"])
+    geography_unknown: PassOrReject = "pass"
+
+
+class StartupRules(Strict):
+    funding_window_months: int = 24
+    viability_unknown: PassOrReject = "pass"
+    category_blocklist: dict[str, list[str]] = Field(default_factory=lambda: {
+        "ecommerce": ["e-commerce", "ecommerce", "d2c"],
+        "food_delivery": ["food delivery"],
+        "quick_commerce": ["quick commerce", "q-commerce"],
+        "generic_marketplace": [],
+    })
+    novelty_borderline: PassOrReject = "reject"
+    novelty_guidance: str = "Pass genuinely novel problems; reject undifferentiated clones."
+
+
+class EstablishedRules(Strict):
+    keep: list[Literal["up", "lateral", "down"]] = Field(default_factory=lambda: ["up", "lateral"])
+    unknown: PassOrReject = "reject"
+    guidance: str = "Judge brand relative to the owner's career field."
+
+
+class CompanyRules(Strict):
+    evaluation: EvaluationRules = Field(default_factory=EvaluationRules)
+    shared: SharedRules = Field(default_factory=SharedRules)
+    startup: StartupRules = Field(default_factory=StartupRules)
+    established: EstablishedRules = Field(default_factory=EstablishedRules)
+
+
+# --- llm.yaml ---------------------------------------------------------------
+
+class LLMTier(Strict):
+    effort: Literal["low", "medium", "high", "xhigh", "max"]
+    max_tokens: int = Field(ge=256)
+
+
+class LLMConfig(Strict):
+    fast: LLMTier = Field(default_factory=lambda: LLMTier(effort="low", max_tokens=4000))
+    judge: LLMTier = Field(default_factory=lambda: LLMTier(effort="medium", max_tokens=8000))
+    server_side_fallback: bool = True
+    prices: dict[str, list[float]] = Field(default_factory=dict)

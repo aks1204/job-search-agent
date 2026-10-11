@@ -18,6 +18,10 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
             "task": "m1.resolve_domains",
             "schedule": cfg.scouts.resolver.interval_minutes * 60.0,
         },
+        "m1-evaluate-batch": {
+            "task": "m1.evaluate_batch",
+            "schedule": cfg.rules.evaluation.interval_minutes * 60.0,
+        },
     }
     for name in SCOUT_NAMES:
         scout = getattr(cfg.scouts, name)

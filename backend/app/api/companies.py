@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.api.verdicts import verdict_dict
 from app.db import get_session
-from app.models import AuditLog, Company, CompanySighting, ContactLead
+from app.models import AuditLog, Company, CompanySighting, CompanyVerdict, ContactLead
+from app.modules.m1_companies.facts import fact_card
 
 router = APIRouter()
 
@@ -59,6 +61,10 @@ def get_company(company_id: int, session: Session = Depends(get_session)) -> dic
         .order_by(CompanySighting.last_seen_at.desc()).limit(25)
     ).all()
     leads = session.scalars(select(ContactLead).where(ContactLead.company_id == c.id)).all()
+    verdicts = session.scalars(
+        select(CompanyVerdict).where(CompanyVerdict.company_id == c.id)
+        .order_by(CompanyVerdict.created_at.desc()).limit(10)
+    ).all()
     log = session.scalars(
         select(AuditLog).where(AuditLog.subject_type == "company", AuditLog.subject_id == str(c.id))
         .order_by(AuditLog.created_at.desc()).limit(25)
@@ -75,5 +81,7 @@ def get_company(company_id: int, session: Session = Depends(get_session)) -> dic
             for s in sightings
         ],
         "contact_leads": [{"email": l.email, "source": l.source, "context": l.context} for l in leads],
+        "facts": fact_card(session, c.id),
+        "verdicts": [verdict_dict(v) for v in verdicts],
         "audit": [{"at": a.created_at, "action": a.action, "summary": a.summary, "detail": a.detail} for a in log],
     }

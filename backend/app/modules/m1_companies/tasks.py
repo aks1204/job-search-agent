@@ -1,7 +1,10 @@
 from celery.signals import worker_ready
 
 from app.celery_app import celery_app
+from app.db import session_scope
+from app.modules.m1_companies.queue import run_batch
 from app.modules.m1_companies.resolver import run_resolver
+from app.modules.m1_companies.revival import check_rules_changes
 from app.modules.m1_companies.runner import run_scout
 
 
@@ -15,7 +18,24 @@ def resolve_domains_task() -> dict:
     return run_resolver()
 
 
+@celery_app.task(name="m1.evaluate_batch")
+def evaluate_batch_task() -> dict:
+    return run_batch()
+
+
+@celery_app.task(name="m1.evaluate_batch_ids")
+def evaluate_ids_task(company_ids: list[int]) -> dict:
+    return run_batch(company_ids=company_ids)
+
+
+@celery_app.task(name="m1.check_rules_changes")
+def check_rules_changes_task() -> dict:
+    with session_scope() as s:
+        return dict(check_rules_changes(s))
+
+
 @worker_ready.connect
-def _load_seeds_on_start(**_) -> None:
-    """Spec §1.2: the seed list loads on startup (a config change needs a restart anyway)."""
+def _on_worker_start(**_) -> None:
+    """Spec §1.2: seeds load on startup. A rules edit needs a restart, so check for one here too."""
     run_scout_task.delay("seeds")
+    check_rules_changes_task.delay()

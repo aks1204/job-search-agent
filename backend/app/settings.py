@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     config_dir: Path = Path("/config")
 
     anthropic_api_key: str = ""
-    llm_fast_model: str = "claude-haiku-4-5-20251001"
+    llm_fast_model: str = "claude-haiku-5-5"
     llm_judge_model: str = "claude-sonnet-5-5"
 
     embedding_model: str = "BAAI/bge-small-en-v1.5"

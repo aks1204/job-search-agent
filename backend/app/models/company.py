@@ -19,12 +19,18 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
-# Lifecycle. Part 1a writes the first two; later parts add the rest.
+# Lifecycle:
 #   unresolved  seen by name only — no domain yet, so not in the candidate pipe
-#   candidate   identity known, waiting for evaluation (Part 1b)
-#   passed / rejected / watching / dormant / archived / blocked   (Parts 1b, 1c)
+#   candidate   identity known, waiting for evaluation (new, or queued for re-evaluation)
+#   passed      evaluator said yes → Part 1c activates a watch
+#   rejected    evaluator said no (may return on a trigger)
+#   blocked     permanent no (category blocklist / owner thumbs-down) — never revives
+#   watching / dormant / archived   (Part 1c)
 STATUS_UNRESOLVED = "unresolved"
 STATUS_CANDIDATE = "candidate"
+STATUS_PASSED = "passed"
+STATUS_REJECTED = "rejected"
+STATUS_BLOCKED = "blocked"
 
 COMPANY_TYPES = ("startup", "established", "unknown")
 
@@ -56,6 +62,10 @@ class Company(Base):
     source_data: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
     resolution_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     next_resolution_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    llm_resolution_tried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Why a previously-decided company is back in the queue (refresh | rules_change | manual).
+    reeval_reason: Mapped[str | None] = mapped_column(String(16))
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
