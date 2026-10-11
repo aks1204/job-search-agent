@@ -1,0 +1,36 @@
+name: "Large Indian companies"
+description: >-
+  India's large listed groups and their digital arms. IT-services / outsourcing firms
+  are left out on purpose: your avoid list would reject them anyway.
+companies:
+  # Conglomerates & their digital businesses
+  - {name: "Reliance Industries", domain: "ril.com", type: established}
+  - {name: "Jio Platforms", domain: "jio.com", type: established}
+  - {name: "Tata Motors", domain: "tatamotors.com", type: established}
+  - {name: "Tata Steel", domain: "tatasteel.com", type: established}
+  - {name: "Tata Digital", domain: "tatadigital.com", type: established}
+  - {name: "Mahindra Group", domain: "mahindra.com", type: established}
+  - {name: "Aditya Birla Group", domain: "adityabirla.com", type: established}
+  - {name: "Adani Group", domain: "adani.com", type: established}
+  - {name: "Larsen & Toubro", domain: "larsentoubro.com", type: established}
+
+  # Banking, insurance & financial services
+  - {name: "HDFC Bank", domain: "hdfcbank.com", type: established}
+  - {name: "ICICI Bank", domain: "icicibank.com", type: established}
+  - {name: "Axis Bank", domain: "axisbank.com", type: established}
+  - {name: "Kotak Mahindra Bank", domain: "kotak.com", type: established}
+  - {name: "Bajaj Finserv", domain: "bajajfinserv.in", type: established}
+  - {name: "Paytm", domain: "paytm.com", type: established}
+  - {name: "Policybazaar", domain: "policybazaar.com", type: established}
+
+  # Telecom, consumer & industry
+  - {name: "Bharti Airtel", domain: "airtel.in", type: established}
+  - {name: "ITC", domain: "itcportal.com", type: established}
+  - {name: "Hindustan Unilever", domain: "hul.co.in", type: established}
+  - {name: "Asian Paints", domain: "asianpaints.com", type: established}
+  - {name: "Maruti Suzuki", domain: "marutisuzuki.com", type: established}
+
+  # Listed Indian tech product companies
+  - {name: "Freshworks", domain: "freshworks.com", type: established}
+  - {name: "Zoho", domain: "zoho.com", type: established}
+  - {name: "InMobi", domain: "inmobi.com", type: established}

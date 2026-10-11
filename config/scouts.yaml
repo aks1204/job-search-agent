@@ -6,6 +6,21 @@ seeds:            # config/seed_companies.yaml — also loaded every time the wo
   enabled: true
   schedule: {hour: "5", minute: "0"}
 
+packs:            # curated optional lists in config/seed_packs/ — judged like everyone else
+  enabled: true
+  schedule: {hour: "5", minute: "10"}
+  enabled_packs: ["gcc_india", "india_large", "india_unicorns"]
+
+# "Companies like the ones you keep": for each kept company, the cheap AI model suggests
+# similar employers; a suggestion is used only if its website is live and names the company.
+# OWNER DECISION (2026-10-11): deliberately relaxes spec §1.1 "MNC universe comes from a seed
+# list, not discovery". Set enabled: false to return to the spec's original behaviour.
+peers:
+  enabled: true
+  schedule: {hour: "7", minute: "30"}
+  companies_per_run: 10          # kept companies expanded per day
+  suggestions_per_company: 5
+
 yc:               # public YC directory (yc-oss mirror; ycombinator.com is not scraped)
   enabled: true
   schedule: {hour: "5", minute: "30"}

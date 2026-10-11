@@ -1,0 +1,37 @@
+name: "Indian unicorns & late-stage startups"
+description: >-
+  Well-funded Indian startups, judged by the startup rules (viability + novelty).
+  Food delivery, quick commerce and pure e-commerce players are left out: your
+  category blocklist rejects them instantly.
+companies:
+  # Fintech
+  - {name: "Razorpay", domain: "razorpay.com", type: startup}
+  - {name: "CRED", domain: "cred.club", type: startup}
+  - {name: "Zerodha", domain: "zerodha.com", type: startup}
+  - {name: "Pine Labs", domain: "pinelabs.com", type: startup}
+  - {name: "ACKO", domain: "acko.com", type: startup}
+  - {name: "Digit Insurance", domain: "godigit.com", type: startup}
+
+  # Software & SaaS
+  - {name: "Postman", domain: "postman.com", type: startup}
+  - {name: "BrowserStack", domain: "browserstack.com", type: startup}
+  - {name: "Chargebee", domain: "chargebee.com", type: startup}
+  - {name: "Innovaccer", domain: "innovaccer.com", type: startup}
+  - {name: "Uniphore", domain: "uniphore.com", type: startup}
+  - {name: "Darwinbox", domain: "darwinbox.com", type: startup}
+
+  # Mobility & consumer internet
+  - {name: "Ola", domain: "olacabs.com", type: startup}
+  - {name: "Ola Electric", domain: "olaelectric.com", type: startup}
+  - {name: "Rapido", domain: "rapido.bike", type: startup}
+  - {name: "Dream11", domain: "dream11.com", type: startup}
+  - {name: "ShareChat", domain: "sharechat.com", type: startup}
+  - {name: "MPL", domain: "mpl.live", type: startup}
+  - {name: "Urban Company", domain: "urbancompany.com", type: startup}
+  - {name: "CarDekho", domain: "cardekho.com", type: startup}
+  - {name: "Spinny", domain: "spinny.com", type: startup}
+
+  # Education
+  - {name: "PhysicsWallah", domain: "pw.live", type: startup}
+  - {name: "upGrad", domain: "upgrad.com", type: startup}
+  - {name: "Eruditus", domain: "eruditus.com", type: startup}

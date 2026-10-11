@@ -22,7 +22,7 @@ from app.core.search import search_available, web_search
 from app.db import session_scope
 from app.models.company import STATUS_UNRESOLVED, Company, CompanySighting
 from app.modules.m1_companies.enrich import fetch_site_text
-from app.modules.m1_companies.identity import assign_domain, name_matches_domain, normalize_name
+from app.modules.m1_companies.identity import assign_domain, name_matches_domain, normalize_name, site_mentions_name
 
 BACKOFF_DAYS = (1, 3, 7, 14)
 
@@ -109,12 +109,6 @@ def _context(session: Session, company: Company) -> str:
     return "\n".join(lines) or "- (no extra context)"
 
 
-def _site_mentions(text: str, name: str) -> bool:
-    words = [w for w in normalize_name(name).split() if len(w) >= 3] or normalize_name(name).split()
-    lowered = text[:4000].lower()
-    return bool(words) and all(w in lowered for w in words)
-
-
 def llm_resolve_batch(session: Session, http: PoliteClient, llm, limit: int = 10) -> Counter:
     """Last rung: the AI guesses a domain, and we only trust it if that site names the company."""
     cfg = get_config().scouts.resolver
@@ -140,7 +134,7 @@ def llm_resolve_batch(session: Session, http: PoliteClient, llm, limit: int = 10
             counts["no_guess"] += 1
             continue
         site = fetch_site_text(http, domain)
-        if not site or not _site_mentions(site[0], company.name):
+        if not site or not site_mentions_name(site[0], company.name):
             counts["guess_not_confirmed"] += 1
             continue
         name = company.name

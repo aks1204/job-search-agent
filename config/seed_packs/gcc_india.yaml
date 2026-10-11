@@ -1,0 +1,54 @@
+name: "Global Capability Centres in India"
+description: >-
+  Multinationals running large analytics / technology / operations hubs in India.
+  Often the best route to an MNC brand without relocating. Each company is still
+  judged by your rules (step-up vs. your career); being in a pack is not a pass.
+companies:
+  # Retail & consumer
+  - {name: "Target", domain: "target.com", type: established}
+  - {name: "Lowe's", domain: "lowes.com", type: established}
+  - {name: "Tesco", domain: "tesco.com", type: established}
+  - {name: "Unilever", domain: "unilever.com", type: established}
+  - {name: "Procter & Gamble", domain: "pg.com", type: established}
+  - {name: "Nestlé", domain: "nestle.com", type: established}
+  - {name: "PepsiCo", domain: "pepsico.com", type: established}
+  - {name: "Mondelez International", domain: "mondelezinternational.com", type: established}
+
+  # Banking, payments & asset management
+  - {name: "Wells Fargo", domain: "wellsfargo.com", type: established}
+  - {name: "Citi", domain: "citigroup.com", type: established}
+  - {name: "HSBC", domain: "hsbc.com", type: established}
+  - {name: "Barclays", domain: "barclays.com", type: established}
+  - {name: "Deutsche Bank", domain: "db.com", type: established}
+  - {name: "UBS", domain: "ubs.com", type: established}
+  - {name: "Standard Chartered", domain: "sc.com", type: established}
+  - {name: "Fidelity Investments", domain: "fidelity.com", type: established}
+  - {name: "BlackRock", domain: "blackrock.com", type: established}
+  - {name: "State Street", domain: "statestreet.com", type: established}
+  - {name: "Mastercard", domain: "mastercard.com", type: established}
+  - {name: "PayPal", domain: "paypal.com", type: established}
+
+  # Technology
+  - {name: "Microsoft", domain: "microsoft.com", type: established}
+  - {name: "Amazon", domain: "amazon.com", type: established}
+  - {name: "Apple", domain: "apple.com", type: established}
+  - {name: "Adobe", domain: "adobe.com", type: established}
+  - {name: "Intuit", domain: "intuit.com", type: established}
+  - {name: "Salesforce", domain: "salesforce.com", type: established}
+  - {name: "SAP", domain: "sap.com", type: established}
+  - {name: "Oracle", domain: "oracle.com", type: established}
+  - {name: "Cisco", domain: "cisco.com", type: established}
+  - {name: "Qualcomm", domain: "qualcomm.com", type: established}
+  - {name: "NVIDIA", domain: "nvidia.com", type: established}
+
+  # Pharma & healthcare
+  - {name: "Novartis", domain: "novartis.com", type: established}
+  - {name: "AstraZeneca", domain: "astrazeneca.com", type: established}
+  - {name: "GSK", domain: "gsk.com", type: established}
+  - {name: "Roche", domain: "roche.com", type: established}
+  - {name: "Johnson & Johnson", domain: "jnj.com", type: established}
+  - {name: "Abbott", domain: "abbott.com", type: established}
+
+  # Energy & logistics
+  - {name: "Shell", domain: "shell.com", type: established}
+  - {name: "Maersk", domain: "maersk.com", type: established}

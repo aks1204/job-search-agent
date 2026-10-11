@@ -15,7 +15,9 @@ from typing import Any, TypeVar
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from app.config_schemas import AppConfig, CompanyRules, LLMConfig, OwnerStub, ScoutsConfig, SeedList, WatchConfig
+from app.config_schemas import (
+    AppConfig, CompanyRules, LLMConfig, OwnerStub, ScoutsConfig, SeedList, SeedPack, WatchConfig,
+)
 from app.settings import get_settings
 
 M = TypeVar("M", bound=BaseModel)
@@ -44,6 +46,7 @@ class LoadedConfig:
     llm: LLMConfig
     watch: WatchConfig
     adapters: dict[str, dict]  # giant-company adapters from config/adapters/*.yaml, keyed by domain
+    seed_packs: dict[str, SeedPack]  # curated optional lists from config/seed_packs/*.yaml, keyed by file stem
 
     def file_version(self, name: str) -> str | None:
         f = self.files.get(name)
@@ -93,7 +96,20 @@ def load_config(config_dir: Path) -> LoadedConfig:
         llm=_validate(files, "llm", LLMConfig) or LLMConfig(),
         watch=_validate(files, "watch", WatchConfig) or WatchConfig(),
         adapters=_load_adapters(config_dir / "adapters"),
+        seed_packs=_load_seed_packs(config_dir / "seed_packs"),
     )
+
+
+def _load_seed_packs(folder: Path) -> dict[str, SeedPack]:
+    packs: dict[str, SeedPack] = {}
+    if not folder.is_dir():
+        return packs
+    for path in sorted(folder.glob("*.yaml")):
+        try:
+            packs[path.stem] = SeedPack.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+        except (yaml.YAMLError, ValidationError) as e:
+            raise ConfigError(f"seed_packs/{path.name}: {e}") from e
+    return packs
 
 
 def _load_adapters(folder: Path) -> dict[str, dict]:

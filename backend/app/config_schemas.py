@@ -94,9 +94,17 @@ class SeedList(Strict):
     companies: list[SeedCompany] = Field(default_factory=list)
 
 
+class SeedPack(Strict):
+    """A curated, optional company list shipped in config/seed_packs/ (an open-source contribution surface)."""
+
+    name: str
+    description: str = ""
+    companies: list[SeedCompany] = Field(default_factory=list)
+
+
 # --- scouts.yaml ----------------------------------------------------------
 
-SCOUT_NAMES = ("seeds", "yc", "adzuna", "jooble", "remotive", "hn")
+SCOUT_NAMES = ("seeds", "packs", "peers", "yc", "adzuna", "jooble", "remotive", "hn")
 
 
 class Schedule(Strict):
@@ -114,6 +122,19 @@ class ScoutBase(Strict):
 
 class SeedsScout(ScoutBase):
     schedule: Schedule = Field(default_factory=lambda: Schedule(hour="5", minute="0"))
+
+
+class PacksScout(ScoutBase):
+    schedule: Schedule = Field(default_factory=lambda: Schedule(hour="5", minute="10"))
+    enabled_packs: list[str] = Field(default_factory=lambda: ["gcc_india", "india_large", "india_unicorns"])
+
+
+class PeersScout(ScoutBase):
+    """'Companies like the ones you keep' (owner-approved spec deviation, 2026-10-11)."""
+
+    schedule: Schedule = Field(default_factory=lambda: Schedule(hour="7", minute="30"))
+    companies_per_run: int = Field(10, ge=1, le=50)
+    suggestions_per_company: int = Field(5, ge=1, le=10)
 
 
 class YCScout(ScoutBase):
@@ -161,6 +182,8 @@ class Resolver(Strict):
 
 class ScoutsConfig(Strict):
     seeds: SeedsScout = Field(default_factory=SeedsScout)
+    packs: PacksScout = Field(default_factory=PacksScout)
+    peers: PeersScout = Field(default_factory=PeersScout)
     yc: YCScout = Field(default_factory=YCScout)
     adzuna: AdzunaScout = Field(default_factory=AdzunaScout)
     jooble: JoobleScout = Field(default_factory=JoobleScout)

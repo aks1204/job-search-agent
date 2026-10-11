@@ -36,8 +36,8 @@ _SUFFIXES = {
     "and",  # left dangling by "McKinsey & Company" once "company" is dropped
 }
 
-# Whose word wins on company type: the owner's seed list, then YC, then anyone else.
-_TYPE_AUTHORITY = {"seeds": 3, "yc": 2}
+# Whose word wins on company type: the owner's seed list, then curated packs, then YC, then anyone else.
+_TYPE_AUTHORITY = {"seeds": 4, "packs": 3, "yc": 2}
 
 
 def normalize_name(name: str) -> str:
@@ -58,6 +58,13 @@ def name_matches_domain(name: str, domain: str) -> bool:
     joined = "".join(words)
     initials = "".join(w[0] for w in words) if len(words) > 1 else ""
     return label in (joined, words[0], initials) or (len(joined) >= 4 and joined in label)
+
+
+def site_mentions_name(text: str, name: str) -> bool:
+    """Does a homepage's text name the company? Used to confirm AI-suggested domains."""
+    words = [w for w in normalize_name(name).split() if len(w) >= 3] or normalize_name(name).split()
+    lowered = text[:4000].lower()
+    return bool(words) and all(w in lowered for w in words)
 
 
 def _utcnow() -> datetime:
