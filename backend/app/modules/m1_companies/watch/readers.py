@@ -206,22 +206,39 @@ WORKDAY_SERVERS = (
 )
 
 
-def find_workday_host(http: PoliteClient, tenant: str, site: str, *, skip: str | None = None) -> str | None:
-    """Probe Workday servers for the one hosting tenant/site. Returns 'tenant.wdN' or None."""
+def probe_workday(http: PoliteClient, host: str, tenant: str, site: str) -> str:
+    """One minimal search against tenant/site on one server: 'ok' or what went wrong."""
+    try:
+        resp = http.post(
+            f"https://{host}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs",
+            json={"appliedFacets": {}, "limit": 1, "offset": 0, "searchText": ""},
+            headers={"Accept": "application/json"},
+        )
+    except Exception as e:
+        return type(e).__name__
+    if resp.status_code == 200 and "jobPostings" in resp.text:
+        return "ok"
+    return f"HTTP {resp.status_code}"
+
+
+def find_workday_host(
+    http: PoliteClient, tenant: str, site: str, *, skip: str | None = None, outcomes: list[str] | None = None
+) -> str | None:
+    """Probe Workday servers for the one hosting tenant/site. Returns 'tenant.wdN' or None.
+
+    `outcomes` collects a short tally (e.g. 'HTTP 422×52') so a failure can explain itself.
+    """
+    tally: dict[str, int] = {}
     for n in WORKDAY_SERVERS:
         host = f"{tenant}.wd{n}"
         if host == skip:
             continue
-        try:
-            resp = http.post(
-                f"https://{host}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs",
-                json={"appliedFacets": {}, "limit": 1, "offset": 0, "searchText": ""},
-                headers={"Accept": "application/json"},
-            )
-        except Exception:
-            continue
-        if resp.status_code == 200 and "jobPostings" in resp.text:
+        outcome = probe_workday(http, host, tenant, site)
+        if outcome == "ok":
             return host
+        tally[outcome] = tally.get(outcome, 0) + 1
+    if outcomes is not None:
+        outcomes.append("probed servers: " + ", ".join(f"{k}×{v}" for k, v in sorted(tally.items())))
     return None
 
 

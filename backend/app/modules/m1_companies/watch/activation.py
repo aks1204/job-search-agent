@@ -59,6 +59,13 @@ checked live, so never invent one. For Workday, the tenant and site name matter 
 Answer in the requested JSON format."""
 
 
+def _label(hint: dict) -> str:
+    """'lever/acme', or for Workday the full address that matters: 'workday/lilly/LLY @ lilly.wd5'."""
+    if hint["vendor"] == "workday":
+        return f"workday/{hint['slug']}/{hint.get('site')} @ {hint.get('host')}"
+    return f"{hint['vendor']}/{hint['slug']}"
+
+
 def slug_guesses(company: Company) -> list[str]:
     words = normalize_name(company.name).split()
     guesses = [domain_label(company.domain or ""), "".join(words), "-".join(words)]
@@ -95,13 +102,13 @@ def _candidates(company: Company, discovery: Discovery | None, *, llm=None, sess
     if discovery:
         for h in discovery.scan.ats_hints:
             found.append(FeedCandidate(FeedSpec(h["vendor"], h["slug"], h.get("site"), h.get("host")),
-                                       discovery.on_company_site, f"{discovery.how}: {h['vendor']}/{h['slug']}"))
+                                       discovery.on_company_site, f"{discovery.how}: {_label(h)}"))
     if company.domain in get_config().adapters:
         found.append(FeedCandidate(FeedSpec("adapter"), True, "community adapter", source_rank=1))
     if not any(c.linked_from_site for c in found):  # only pay for AI suggestions when the site gave us nothing
         for h in _ai_suggestions(company, llm, session, notes):
             found.append(FeedCandidate(FeedSpec(h["vendor"], h["slug"], h.get("site"), h.get("host")), False,
-                                       f"AI-suggested {h['vendor']}/{h['slug']}", source_rank=2))
+                                       f"AI-suggested {_label(h)}", source_rank=2))
     for vendor in GUESSABLE:  # last resort; skipped once a better candidate is confirmed
         for slug in slug_guesses(company):
             found.append(FeedCandidate(FeedSpec(vendor, slug), False, f"guessed {vendor}/{slug}", source_rank=3))
@@ -121,9 +128,12 @@ def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[Fet
                 result = read_workday(http, cand.spec, roles, pages_per_role=1)
             except (FeedNotFound, httpx.HTTPStatusError) as first_error:
                 # Right tenant/site, wrong server number? Find the live one.
-                host = find_workday_host(http, cand.spec.slug, cand.spec.site, skip=cand.spec.host)
+                probes: list[str] = []
+                host = find_workday_host(http, cand.spec.slug, cand.spec.site, skip=cand.spec.host, outcomes=probes)
                 if host is None:
-                    raise first_error
+                    first = (f"HTTP {first_error.response.status_code}"
+                             if isinstance(first_error, httpx.HTTPStatusError) else "not found")
+                    return None, f"{first}; {'; '.join(probes)}"
                 old = cand.spec.host
                 cand.spec.host = host
                 cand.how += f" (server {old} → {host})"

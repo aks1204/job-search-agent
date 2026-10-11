@@ -362,6 +362,24 @@ def jobs_cmd(domain: str) -> int:
     return 0
 
 
+def probe_workday_cmd(tenant: str, site: str, server: int | None) -> int:
+    """Diagnose a Workday board from this machine: which server answers, and how."""
+    from app.core.http import USER_AGENT, PoliteClient
+    from app.modules.m1_companies.watch.readers import WORKDAY_SERVERS, probe_workday
+
+    print(f"Probing Workday tenant '{tenant}', site '{site}' (user-agent: {USER_AGENT})")
+    servers = [server] if server else WORKDAY_SERVERS
+    with PoliteClient() as http:
+        for n in servers:
+            outcome = probe_workday(http, f"{tenant}.wd{n}", tenant, site)
+            print(f"  wd{n:<4} {outcome}")
+            if outcome == "ok":
+                print(f"Live board: https://{tenant}.wd{n}.myworkdayjobs.com/{site}")
+                return 0
+    print("No server answered for this tenant/site.")
+    return 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -393,6 +411,10 @@ def main() -> None:
     p_jobs = sub.add_parser("jobs", help="a company's open postings")
     p_jobs.add_argument("--domain", required=True)
     sub.add_parser("garden", help="run the weekly upkeep now")
+    p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
+    p_wd.add_argument("tenant")
+    p_wd.add_argument("site")
+    p_wd.add_argument("--server", type=int, help="test one server number only, e.g. 115")
     args = parser.parse_args()
 
     if args.command == "selftest":
@@ -419,6 +441,8 @@ def main() -> None:
         sys.exit(jobs_cmd(args.domain))
     if args.command == "garden":
         sys.exit(garden_cmd())
+    if args.command == "probe-workday":
+        sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 
 
 if __name__ == "__main__":
