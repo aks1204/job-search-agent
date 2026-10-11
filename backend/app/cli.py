@@ -6,7 +6,7 @@
     python -m app.cli stats          # what's in the database + per-scout health + AI spend
     python -m app.cli evaluate [--limit N] [--domain acme.com] [--force]
                                      # judge companies now (respects the daily limit unless --force)
-    python -m app.cli verdicts [--last 20] [--rejected | --passed]
+    python -m app.cli verdicts [--last 20] [--rejected | --passed] [--details]
     python -m app.cli override <domain> keep|reject "<reason>" [--permanent]
 """
 
@@ -208,7 +208,9 @@ def evaluate(limit: int | None, domain: str | None, force: bool) -> int:
     return 0
 
 
-def verdicts(last: int, passed: bool | None) -> int:
+def verdicts(last: int, passed: bool | None, details: bool = False) -> int:
+    import textwrap
+
     from sqlalchemy import select
 
     from app.db import session_scope
@@ -222,7 +224,14 @@ def verdicts(last: int, passed: bool | None) -> int:
         for v, c in rows:
             mark = "KEEP  " if v.passed else ("BLOCK " if v.permanent else "REJECT")
             who = "you" if v.decided_by == "owner" else v.profile
-            print(f"{mark} {c.name} ({c.domain}) [{who}, ${v.cost_usd:.3f}]\n       {v.summary[:300]}")
+            print(f"{mark} {c.name} ({c.domain}) [{who}, ${v.cost_usd:.3f}]")
+            print(textwrap.fill(v.summary, width=100, initial_indent="       ", subsequent_indent="       "))
+            if details:
+                for check in v.checks:
+                    flag = "✓" if check.get("outcome") == "pass" else "✗"
+                    print(textwrap.fill(f"{flag} {check.get('name')}: {check.get('reason')}", width=100,
+                                        initial_indent="         ", subsequent_indent="           "))
+            print()
     return 0
 
 
@@ -257,6 +266,7 @@ def main() -> None:
     p_eval.add_argument("--force", action="store_true", help="ignore the daily limit")
     p_ver = sub.add_parser("verdicts", help="recent verdicts with reasons")
     p_ver.add_argument("--last", type=int, default=20)
+    p_ver.add_argument("--details", action="store_true", help="also list every check and its reason")
     group = p_ver.add_mutually_exclusive_group()
     group.add_argument("--passed", action="store_true")
     group.add_argument("--rejected", action="store_true")
@@ -278,7 +288,7 @@ def main() -> None:
     if args.command == "evaluate":
         sys.exit(evaluate(args.limit, args.domain, args.force))
     if args.command == "verdicts":
-        sys.exit(verdicts(args.last, True if args.passed else False if args.rejected else None))
+        sys.exit(verdicts(args.last, True if args.passed else False if args.rejected else None, args.details))
     if args.command == "override":
         sys.exit(override_cmd(args.domain, args.decision, args.reason, args.permanent))
 
