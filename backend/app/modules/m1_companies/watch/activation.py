@@ -79,6 +79,7 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
     discovery = discover(http, company, llm=llm, session=session) if company.domain else None
 
     chosen: tuple[FeedCandidate, str] | None = None
+    best_jobs = -1
     rejected_evidence: list[str] = []
     for cand in _candidates(company, discovery):
         result = _try(http, company, cand)
@@ -86,10 +87,15 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
             continue
         ok, evidence = verify_ownership(company, result, linked_from_site=cand.linked_from_site,
                                         careers_url=discovery.careers_url if discovery else None)
-        if ok:
-            chosen = (cand, evidence)
-            break
-        rejected_evidence.append(f"{cand.how}: {evidence}")
+        if not ok:
+            rejected_evidence.append(f"{cand.how}: {evidence}")
+            continue
+        # A company's site can link several boards (e.g. a subsidiary's small one next to the main
+        # Workday site). Among verified boards, keep the biggest; the ladder order breaks ties.
+        if len(result.jobs) > best_jobs:
+            chosen, best_jobs = (cand, f"{evidence}; {len(result.jobs)} jobs"), len(result.jobs)
+        if not cand.linked_from_site:
+            break  # guessed boards: first verified one is enough
 
     feed = session.scalar(select(CompanyFeed).where(CompanyFeed.company_id == company.id))
     previous_method = feed.method if feed else None

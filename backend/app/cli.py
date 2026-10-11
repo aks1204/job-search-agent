@@ -318,6 +318,14 @@ def feeds_cmd() -> int:
         print("Feeds by health:")
         for health, n in s.execute(select(CompanyFeed.health, func.count()).group_by(CompanyFeed.health)).all():
             print(f"  {health:<16} {n}")
+        print("Companies:")
+        for name, domain, method, slug, jobs, health in s.execute(
+            select(Company.name, Company.domain, CompanyFeed.method, CompanyFeed.slug,
+                   CompanyFeed.open_jobs, CompanyFeed.health)
+            .join(Company, Company.id == CompanyFeed.company_id).order_by(Company.name).limit(60)
+        ).all():
+            board = f"{method}/{slug}" if slug else method
+            print(f"  {name[:32]:<32} {domain[:24]:<24} {board[:30]:<30} {jobs:>4} jobs  {health}")
         trouble = s.execute(
             select(Company.name, Company.domain, CompanyFeed.method, CompanyFeed.health, CompanyFeed.last_error)
             .join(Company, Company.id == CompanyFeed.company_id)

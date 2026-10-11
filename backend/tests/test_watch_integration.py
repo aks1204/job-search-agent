@@ -75,6 +75,25 @@ def test_activation_finds_ats_verifies_and_syncs_immediately(db_session, mock, h
     assert _open(db_session, feed) == ["Product Analyst", "Senior Data Analyst"]
 
 
+def test_site_linking_two_boards_keeps_the_bigger_one(db_session, mock, http):
+    mock.get(url__regex=r"https://zentest-co\.io/?$").respond(
+        200, headers={"content-type": "text/html"},
+        html='<a href="https://boards.greenhouse.io/zentest-labs">Labs jobs</a>'
+             '<a href="https://jobs.lever.co/zentest">Careers</a>')
+    mock.get("https://boards-api.greenhouse.io/v1/boards/zentest-labs/jobs").respond(json={"jobs": JOBS["jobs"][:1]})
+    mock.get("https://boards-api.greenhouse.io/v1/boards/zentest-labs").respond(json={"name": "Zentest Labs"})
+    mock.get("https://api.lever.co/v0/postings/zentest").respond(json=[
+        {"id": f"l{i}", "text": f"Role {i}", "categories": {}, "hostedUrl": f"https://jobs.lever.co/zentest/l{i}"}
+        for i in range(3)
+    ])
+    company = _company(db_session)
+
+    feed, first = activate(db_session, company, http)
+
+    assert (feed.method, feed.slug) == ("lever", "zentest")  # greenhouse comes first on the ladder, but has 1 job
+    assert first.new == 3
+
+
 def test_sync_closes_missing_jobs_and_reopens_returning_ones(db_session, mock, http):
     jobs_route = _greenhouse(mock)
     company = _company(db_session)
