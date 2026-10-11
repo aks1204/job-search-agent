@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
-from app.core.hosts import ats_hints_in, is_ats_url, normalize_domain
+from app.core.hosts import ats_hint, ats_hints_in, is_ats_url, normalize_domain
 from app.core.http import PoliteClient, RobotsDisallowed
 from app.core.search import search_available, web_search
 
@@ -92,6 +92,9 @@ def _check(http: PoliteClient, url: str, domain: str, how: str) -> tuple[Discove
     if not (_on_domain(final_url, domain) or is_ats_url(final_url)):
         return None, None  # redirected off-site (e.g. to LinkedIn) — not trustworthy
     scan = scan_page(raw, final_url)
+    own = ats_hint(final_url)  # the link led straight onto a job board's own page
+    if own and own not in scan.ats_hints:
+        scan.ats_hints.insert(0, own)
     if scan.is_listing:
         return Discovery(final_url, scan, how, on_company_site=_on_domain(final_url, domain)), scan
     return None, scan

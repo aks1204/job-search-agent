@@ -166,3 +166,23 @@ def test_ownership_rules():
     ok, why = verify_ownership(ACME, result(board="Acme Plumbing Supplies"), linked_from_site=False, careers_url=None)
     assert not ok and "no evidence" in why
     assert not verify_ownership(ACME, FetchResult([]), linked_from_site=False, careers_url=None)[0]
+
+
+def test_tiny_namesake_board_rejected_for_large_company():
+    uber = SimpleNamespace(id=2, name="Uber", domain="uber.com", aliases=[])
+    one_job = FetchResult([RawJob("1", "Driver ops", url="https://jobs.smartrecruiters.com/uber/1")], "Uber")
+    ok, why = verify_ownership(uber, one_job, linked_from_site=False, careers_url=None,
+                               method="smartrecruiters", slug="uber", employee_estimate="10000+")
+    assert not ok and "namesake" in why
+    # The same board is fine for a small company.
+    assert verify_ownership(uber, one_job, linked_from_site=False, careers_url=None, employee_estimate="11-50")[0]
+
+
+def test_workday_tenant_matching_domain_is_strong_evidence():
+    lilly = SimpleNamespace(id=3, name="Eli Lilly", domain="lilly.com", aliases=[])
+    jobs = FetchResult([RawJob("R1", "Senior Data Analyst", url="https://lilly.wd5.myworkdayjobs.com/LLY/job/R1")])
+    ok, why = verify_ownership(lilly, jobs, linked_from_site=False, careers_url=None,
+                               method="workday", slug="lilly", employee_estimate="10000+")
+    assert ok and "tenant" in why
+    assert not verify_ownership(lilly, jobs, linked_from_site=False, careers_url=None,
+                                method="workday", slug="lillyfoods", employee_estimate="10000+")[0]

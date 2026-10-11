@@ -8,15 +8,17 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
 from app.core import audit
 from app.core.http import PoliteClient
-from app.core.hosts import domain_label
+from app.core.hosts import ats_hint, domain_label
 from app.models.company import STATUS_WATCHING, Company
 from app.models.feed import CompanyFeed
+from app.modules.m1_companies.facts import fact_card, value
 from app.modules.m1_companies.identity import normalize_name
 from app.modules.m1_companies.watch.careers import Discovery, discover
 from app.modules.m1_companies.watch.ownership import verify_ownership
@@ -35,6 +37,21 @@ class FeedCandidate:
     spec: FeedSpec
     linked_from_site: bool
     how: str
+    source_rank: int = 0  # 0 linked from site · 1 adapter · 2 AI-suggested · 3 blind slug guess
+
+
+class BoardSuggestions(BaseModel):
+    urls: list[str] = Field(description=(
+        "Job-board URLs this company publishes its openings on — Greenhouse, Lever, Ashby, SmartRecruiters, "
+        "Workable, Recruitee, or Workday (*.myworkdayjobs.com/…). Only boards you are confident about; "
+        "an empty list if unsure."
+    ))
+
+
+SUGGEST_SYSTEM = """You help a job-search assistant find where a company lists its open jobs.
+Large companies often run a JavaScript careers site backed by an applicant-tracking system such as Workday.
+Give the board URLs you are confident about for THIS company (match the name and domain). Every URL will be
+checked live, so never invent one. Answer in the requested JSON format."""
 
 
 def slug_guesses(company: Company) -> list[str]:
@@ -43,19 +60,38 @@ def slug_guesses(company: Company) -> list[str]:
     return [g for g in dict.fromkeys(guesses) if g and len(g) >= 2][:3]
 
 
-def _candidates(company: Company, discovery: Discovery | None) -> list[FeedCandidate]:
+def _ai_suggestions(company: Company, llm, session) -> list[dict]:
+    if llm is None:
+        return []
+    try:
+        urls = llm.structured(
+            "fast", system=SUGGEST_SYSTEM, schema=BoardSuggestions, purpose="m1.suggest_boards",
+            user=f"Company: {company.name}\nDomain: {company.domain}", session=session,
+            subject=("company", str(company.id)),
+        ).parsed.urls
+    except Exception as e:
+        log.info("board suggestions failed for %s: %s", company.name, e)
+        return []
+    return [h for u in urls[:5] if (h := ats_hint(u))]
+
+
+def _candidates(company: Company, discovery: Discovery | None, *, llm=None, session=None) -> list[FeedCandidate]:
     found: list[FeedCandidate] = []
     if discovery:
         for h in discovery.scan.ats_hints:
             found.append(FeedCandidate(FeedSpec(h["vendor"], h["slug"], h.get("site"), h.get("host")),
-                                   discovery.on_company_site, f"{discovery.how}: {h['vendor']}/{h['slug']}"))
+                                       discovery.on_company_site, f"{discovery.how}: {h['vendor']}/{h['slug']}"))
     if company.domain in get_config().adapters:
-        found.append(FeedCandidate(FeedSpec("adapter"), True, "community adapter"))
-    if not found:
-        for vendor in GUESSABLE:
-            for slug in slug_guesses(company):
-                found.append(FeedCandidate(FeedSpec(vendor, slug), False, f"guessed {vendor}/{slug}"))
-    return sorted(found, key=lambda c: LADDER.index(c.spec.method))
+        found.append(FeedCandidate(FeedSpec("adapter"), True, "community adapter", source_rank=1))
+    if not any(c.linked_from_site for c in found):  # only pay for AI suggestions when the site gave us nothing
+        for h in _ai_suggestions(company, llm, session):
+            found.append(FeedCandidate(FeedSpec(h["vendor"], h["slug"], h.get("site"), h.get("host")), False,
+                                       f"AI-suggested {h['vendor']}/{h['slug']}", source_rank=2))
+    for vendor in GUESSABLE:  # last resort; skipped once a better candidate is confirmed
+        for slug in slug_guesses(company):
+            found.append(FeedCandidate(FeedSpec(vendor, slug), False, f"guessed {vendor}/{slug}", source_rank=3))
+    unique = {(c.spec.method, (c.spec.slug or "").lower(), c.spec.site): c for c in reversed(found)}
+    return sorted(unique.values(), key=lambda c: (c.source_rank, LADDER.index(c.spec.method)))
 
 
 def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> FetchResult | None:
@@ -81,12 +117,16 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
     chosen: tuple[FeedCandidate, str] | None = None
     best_jobs = -1
     rejected_evidence: list[str] = []
-    for cand in _candidates(company, discovery):
+    size = value(fact_card(session, company.id), "employee_estimate")
+    for cand in _candidates(company, discovery, llm=llm, session=session):
+        if chosen and not cand.linked_from_site:
+            break  # never let a guess displace a board the company itself links to
         result = _try(http, company, cand)
         if result is None:
             continue
         ok, evidence = verify_ownership(company, result, linked_from_site=cand.linked_from_site,
-                                        careers_url=discovery.careers_url if discovery else None)
+                                        careers_url=discovery.careers_url if discovery else None,
+                                        method=cand.spec.method, slug=cand.spec.slug, employee_estimate=size)
         if not ok:
             rejected_evidence.append(f"{cand.how}: {evidence}")
             continue
@@ -94,8 +134,6 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
         # Workday site). Among verified boards, keep the biggest; the ladder order breaks ties.
         if len(result.jobs) > best_jobs:
             chosen, best_jobs = (cand, f"{evidence}; {len(result.jobs)} jobs"), len(result.jobs)
-        if not cand.linked_from_site:
-            break  # guessed boards: first verified one is enough
 
     feed = session.scalar(select(CompanyFeed).where(CompanyFeed.company_id == company.id))
     previous_method = feed.method if feed else None
