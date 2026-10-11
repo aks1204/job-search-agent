@@ -198,7 +198,7 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
     else:
         feed.method, feed.slug, feed.site, feed.host = "aggregator", None, None, None
         n = len(aggregator_jobs(session, company.id))
-        unreadable = sorted(vendors - set(READERS) - {"phenom"})
+        unreadable = sorted(vendors - set(READERS) - {"phenom"}) or sorted(vendors & {"phenom"})
         if unreadable:
             note = f"jobs are on {', '.join(unreadable)} (no reader yet)"
         elif discovery:

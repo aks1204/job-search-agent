@@ -265,7 +265,11 @@ def read_eightfold(http: PoliteClient, spec: FeedSpec, roles: list[str], *, page
                     raise FeedNotFound(f"{tenant}/{domain}")
                 resp.raise_for_status()
                 body = resp.json()
-                positions = (body.get("data") or {}).get("positions") or []
+                if not isinstance(body.get("data"), dict):
+                    # e.g. BCG: {"message": "PCSX is not enabled for this user."} — a talent-community
+                    # tenant, not the job search. Not a board, rather than a board with 0 jobs.
+                    raise FeedNotFound(f"{tenant}: {body.get('message') or 'no job search on this tenant'}")
+                positions = body["data"].get("positions") or []
                 for j in positions:
                     ext = str(j.get("id") or "")
                     if not ext or ext in seen:

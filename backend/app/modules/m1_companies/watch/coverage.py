@@ -15,7 +15,6 @@ from app.modules.m1_companies.watch.readers import READERS
 
 KEPT = (STATUS_PASSED, STATUS_WATCHING, STATUS_DORMANT)
 READABLE = set(READERS) | {"adapter"}
-NOT_AN_ATS = {"phenom"}  # careers-site platform fronting a real ATS; not something to build a reader for
 EXAMPLES = 5
 
 
@@ -39,7 +38,10 @@ def coverage(session: Session) -> dict:
             if feed.open_jobs == 0:
                 direct_empty.append(label)  # readable board, just no matching openings right now
         else:
-            unreadable = sorted(set(feed.detected_vendors or []) - READABLE - NOT_AN_ATS)
+            detected = set(feed.detected_vendors or []) - READABLE
+            # Phenom is a careers-site platform that usually fronts another ATS; count it only when
+            # nothing else was found behind it (BCG: Phenom search, no reachable ATS).
+            unreadable = sorted(detected - {"phenom"}) or sorted(detected)
             if unreadable:
                 for vendor in unreadable:
                     gaps[f"vendor: {vendor}"].append(label)

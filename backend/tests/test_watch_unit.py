@@ -187,6 +187,15 @@ def test_eightfold_reader_searches_india_then_anywhere(http):
                                        "https://morganstanley.eightfold.ai/careers/job/549796856002"]
 
 
+def test_eightfold_tenant_without_job_search_is_not_a_board(http):
+    client, mock = http
+    mock.get("https://bcg.eightfold.ai/api/pcsx/search").respond(json={"message": "PCSX is not enabled for this user."})
+    from app.modules.m1_companies.watch.readers import read_eightfold
+
+    with pytest.raises(FeedNotFound):
+        read_eightfold(client, FeedSpec("eightfold", "bcg", "bcg.com"), ["Data Analyst"])
+
+
 def test_oracle_reader_with_known_site_number_skips_the_board_page(http):
     import re
 
@@ -254,6 +263,22 @@ def test_sitemap_lines_are_read_from_robots():
 
     robots = "User-agent: *\nDisallow: */apply\nSitemap: https://careers.lilly.com/us/en/sitemap_index.xml\nsitemap: https://x/y.xml"
     assert _SITEMAP_LINE.findall(robots) == ["https://careers.lilly.com/us/en/sitemap_index.xml", "https://x/y.xml"]
+
+
+def test_link_heavy_landing_page_does_not_hide_the_real_board(http):
+    """Amex: the careers landing page has dozens of /careers/… links; its 'Jobs' link leads to the Oracle board."""
+    client, mock = http
+    nav = "".join(f'<a href="/careers/section-{i}/">Section {i}</a>' for i in range(10))
+    mock.get(url__regex=HOME).respond(200, **html('<a href="/careers/">Careers</a>'))
+    mock.get("https://acme-test.io/careers/").respond(200, **html(
+        nav + '<a href="https://careers.acme-test.io/en/sites/CX_1/jobs?intlink=nav">Jobs</a>'))
+    mock.get("https://careers.acme-test.io/en/sites/CX_1/jobs?intlink=nav").respond(200, **html(
+        '<div data-apibaseurl="https://pod.fa.us2.oraclecloud.com:443" data-sitenumber="CX_1"></div>'))
+
+    d = discover(client, ACME)
+
+    assert d.scan.ats_hints == [{"vendor": "oracle", "slug": "CX_1", "site": "CX_1", "host": "pod.fa.us2.oraclecloud.com"}]
+    assert d.on_company_site and "Jobs" in d.how
 
 
 def test_discover_rejects_offsite_redirects(http):

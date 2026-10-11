@@ -102,6 +102,34 @@ def _check(http: PoliteClient, url: str, domain: str, how: str) -> tuple[Discove
     return None, scan
 
 
+_STRONG_JOB_TEXT = re.compile(
+    r"\b((search|view|see|browse|explore|find|all|open)\s+)?(jobs|roles|positions|openings|opportunities|vacancies)\b",
+    re.I,
+)
+DEEPER_LINKS = 3
+
+
+def _deeper_links(scan: PageScan | None, domain: str, tried: set[str]) -> list[tuple[str, str]]:
+    """The most promising next hops from a careers landing page, best first."""
+    if scan is None:
+        return []
+    here = urlsplit(scan.url).netloc
+    ranked = []
+    for href, text in scan.links:
+        if href in tried or not (_on_domain(href, domain) or is_ats_url(href)):
+            continue
+        if not (CAREER_WORDS.search(text) or _STRONG_JOB_TEXT.search(text)):
+            continue
+        score = (3 if is_ats_url(href) else 0) + (2 if urlsplit(href).netloc != here else 0) \
+            + (1 if _STRONG_JOB_TEXT.search(text) else 0)
+        ranked.append((score, href, text))
+    ranked.sort(key=lambda r: -r[0])
+    best: dict[str, str] = {}
+    for _, href, text in ranked:
+        best.setdefault(href, text)
+    return list(best.items())[:DEEPER_LINKS]
+
+
 _LOC = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
 _SITEMAP_LINE = re.compile(r"^\s*sitemap:\s*(\S+)", re.I | re.M)
 SITEMAP_JOB_PAGES = 2
@@ -168,6 +196,19 @@ def discover(
                   f"https://careers.{domain}", f"https://jobs.{domain}"):
         candidates.append((guess, "URL guess"))
 
+    # A page that only *looks* like a listing (many /careers/… links) is kept as a fallback while we keep
+    # looking for an actual job board — Amex's landing page has 37 such links, and its one "Jobs" link
+    # leads to the real (Oracle) board.
+    fallback: Discovery | None = None
+
+    def consider(found: Discovery | None) -> Discovery | None:
+        nonlocal fallback
+        if found and found.scan.ats_hints:
+            return found
+        if found and fallback is None:
+            fallback = found
+        return None
+
     tried = set()
     for url, how in candidates:
         if url in tried or len(tried) >= MAX_CANDIDATES:
@@ -176,18 +217,16 @@ def discover(
         found, scan = _check(http, url, domain, how)
         if scan:
             seen |= scan.vendors
-        if found:
-            return found
-        # One level deeper: careers landing pages often link to "open positions".
-        for href, text in (scan.links if scan else []):
-            if CAREER_WORDS.search(text) and href not in tried and (_on_domain(href, domain) or is_ats_url(href)):
-                tried.add(href)
-                found, deeper = _check(http, href, domain, f"{how} → “{text}”")
-                if deeper:
-                    seen |= deeper.vendors
-                if found:
-                    return found
-                break
+        if board := consider(found):
+            return board
+        # One level deeper: careers landing pages link on to "Jobs" / "Open roles" / a careers subdomain.
+        for href, text in _deeper_links(scan, domain, tried):
+            tried.add(href)
+            found, deeper = _check(http, href, domain, f"{how} → “{text}”")
+            if deeper:
+                seen |= deeper.vendors
+            if board := consider(found):
+                return board
 
     # Rung 1c: JavaScript careers sites (Phenom & co.) hide the board from the landing page, but publish
     # sitemaps for crawlers, and a job page's server-rendered "Apply" link names the exact board.
@@ -205,8 +244,8 @@ def discover(
             if (_on_domain(r.url, domain) or is_ats_url(r.url)) and r.url not in tried:
                 tried.add(r.url)
                 found, _ = _check(http, r.url, domain, "web search")
-                if found:
-                    return found
+                if board := consider(found):
+                    return board
 
     # Rung 3: the AI picks from the homepage links.
     if llm is not None and home_scan and home_scan.links:
@@ -221,6 +260,6 @@ def discover(
             pick = None
         if pick and pick.url != "none" and pick.url not in tried:
             found, _ = _check(http, pick.url, domain, "AI-picked homepage link")
-            if found:
-                return found
-    return None
+            if board := consider(found):
+                return board
+    return fallback  # an on-site page of job links with no known board (custom careers page), or None
