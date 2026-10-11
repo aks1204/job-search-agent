@@ -135,6 +135,37 @@ def test_guessed_board_owned_by_someone_else_falls_back_to_aggregator(db_session
     assert "rejected" in feed.ownership_evidence
 
 
+class SuggestingLLM:
+    """Fake fast model that 'remembers' a Workday board on the wrong server, like the live Lilly run."""
+
+    def __init__(self, urls):
+        self.urls = urls
+
+    def structured(self, tier, *, system, user, schema, purpose, session=None, subject=None):
+        from app.core.llm import LLMResult
+
+        return LLMResult(parsed=schema(urls=self.urls), model="fake", cost_usd=0.0, input_tokens=0, output_tokens=0)
+
+
+def test_ai_suggested_workday_on_stale_server_is_corrected(db_session, mock, http):
+    company = _company(db_session, name="Lillytest", domain="lillytest.io")
+    company.type = "established"
+    mock.get(url__regex=r"https://([\w-]+\.)?lillytest\.io.*").respond(404)  # JS careers site: nothing readable
+    # The live server (first: respx uses the first matching route), then every other server refuses.
+    mock.post("https://lillytest.wd115.myworkdayjobs.com/wday/cxs/lillytest/LT/jobs").respond(json={"jobPostings": [
+        {"title": "Data Analyst – Senior Consultant", "externalPath": "/job/IN-Bengaluru/DA_R-1",
+         "locationsText": "IN: Bengaluru", "bulletFields": ["R-1"], "postedOn": "Posted 7 Days Ago"}]})
+    mock.post(url__regex=r"https://lillytest\.wd\d+\.myworkdayjobs\.com/.*").respond(422)
+    mock.get(url__regex=r"https://(boards-api\.greenhouse\.io|api\.lever\.co|api\.ashbyhq\.com|api\.smartrecruiters\.com)/.*").respond(404)
+
+    feed, first = activate(db_session, company, http,
+                           llm=SuggestingLLM(["https://lillytest.wd5.myworkdayjobs.com/en-US/LT"]))
+
+    assert (feed.method, feed.host, feed.site) == ("workday", "lillytest.wd115", "LT")
+    assert "wd5 → lillytest.wd115" in feed.ownership_evidence and "tenant" in feed.ownership_evidence
+    assert first.new == 1
+
+
 def test_gardening_cadence_staleness_and_pruning(db_session, mock, http):
     _greenhouse(mock)
     company = _company(db_session)

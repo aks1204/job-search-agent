@@ -197,6 +197,34 @@ def read_workday(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_
     return FetchResult(list(seen.values()))
 
 
+# Workday spreads tenants across numbered servers (wd1, wd5, wd115, …) and moves them over time,
+# so a remembered "lilly.wd5" can be stale while "lilly.wd115" is live. Common ones first.
+WORKDAY_SERVERS = (
+    [1, 3, 5, 10, 12, 101, 102, 103, 105, 108, 115, 501, 503]
+    + [n for n in range(1, 21) if n not in (1, 3, 5, 10, 12)]
+    + [n for n in range(100, 131) if n not in (101, 102, 103, 105, 108, 115)]
+)
+
+
+def find_workday_host(http: PoliteClient, tenant: str, site: str, *, skip: str | None = None) -> str | None:
+    """Probe Workday servers for the one hosting tenant/site. Returns 'tenant.wdN' or None."""
+    for n in WORKDAY_SERVERS:
+        host = f"{tenant}.wd{n}"
+        if host == skip:
+            continue
+        try:
+            resp = http.post(
+                f"https://{host}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs",
+                json={"appliedFacets": {}, "limit": 1, "offset": 0, "searchText": ""},
+                headers={"Accept": "application/json"},
+            )
+        except Exception:
+            continue
+        if resp.status_code == 200 and "jobPostings" in resp.text:
+            return host
+    return None
+
+
 def _dig(obj, path: str | None):
     if not path:
         return None

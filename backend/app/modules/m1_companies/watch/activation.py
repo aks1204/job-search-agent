@@ -23,7 +23,9 @@ from app.modules.m1_companies.facts import fact_card, value
 from app.modules.m1_companies.identity import normalize_name
 from app.modules.m1_companies.watch.careers import Discovery, discover
 from app.modules.m1_companies.watch.ownership import verify_ownership
-from app.modules.m1_companies.watch.readers import READERS, FeedNotFound, FeedSpec, FetchResult, read_adapter, read_workday
+from app.modules.m1_companies.watch.readers import (
+    READERS, FeedNotFound, FeedSpec, FetchResult, find_workday_host, read_adapter, read_workday,
+)
 from app.modules.m1_companies.watch.sync import SyncResult, aggregator_jobs, sync_feed
 
 log = logging.getLogger(__name__)
@@ -52,7 +54,9 @@ class BoardSuggestions(BaseModel):
 SUGGEST_SYSTEM = """You help a job-search assistant find where a company lists its open jobs.
 Large companies often run a JavaScript careers site backed by an applicant-tracking system such as Workday.
 Give the board URLs you are confident about for THIS company (match the name and domain). Every URL will be
-checked live, so never invent one. Answer in the requested JSON format."""
+checked live, so never invent one. For Workday, the tenant and site name matter most
+(https://TENANT.wdN.myworkdayjobs.com/SITE); the server number N is corrected automatically if it has changed.
+Answer in the requested JSON format."""
 
 
 def slug_guesses(company: Company) -> list[str]:
@@ -81,9 +85,13 @@ def _ai_suggestions(company: Company, llm, session, notes: list[str]) -> list[di
 
 
 def _candidates(company: Company, discovery: Discovery | None, *, llm=None, session=None,
-                notes: list[str] | None = None) -> list[FeedCandidate]:
+                notes: list[str] | None = None, previous: CompanyFeed | None = None) -> list[FeedCandidate]:
     notes = notes if notes is not None else []
     found: list[FeedCandidate] = []
+    if previous is not None and previous.method not in ("aggregator", "adapter"):
+        # Re-activation: the board we used before is the first thing to re-check (and re-verify).
+        found.append(FeedCandidate(FeedSpec(previous.method, previous.slug, previous.site, previous.host), False,
+                                   f"previous {previous.method}/{previous.slug}", source_rank=1))
     if discovery:
         for h in discovery.scan.ats_hints:
             found.append(FeedCandidate(FeedSpec(h["vendor"], h["slug"], h.get("site"), h.get("host")),
@@ -109,7 +117,17 @@ def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[Fet
         if cand.spec.method == "adapter":
             result = read_adapter(http, cfg.adapters[company.domain])
         elif cand.spec.method == "workday":
-            result = read_workday(http, cand.spec, roles, pages_per_role=1)
+            try:
+                result = read_workday(http, cand.spec, roles, pages_per_role=1)
+            except (FeedNotFound, httpx.HTTPStatusError) as first_error:
+                # Right tenant/site, wrong server number? Find the live one.
+                host = find_workday_host(http, cand.spec.slug, cand.spec.site, skip=cand.spec.host)
+                if host is None:
+                    raise first_error
+                old = cand.spec.host
+                cand.spec.host = host
+                cand.how += f" (server {old} → {host})"
+                result = read_workday(http, cand.spec, roles, pages_per_role=1)
         else:
             result = READERS[cand.spec.method](http, cand.spec, roles)
     except FeedNotFound:
@@ -130,7 +148,8 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
     best_jobs = -1
     attempts: list[str] = []  # every board tried and what happened — shown when we fall back
     size = value(fact_card(session, company.id), "employee_estimate")
-    for cand in _candidates(company, discovery, llm=llm, session=session, notes=attempts):
+    existing = session.scalar(select(CompanyFeed).where(CompanyFeed.company_id == company.id))
+    for cand in _candidates(company, discovery, llm=llm, session=session, notes=attempts, previous=existing):
         if chosen and not cand.linked_from_site:
             break  # never let a guess displace a board the company itself links to
         result, note = _try(http, company, cand)
@@ -148,7 +167,7 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
         if len(result.jobs) > best_jobs:
             chosen, best_jobs = (cand, f"{evidence}; {len(result.jobs)} jobs"), len(result.jobs)
 
-    feed = session.scalar(select(CompanyFeed).where(CompanyFeed.company_id == company.id))
+    feed = existing
     previous_method = feed.method if feed else None
     if feed is None:
         feed = CompanyFeed(company_id=company.id, activated_at=now)
