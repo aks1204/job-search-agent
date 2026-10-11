@@ -11,14 +11,14 @@ def _write(dir_, name, body):
 
 def test_loads_files_and_skips_examples(tmp_path):
     _write(tmp_path, "app.yaml", 'timezone: "Asia/Kolkata"\nquiet_hours: {start: "22:00", end: "08:00"}\n')
-    _write(tmp_path, "company_rules.yaml", "blocklist: [food delivery]\n")
+    _write(tmp_path, "notes.yaml", "anything: [goes]\n")  # files without a schema load as raw data
     _write(tmp_path, "owner_stub.example.yaml", "name: x\n")
 
     cfg = load_config(tmp_path)
 
-    assert set(cfg.files) == {"app", "company_rules"}
+    assert set(cfg.files) == {"app", "notes"}
     assert cfg.app.quiet_hours.start == time(22, 0)
-    assert cfg.file_version("company_rules") is not None
+    assert cfg.file_version("notes") is not None
     assert cfg.file_version("missing") is None
 
 

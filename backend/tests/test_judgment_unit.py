@@ -26,12 +26,13 @@ def test_strict_schema_requires_everything_and_forbids_extras():
 
 
 def test_feeder_facts_from_yc_and_aggregators():
-    facts = {(k, v, conf) for k, v, conf, _ in feeder_facts({
+    facts = [(k, v, conf) for k, v, conf, _ in feeder_facts({
         "yc": {"isHiring": True, "team_size": 35, "regions": ["India", "Remote"], "industries": ["Fintech"],
                "one_liner": "Payroll for India"},
         "adzuna": {"title": "Analyst"},
-    })}
+    })]
     assert ("actively_hiring", "yes", "verified") in facts
+    assert ("categories", ["fintech"], "verified") in facts
     assert ("employee_estimate", "11-50", "verified") in facts
     assert ("india_presence", "yes", "verified") in facts
     assert ("hires_remote_from_india", "yes", "inferred") in facts
