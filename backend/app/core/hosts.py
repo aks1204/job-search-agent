@@ -61,8 +61,9 @@ _NOT_SLUGS = {"embed", "api", "js", "v0", "v1", "jobs", "careers", "job", "apply
 
 # Any ATS URL inside raw HTML/JS (hrefs, iframes, script srcs, JSON config).
 ATS_URL = re.compile(
-    r"(?:https?:)?//[a-z0-9.-]*(?:greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|"
-    r"recruitee\.com|myworkdayjobs\.com)(?:/[^\s\"'<>)\\]*)?",
+    # Scheme optional: server-rendered JSON sometimes carries bare hosts ("lilly.wd115.myworkdayjobs.com/LLY/…").
+    r"(?<![\w.-])(?:(?:https?:)?//)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:greenhouse\.io|lever\.co|ashbyhq\.com|"
+    r"workable\.com|smartrecruiters\.com|recruitee\.com|myworkdayjobs\.com)(?:/[^\s\"'<>)\\]*)?",
     re.I,
 )
 

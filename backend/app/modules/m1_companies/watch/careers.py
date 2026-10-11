@@ -100,6 +100,43 @@ def _check(http: PoliteClient, url: str, domain: str, how: str) -> tuple[Discove
     return None, scan
 
 
+_LOC = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
+_SITEMAP_LINE = re.compile(r"^\s*sitemap:\s*(\S+)", re.I | re.M)
+SITEMAP_JOB_PAGES = 2
+
+
+def _get_text(http: PoliteClient, url: str) -> str | None:
+    try:
+        resp = http.get(url, scrape=True)
+    except (httpx.HTTPError, RobotsDisallowed):
+        return None
+    return resp.text if resp.status_code < 400 else None
+
+
+def _from_sitemaps(http: PoliteClient, hosts: list[str], domain: str) -> Discovery | None:
+    for host in hosts:
+        robots = _get_text(http, f"{host}/robots.txt") or ""
+        sitemaps = [u for u in _SITEMAP_LINE.findall(robots) if _on_domain(u, domain)][:3] or [f"{host}/sitemap.xml"]
+        for sitemap in sitemaps:
+            xml = _get_text(http, sitemap)
+            if not xml:
+                continue
+            locs = _LOC.findall(xml)
+            if "<sitemapindex" in xml.lower():  # an index of sitemaps: open the first child or two
+                children = sorted(locs, key=lambda u: "job" not in u.lower())[:2]
+                locs = [loc for child in children for loc in _LOC.findall(_get_text(http, child) or "")]
+            job_pages = [u for u in locs if _on_domain(u, domain) and JOB_PATH.search(urlsplit(u).path)]
+            for page_url in job_pages[:SITEMAP_JOB_PAGES]:
+                page = fetch_html(http, page_url)
+                if not page:
+                    continue
+                hints = ats_hints_in(page[1])
+                if hints:
+                    scan = PageScan(url=page[0], ats_hints=hints)
+                    return Discovery(page[0], scan, "job page found via sitemap", on_company_site=True)
+    return None
+
+
 def discover(http: PoliteClient, company, *, llm=None, session=None) -> Discovery | None:
     domain = company.domain
     home = fetch_html(http, f"https://{domain}") or fetch_html(http, f"https://www.{domain}")
@@ -137,6 +174,14 @@ def discover(http: PoliteClient, company, *, llm=None, session=None) -> Discover
                 if found:
                     return found
                 break
+
+    # Rung 1c: JavaScript careers sites (Phenom & co.) hide the board from the landing page, but publish
+    # sitemaps for crawlers, and a job page's server-rendered "Apply" link names the exact board.
+    hosts = [f"https://{domain}"] + [
+        f"{urlsplit(u).scheme}://{urlsplit(u).netloc}" for u in tried if _on_domain(u, domain)
+    ]
+    if found := _from_sitemaps(http, list(dict.fromkeys(hosts))[:4], domain):
+        return found
 
     # Rung 2: web search, keeping only the company's own site or ATS boards (never LinkedIn/Glassdoor).
     if search_available():

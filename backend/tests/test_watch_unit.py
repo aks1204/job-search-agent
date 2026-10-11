@@ -144,12 +144,38 @@ def test_discover_follows_nav_link_one_level_deeper(http):
     assert d.scan.ats_hints[0]["vendor"] == "greenhouse"
 
 
+def test_discover_js_careers_site_via_sitemap(http):
+    """Lilly-shaped: the careers landing page is a JS app; a sitemap job page names the Workday board."""
+    client, mock = http  # robots.txt answers 404 here, so the default /sitemap.xml location is used
+    mock.get(url__regex=HOME).respond(200, **html('<a href="https://careers.acme-test.io/us/en">Careers</a>'))
+    mock.get("https://careers.acme-test.io/us/en").respond(200, **html('<div id="app">Loading…</div>'))
+    mock.get("https://careers.acme-test.io/sitemap.xml").respond(
+        200, text="<sitemapindex><sitemap><loc>https://careers.acme-test.io/us/en/sitemap1.xml</loc></sitemap></sitemapindex>")
+    mock.get("https://careers.acme-test.io/us/en/sitemap1.xml").respond(
+        200, text="<urlset><url><loc>https://careers.acme-test.io/us/en/job/R-1/Data-Analyst</loc></url></urlset>")
+    mock.get("https://careers.acme-test.io/us/en/job/R-1/Data-Analyst").respond(200, **html(
+        '<script>var ddo = {"applyUrl":"acme.wd115.myworkdayjobs.com\\/ACM\\/job\\/IN-Bengaluru\\/DA_R-1\\/apply"}</script>'))
+    mock.get(url__regex=r"https://(acme-test\.io/(careers|jobs|sitemap\.xml)|jobs\.acme-test\.io|careers\.acme-test\.io/?$).*").respond(404)
+
+    d = discover(client, ACME)
+
+    assert d is not None and d.on_company_site and d.how == "job page found via sitemap"
+    assert d.scan.ats_hints == [{"vendor": "workday", "slug": "acme", "site": "ACM", "host": "acme.wd115"}]
+
+
+def test_sitemap_lines_are_read_from_robots():
+    from app.modules.m1_companies.watch.careers import _SITEMAP_LINE
+
+    robots = "User-agent: *\nDisallow: */apply\nSitemap: https://careers.lilly.com/us/en/sitemap_index.xml\nsitemap: https://x/y.xml"
+    assert _SITEMAP_LINE.findall(robots) == ["https://careers.lilly.com/us/en/sitemap_index.xml", "https://x/y.xml"]
+
+
 def test_discover_rejects_offsite_redirects(http):
     client, mock = http
     mock.get(url__regex=HOME).respond(200, **html('<a href="/careers">Careers</a>'))
     mock.get("https://acme-test.io/careers").respond(302, headers={"location": "https://www.linkedin.com/company/acme/jobs"})
     mock.get("https://www.linkedin.com/company/acme/jobs").respond(200, **html("lots of jobs"))
-    mock.get(url__regex=r"https://(acme-test\.io/jobs|careers\.acme-test\.io|jobs\.acme-test\.io).*").respond(404)
+    mock.get(url__regex=r"https://(acme-test\.io/(jobs|sitemap\.xml)|careers\.acme-test\.io|jobs\.acme-test\.io).*").respond(404)
     assert discover(client, ACME) is None
 
 
