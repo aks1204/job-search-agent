@@ -1,0 +1,29 @@
+# Watchlist upkeep (Module 1 §1.5). Read-only in the dashboard: edit + `docker compose restart`.
+
+activation_batch: 10            # kept companies set up per scheduler tick
+sync_batch: 30                  # job feeds read per scheduler tick
+tick_minutes: 15
+
+# Cadence: active companies are read every few hours, quiet ones weekly.
+active_sync_hours: 6
+dormant_sync_days: 7
+dormant_after_quiet_days: 30    # no job changes for this long → weekly reads
+
+# Self-healing.
+reactivate_after_failures: 5    # consecutive read failures → redo setup (catches ATS migrations)
+reverify_days: 90               # re-check every feed still belongs to the company
+stale_aggregator_jobs: 2        # job sites show ≥ this many jobs our feed doesn't → redo setup
+
+# Pruning.
+demote_after_silent_days: 90    # no job activity → company marked dormant
+archive_after_silent_days: 180  # another 90 days → archived (no more reads)
+
+# Fact-card refresh.
+refresh_startup_days: 30
+refresh_established_days: 90
+refresh_rejected_days: 180      # slow lane: may revive a reject if a relevant fact changed
+refresh_per_run: 40             # bounds AI spend per weekly run
+
+# Large Workday boards are searched with your target roles (the site's own
+# filter) instead of read in full.
+workday_pages_per_role: 2

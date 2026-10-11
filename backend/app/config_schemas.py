@@ -216,6 +216,55 @@ class CompanyRules(Strict):
     established: EstablishedRules = Field(default_factory=EstablishedRules)
 
 
+# --- watch.yaml ---------------------------------------------------------------
+
+class WatchConfig(Strict):
+    activation_batch: int = 10
+    sync_batch: int = 30
+    tick_minutes: int = Field(15, ge=5)
+    active_sync_hours: int = 6
+    dormant_sync_days: int = 7
+    dormant_after_quiet_days: int = 30
+    reactivate_after_failures: int = 5
+    reverify_days: int = 90
+    stale_aggregator_jobs: int = 2
+    demote_after_silent_days: int = 90
+    archive_after_silent_days: int = 180
+    refresh_startup_days: int = 30
+    refresh_established_days: int = 90
+    refresh_rejected_days: int = 180
+    refresh_per_run: int = 40
+    workday_pages_per_role: int = Field(2, ge=1, le=10)
+
+
+# --- adapters/*.yaml ----------------------------------------------------------
+
+class AdapterRequest(Strict):
+    method: Literal["GET", "POST"] = "GET"
+    url: str
+    params: dict[str, str | int] = Field(default_factory=dict)
+    json_body: dict | None = None
+
+
+class AdapterPagination(Strict):
+    param: str  # query/body field carrying the offset
+    size: int = 50
+    max_pages: int = Field(5, ge=1, le=20)
+
+
+class Adapter(Strict):
+    """A JSON careers endpoint for one large company. Field values are dot-paths into each item."""
+
+    name: str
+    domain: str
+    request: AdapterRequest
+    items: str  # dot-path to the list of jobs in the response, e.g. "data.jobs"
+    fields: dict[str, str]  # external_id, title, location, url, posted_at, description, department
+    url_template: str | None = None  # e.g. "https://careers.example.com/job/{external_id}"
+    pagination: AdapterPagination | None = None
+    maintainer: str = ""
+
+
 # --- llm.yaml ---------------------------------------------------------------
 
 class LLMTier(Strict):

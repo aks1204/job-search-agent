@@ -22,6 +22,11 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
             "task": "m1.evaluate_batch",
             "schedule": cfg.rules.evaluation.interval_minutes * 60.0,
         },
+        "m1-activate-batch": {"task": "m1.activate_batch", "schedule": cfg.watch.tick_minutes * 60.0},
+        "m1-sync-batch": {"task": "m1.sync_batch", "schedule": cfg.watch.tick_minutes * 60.0},
+        # Weekly gardening, Sunday 03:00 in the app timezone.
+        "m1-garden": {"task": "m1.garden", "schedule": crontab(minute="0", hour="3", day_of_week="sun")},
+        "m1-check-rules": {"task": "m1.check_rules_changes", "schedule": crontab(minute="30", hour="4")},
     }
     for name in SCOUT_NAMES:
         scout = getattr(cfg.scouts, name)

@@ -2,7 +2,7 @@
 
 A self-hosted AI agent that finds relevant job openings, prepares outreach for your approval, and tracks your pipeline. It runs 24/7 on your own server. Full design: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-> **Status:** Module 0 (platform foundation) ✅ · Module 1 Part 1a (discovery) ✅ · Part 1b (judgment) — in review.
+> **Status:** Module 0 ✅ · Module 1: discovery ✅ · judgment ✅ · watching (Part 1c) — in review.
 
 ## You need an always-on host
 
@@ -102,6 +102,36 @@ docker compose exec api python -m app.cli stats                      # includes 
 ```
 
 API: `GET /api/verdicts`, `POST /api/companies/{id}/override`, `POST /api/companies/{id}/evaluate`, `GET /api/llm/usage`.
+
+## Watching companies (Module 1, Part 1c)
+
+Every kept company gets a **job feed**, set up automatically within about 15 minutes of passing:
+
+1. **Find the careers page.** The agent tries the homepage's links, then common addresses (`/careers`, `jobs.` and similar), then a web search, then an AI pick from the homepage links. A page is trusted only if it actually lists jobs. Redirects to LinkedIn or Glassdoor are refused.
+2. **Pick the cheapest reliable reader:**
+   - the public job-board APIs of Greenhouse, Lever, Ashby, SmartRecruiters, Workable and Recruitee;
+   - Workday, searched with your target roles rather than read in full;
+   - a [per-company adapter](config/adapters/README.md);
+   - otherwise, the **job-site fallback**, which uses what Adzuna, Jooble and Remotive show for that company. These postings are marked *lead only*.
+3. **Check ownership.** A board found by guessing its name must prove it belongs to this company: an exact name match, links back to the company's site, or job descriptions that name it.
+4. **First sync immediately.** Jobs land in `raw_postings`, where Module 2 will score them. Later syncs add new jobs, update changed ones and close removed ones.
+
+**Weekly upkeep** runs on Sundays at 03:00:
+- **Cadence:** active companies are read every 6 hours, quiet ones weekly.
+- **Repairs:** a broken feed is re-set-up after 5 failures in a row. A feed that's missing jobs the job sites can see is re-set-up too. Every feed is re-checked every 90 days.
+- **Pruning:** a company is marked dormant after 90 silent days and archived after a further 90.
+- **Refreshes:** fact cards are refreshed monthly for startups and quarterly for big companies.
+
+Companies on custom careers pages that no reader supports yet use the job-site fallback for now. A browser-based reader for those pages is planned.
+
+```bash
+docker compose exec api python -m app.cli activate --limit 5      # set up feeds now
+docker compose exec api python -m app.cli feeds                   # health by method
+docker compose exec api python -m app.cli jobs --domain uber.com  # a company's open roles
+docker compose exec api python -m app.cli garden                  # run the weekly upkeep now
+```
+
+API: `GET /api/feeds`, `GET /api/postings`, `POST /api/companies/{id}/activate`.
 
 ## Configuration
 

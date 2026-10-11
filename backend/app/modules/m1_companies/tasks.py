@@ -28,6 +28,27 @@ def evaluate_ids_task(company_ids: list[int]) -> dict:
     return run_batch(company_ids=company_ids)
 
 
+@celery_app.task(name="m1.activate_batch")
+def activate_batch_task(company_ids: list[int] | None = None) -> dict:
+    from app.modules.m1_companies.watch.queue import run_activation_batch
+
+    return run_activation_batch(company_ids=company_ids)
+
+
+@celery_app.task(name="m1.sync_batch")
+def sync_batch_task() -> dict:
+    from app.modules.m1_companies.watch.queue import run_sync_batch
+
+    return run_sync_batch()
+
+
+@celery_app.task(name="m1.garden")
+def garden_task() -> dict:
+    from app.modules.m1_companies.watch.queue import run_gardening
+
+    return run_gardening()
+
+
 @celery_app.task(name="m1.check_rules_changes")
 def check_rules_changes_task() -> dict:
     with session_scope() as s:

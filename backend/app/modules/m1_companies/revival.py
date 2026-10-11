@@ -43,6 +43,30 @@ def on_new_sighting(session: Session, company: Company, scout: str) -> bool:
     return True
 
 
+# Facts each failure reason depends on: a change in one of these earns a re-check.
+RELEVANT_FACTS = {
+    "avoid_list": {"business_model"},
+    "geography": {"india_presence", "hires_remote_from_india", "sponsors_visa"},
+    "viability": {"actively_hiring", "raised_within_window", "distress"},
+    "novelty": {"what_they_build", "categories"},
+    "brand": {"employee_estimate", "company_stage"},
+}
+
+
+def on_facts_changed(session: Session, company: Company, changed: set[str]) -> bool:
+    """Trigger (a), refresh path: a fact behind the failure reason changed."""
+    if company.status != STATUS_REJECTED or not changed:
+        return False
+    verdict = latest_verdict(session, company.id)
+    if verdict is None or verdict.permanent or verdict.decided_by != "machine":
+        return False
+    hit = changed & RELEVANT_FACTS.get(verdict.failed_check or "", set())
+    if not hit:
+        return False
+    _requeue(session, company, "refresh", "fact card changed: " + ", ".join(sorted(hit)))
+    return True
+
+
 def check_rules_changes(session: Session) -> Counter:
     """Trigger (b): requeue machine rejections whose deciding rules section has changed."""
     cfg = get_config()

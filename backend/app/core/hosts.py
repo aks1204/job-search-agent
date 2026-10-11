@@ -46,14 +46,25 @@ ATS_DOMAINS = frozenset({
 })
 
 _ATS_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("greenhouse", re.compile(r"^(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io/(?:embed/job_board\?for=)?([\w-]+)", re.I)),
+    ("greenhouse", re.compile(
+        r"^(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io/(?:embed/job_board(?:/js)?\?for=)?([\w-]+)", re.I)),
     ("lever", re.compile(r"^jobs(?:\.eu)?\.lever\.co/([\w.-]+)", re.I)),
     ("ashby", re.compile(r"^jobs\.ashbyhq\.com/([\w.%-]+)", re.I)),
     ("workable", re.compile(r"^apply\.workable\.com/([\w-]+)", re.I)),
     ("smartrecruiters", re.compile(r"^(?:jobs|careers)\.smartrecruiters\.com/([\w-]+)", re.I)),
     ("recruitee", re.compile(r"^([\w-]+)\.recruitee\.com", re.I)),
-    ("workday", re.compile(r"^([\w-]+)\.wd\d+\.myworkdayjobs\.com/(?:[a-z]{2}-[A-Z]{2}/)?([\w-]+)", re.I)),
+    ("workday", re.compile(r"^([\w-]+)\.(wd\d+)\.myworkdayjobs\.com/(?:[a-z]{2}-[a-z]{2}/)?([\w-]+)", re.I)),
 ]
+
+# Path segments that look like slugs but aren't.
+_NOT_SLUGS = {"embed", "api", "js", "v0", "v1", "jobs", "careers", "job", "apply", "www", "app", "widget", "en-us"}
+
+# Any ATS URL inside raw HTML/JS (hrefs, iframes, script srcs, JSON config).
+ATS_URL = re.compile(
+    r"(?:https?:)?//[a-z0-9.-]*(?:greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|"
+    r"recruitee\.com|myworkdayjobs\.com)(?:/[^\s\"'<>)\\]*)?",
+    re.I,
+)
 
 
 def hostname(url_or_host: str | None) -> str | None:
@@ -99,15 +110,35 @@ def ats_hint(url: str | None) -> dict | None:
     """'https://jobs.lever.co/acme/123' -> {'vendor': 'lever', 'slug': 'acme'}."""
     if not url:
         return None
-    stripped = re.sub(r"^https?://", "", url.strip(), flags=re.I)
+    stripped = re.sub(r"^(?:https?:)?//", "", url.strip(), flags=re.I)
     for vendor, pattern in _ATS_PATTERNS:
         m = pattern.match(stripped)
-        if m:
-            hint = {"vendor": vendor, "slug": m.group(1)}
-            if vendor == "workday":
-                hint["site"] = m.group(2)
-            return hint
+        if not m:
+            continue
+        if vendor == "workday":
+            tenant, wd, site = m.group(1), m.group(2), m.group(3)
+            if site.lower() in _NOT_SLUGS:
+                return None
+            return {"vendor": vendor, "slug": tenant, "site": site, "host": f"{tenant}.{wd}"}
+        slug = m.group(1)
+        if slug.lower() in _NOT_SLUGS:
+            return None
+        return {"vendor": vendor, "slug": slug}
     return None
+
+
+def ats_hints_in(raw_html: str) -> list[dict]:
+    """Every distinct ATS board referenced anywhere in a page."""
+    text = raw_html.replace("\\/", "/")
+    seen, hints = set(), []
+    for m in ATS_URL.finditer(text):
+        hint = ats_hint(m.group(0))
+        if hint:
+            key = (hint["vendor"], hint["slug"].lower(), hint.get("site"))
+            if key not in seen:
+                seen.add(key)
+                hints.append(hint)
+    return hints
 
 
 def domain_label(domain: str) -> str:

@@ -25,12 +25,17 @@ from app.db import Base
 #   passed      evaluator said yes → Part 1c activates a watch
 #   rejected    evaluator said no (may return on a trigger)
 #   blocked     permanent no (category blocklist / owner thumbs-down) — never revives
-#   watching / dormant / archived   (Part 1c)
+#   watching    has a verified job feed being read on a cadence
+#   dormant     watched, but no job activity for months (read weekly)
+#   archived    silent for longer still — no more reads (revives on new signals)
 STATUS_UNRESOLVED = "unresolved"
 STATUS_CANDIDATE = "candidate"
 STATUS_PASSED = "passed"
 STATUS_REJECTED = "rejected"
 STATUS_BLOCKED = "blocked"
+STATUS_WATCHING = "watching"
+STATUS_DORMANT = "dormant"
+STATUS_ARCHIVED = "archived"
 
 COMPANY_TYPES = ("startup", "established", "unknown")
 

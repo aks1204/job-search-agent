@@ -8,6 +8,11 @@
                                      # judge companies now (respects the daily limit unless --force)
     python -m app.cli verdicts [--last 20] [--rejected | --passed] [--details]
     python -m app.cli override <domain> keep|reject "<reason>" [--permanent]
+    python -m app.cli activate [--limit N] [--domain acme.com]   # set up job feeds for kept companies now
+    python -m app.cli sync [--limit N] [--domain acme.com]       # read due feeds now
+    python -m app.cli feeds                                      # watchlist health
+    python -m app.cli jobs --domain acme.com                     # a company's open postings
+    python -m app.cli garden                                     # run the weekly upkeep now
 """
 
 import argparse
@@ -252,6 +257,103 @@ def override_cmd(domain: str, decision: str, reason: str, permanent: bool) -> in
     return 0
 
 
+def _company_ids(domain: str | None) -> list[int] | None:
+    if not domain:
+        return None
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company
+
+    with session_scope() as s:
+        cid = s.scalar(select(Company.id).where(Company.domain == domain.lower()))
+    if cid is None:
+        raise SystemExit(f"No company with domain {domain}")
+    return [cid]
+
+
+def _print_counts(result: dict) -> None:
+    for k, v in sorted(result.items()):
+        print(f"  {k}: {v}")
+    if not result:
+        print("  nothing to do")
+
+
+def activate_cmd(limit: int | None, domain: str | None) -> int:
+    from app.modules.m1_companies.watch.queue import run_activation_batch
+
+    print("Setting up job feeds…")
+    _print_counts(run_activation_batch(limit=limit, company_ids=_company_ids(domain)))
+    return 0
+
+
+def sync_cmd(limit: int | None, domain: str | None) -> int:
+    from app.modules.m1_companies.watch.queue import run_sync_batch
+
+    print("Reading job feeds…")
+    _print_counts(run_sync_batch(limit=limit, company_ids=_company_ids(domain)))
+    return 0
+
+
+def garden_cmd() -> int:
+    from app.modules.m1_companies.watch.queue import run_gardening
+
+    print("Running weekly upkeep…")
+    _print_counts(run_gardening())
+    return 0
+
+
+def feeds_cmd() -> int:
+    from sqlalchemy import func, select
+
+    from app.db import session_scope
+    from app.models import Company, CompanyFeed
+
+    with session_scope() as s:
+        print("Feeds by reading method:")
+        for method, n, jobs in s.execute(
+            select(CompanyFeed.method, func.count(), func.sum(CompanyFeed.open_jobs)).group_by(CompanyFeed.method)
+        ).all():
+            print(f"  {method:<16} {n:>4} companies, {jobs or 0:>5} open jobs")
+        print("Feeds by health:")
+        for health, n in s.execute(select(CompanyFeed.health, func.count()).group_by(CompanyFeed.health)).all():
+            print(f"  {health:<16} {n}")
+        trouble = s.execute(
+            select(Company.name, Company.domain, CompanyFeed.method, CompanyFeed.health, CompanyFeed.last_error)
+            .join(Company, Company.id == CompanyFeed.company_id)
+            .where(CompanyFeed.health.in_(("failing", "stale"))).limit(20)
+        ).all()
+        if trouble:
+            print("Needs attention (self-healing will retry):")
+            for name, domain, method, health, err in trouble:
+                print(f"  {name} ({domain}) {method} {health}: {(err or '')[:100]}")
+    return 0
+
+
+def jobs_cmd(domain: str) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import CompanyFeed, RawPosting
+
+    ids = _company_ids(domain)
+    with session_scope() as s:
+        feed = s.scalar(select(CompanyFeed).where(CompanyFeed.company_id == ids[0]))
+        if feed is None:
+            print("No feed yet — run: python -m app.cli activate --domain " + domain)
+            return 0
+        print(f"{domain}: {feed.method}" + (f"/{feed.slug}" if feed.slug else "") + f", health {feed.health}")
+        print(f"  ownership: {feed.ownership_evidence}")
+        rows = s.scalars(select(RawPosting).where(RawPosting.feed_id == feed.id, RawPosting.closed_at.is_(None))
+                         .order_by(RawPosting.first_seen_at.desc()).limit(40)).all()
+        for p in rows:
+            print(f"  - {p.title} | {p.location or '—'}" + (" (lead only)" if p.lead_only else ""))
+            if p.url:
+                print(f"    {p.url}")
+        print(f"{len(rows)} shown (open postings)")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -275,6 +377,14 @@ def main() -> None:
     p_ovr.add_argument("decision", choices=["keep", "reject"])
     p_ovr.add_argument("reason")
     p_ovr.add_argument("--permanent", action="store_true", help="reject forever (never auto-revive)")
+    for name, help_text in (("activate", "set up job feeds now"), ("sync", "read due job feeds now")):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--limit", type=int)
+        p.add_argument("--domain")
+    sub.add_parser("feeds", help="watchlist health")
+    p_jobs = sub.add_parser("jobs", help="a company's open postings")
+    p_jobs.add_argument("--domain", required=True)
+    sub.add_parser("garden", help="run the weekly upkeep now")
     args = parser.parse_args()
 
     if args.command == "selftest":
@@ -291,6 +401,16 @@ def main() -> None:
         sys.exit(verdicts(args.last, True if args.passed else False if args.rejected else None, args.details))
     if args.command == "override":
         sys.exit(override_cmd(args.domain, args.decision, args.reason, args.permanent))
+    if args.command == "activate":
+        sys.exit(activate_cmd(args.limit, args.domain))
+    if args.command == "sync":
+        sys.exit(sync_cmd(args.limit, args.domain))
+    if args.command == "feeds":
+        sys.exit(feeds_cmd())
+    if args.command == "jobs":
+        sys.exit(jobs_cmd(args.domain))
+    if args.command == "garden":
+        sys.exit(garden_cmd())
 
 
 if __name__ == "__main__":

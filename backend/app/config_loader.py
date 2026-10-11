@@ -15,7 +15,7 @@ from typing import Any, TypeVar
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from app.config_schemas import AppConfig, CompanyRules, LLMConfig, OwnerStub, ScoutsConfig, SeedList
+from app.config_schemas import AppConfig, CompanyRules, LLMConfig, OwnerStub, ScoutsConfig, SeedList, WatchConfig
 from app.settings import get_settings
 
 M = TypeVar("M", bound=BaseModel)
@@ -42,6 +42,8 @@ class LoadedConfig:
     owner: OwnerStub | None  # None until config/owner_stub.yaml exists
     rules: CompanyRules
     llm: LLMConfig
+    watch: WatchConfig
+    adapters: dict[str, dict]  # giant-company adapters from config/adapters/*.yaml, keyed by domain
 
     def file_version(self, name: str) -> str | None:
         f = self.files.get(name)
@@ -89,7 +91,27 @@ def load_config(config_dir: Path) -> LoadedConfig:
         owner=_validate(files, "owner_stub", OwnerStub),
         rules=_validate(files, "company_rules", CompanyRules) or CompanyRules(),
         llm=_validate(files, "llm", LLMConfig) or LLMConfig(),
+        watch=_validate(files, "watch", WatchConfig) or WatchConfig(),
+        adapters=_load_adapters(config_dir / "adapters"),
     )
+
+
+def _load_adapters(folder: Path) -> dict[str, dict]:
+    """Community-maintained per-company readers (see config/adapters/README.md)."""
+    from app.config_schemas import Adapter
+
+    adapters: dict[str, dict] = {}
+    if not folder.is_dir():
+        return adapters
+    for path in sorted(folder.glob("*.yaml")):
+        if path.name.endswith(".example.yaml"):
+            continue
+        try:
+            adapter = Adapter.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+        except (yaml.YAMLError, ValidationError) as e:
+            raise ConfigError(f"adapters/{path.name}: {e}") from e
+        adapters[adapter.domain.lower()] = adapter.model_dump()
+    return adapters
 
 
 @lru_cache(maxsize=1)

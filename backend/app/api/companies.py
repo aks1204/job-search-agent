@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.api.feeds import feed_dict
 from app.api.verdicts import verdict_dict
 from app.db import get_session
-from app.models import AuditLog, Company, CompanySighting, CompanyVerdict, ContactLead
+from app.models import AuditLog, Company, CompanyFeed, CompanySighting, CompanyVerdict, ContactLead, RawPosting
 from app.modules.m1_companies.facts import fact_card
 
 router = APIRouter()
@@ -83,5 +84,9 @@ def get_company(company_id: int, session: Session = Depends(get_session)) -> dic
         "contact_leads": [{"email": l.email, "source": l.source, "context": l.context} for l in leads],
         "facts": fact_card(session, c.id),
         "verdicts": [verdict_dict(v) for v in verdicts],
+        "feed": feed_dict(feed) if (feed := session.scalar(
+            select(CompanyFeed).where(CompanyFeed.company_id == c.id))) else None,
+        "open_postings": session.scalar(select(func.count()).select_from(RawPosting).where(
+            RawPosting.company_id == c.id, RawPosting.closed_at.is_(None), RawPosting.lead_only.is_(False))),
         "audit": [{"at": a.created_at, "action": a.action, "summary": a.summary, "detail": a.detail} for a in log],
     }

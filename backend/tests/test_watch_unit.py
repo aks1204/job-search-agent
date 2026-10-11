@@ -1,0 +1,168 @@
+"""Part 1c without a database: readers, careers discovery, ownership. All HTTP is mocked."""
+
+from types import SimpleNamespace
+
+import httpx
+import pytest
+import respx
+
+from app.core.http import PoliteClient
+from app.modules.m1_companies.watch.careers import discover, scan_page
+from app.modules.m1_companies.watch.ownership import verify_ownership
+from app.modules.m1_companies.watch.readers import (
+    FeedNotFound, FeedSpec, FetchResult, RawJob, read_ashby, read_greenhouse, read_lever,
+    read_recruitee, read_smartrecruiters, read_workable, read_workday,
+)
+
+ACME = SimpleNamespace(id=1, name="Acme Analytics", domain="acme-test.io", aliases=[])
+
+
+@pytest.fixture(autouse=True)
+def no_web_search(monkeypatch):
+    monkeypatch.setattr("app.modules.m1_companies.watch.careers.search_available", lambda: False)
+
+
+@pytest.fixture
+def http():
+    with PoliteClient(default_interval=0, use_redis=False) as client, respx.mock(assert_all_called=False) as mock:
+        mock.get(url__regex=r"https://[^/]+/robots\.txt").respond(404)
+        yield client, mock
+
+
+HOME = r"https://acme-test\.io/?$"
+
+
+def html(body: str) -> dict:
+    return {"headers": {"content-type": "text/html"}, "html": f"<html><body>{body}</body></html>"}
+
+
+# --- readers ---------------------------------------------------------------
+
+def test_greenhouse(http):
+    client, mock = http
+    mock.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs").respond(json={"jobs": [
+        {"id": 7, "title": "Product Analyst", "location": {"name": "Bengaluru"}, "absolute_url": "https://acme-test.io/jobs/7",
+         "content": "&lt;p&gt;Own our &lt;b&gt;metrics&lt;/b&gt;&lt;/p&gt;", "departments": [{"name": "Data"}],
+         "updated_at": "2026-10-01T00:00:00Z"},
+    ]})
+    mock.get("https://boards-api.greenhouse.io/v1/boards/acme").respond(json={"name": "Acme Analytics"})
+    r = read_greenhouse(client, FeedSpec("greenhouse", "acme"), [])
+    job = r.jobs[0]
+    assert (job.external_id, job.title, job.location, job.department) == ("7", "Product Analyst", "Bengaluru", "Data")
+    assert job.description == "Own our metrics"
+    assert r.board_name == "Acme Analytics"
+
+
+def test_greenhouse_unknown_board_is_not_found(http):
+    client, mock = http
+    mock.get("https://boards-api.greenhouse.io/v1/boards/nope/jobs").respond(404)
+    with pytest.raises(FeedNotFound):
+        read_greenhouse(client, FeedSpec("greenhouse", "nope"), [])
+
+
+def test_lever_and_ashby(http):
+    client, mock = http
+    mock.get("https://api.lever.co/v0/postings/acme").respond(json=[
+        {"id": "abc", "text": "Senior Data Analyst", "categories": {"location": "Remote - India", "team": "Data",
+         "commitment": "Full-time"}, "hostedUrl": "https://jobs.lever.co/acme/abc", "createdAt": 1790000000000,
+         "descriptionPlain": "Analyse things"},
+    ])
+    mock.get("https://api.ashbyhq.com/posting-api/job-board/acme").respond(json={"jobs": [
+        {"id": "x1", "title": "Strategy Associate", "location": "Mumbai", "jobUrl": "https://jobs.ashbyhq.com/acme/x1",
+         "isListed": True, "descriptionPlain": "Strategy"},
+        {"id": "x2", "title": "Hidden", "isListed": False},
+    ]})
+    lever = read_lever(client, FeedSpec("lever", "acme"), []).jobs[0]
+    assert (lever.title, lever.employment_type, lever.posted_at[:4]) == ("Senior Data Analyst", "Full-time", "2026")
+    assert [j.title for j in read_ashby(client, FeedSpec("ashby", "acme"), []).jobs] == ["Strategy Associate"]
+
+
+def test_smartrecruiters_empty_account_counts_as_not_found(http):
+    client, mock = http
+    mock.get("https://api.smartrecruiters.com/v1/companies/ghost/postings").respond(json={"content": []})
+    with pytest.raises(FeedNotFound):
+        read_smartrecruiters(client, FeedSpec("smartrecruiters", "ghost"), [])
+
+
+def test_workable_and_recruitee(http):
+    client, mock = http
+    mock.get("https://apply.workable.com/api/v1/widget/accounts/acme").respond(json={
+        "name": "Acme Analytics", "jobs": [{"shortcode": "AB12", "title": "BA", "city": "Pune", "country": "India",
+                                            "url": "https://apply.workable.com/j/AB12"}]})
+    mock.get("https://acme.recruitee.com/api/offers/").respond(json={"offers": [
+        {"id": 5, "title": "Founder's Office", "location": "Delhi", "careers_url": "https://acme.recruitee.com/o/fo",
+         "company_name": "Acme Analytics", "description": "<p>Work with founders</p>"}]})
+    w = read_workable(client, FeedSpec("workable", "acme"), [])
+    assert (w.board_name, w.jobs[0].location) == ("Acme Analytics", "Pune, India")
+    r = read_recruitee(client, FeedSpec("recruitee", "acme"), [])
+    assert r.jobs[0].description == "Work with founders"
+
+
+def test_workday_searches_with_roles_and_dedupes(http):
+    client, mock = http
+    calls = []
+
+    def respond(request):
+        calls.append(request.content)
+        return httpx.Response(200, json={"jobPostings": [
+            {"title": "Senior Data Analyst", "externalPath": "/job/Bengaluru/SDA_R1", "locationsText": "Bengaluru",
+             "bulletFields": ["R1"], "postedOn": "Posted Today"}]})
+
+    mock.post("https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/jobs").mock(side_effect=respond)
+    r = read_workday(client, FeedSpec("workday", "acme", "External", "acme.wd5"), ["Data Analyst", "Product Analyst"])
+    assert len(calls) == 2  # one search per role; short page → no second page
+    assert [j.external_id for j in r.jobs] == ["R1"]
+    assert r.jobs[0].url == "https://acme.wd5.myworkdayjobs.com/External/job/Bengaluru/SDA_R1"
+
+
+# --- careers discovery -----------------------------------------------------
+
+def test_scan_page_finds_job_links_and_ats():
+    raw = ('<a href="/careers/data-analyst-123">Data Analyst</a><a href="/careers/pm-456">PM</a>'
+           '<a href="/careers/ba-789">BA</a><a href="mailto:x@y.z">mail</a>'
+           '<iframe src="https://boards.greenhouse.io/embed/job_board?for=acme"></iframe>')
+    scan = scan_page(raw, "https://acme-test.io/careers")
+    assert len(scan.job_links) == 3 and scan.is_listing
+    assert scan.ats_hints == [{"vendor": "greenhouse", "slug": "acme"}]
+
+
+def test_discover_ats_link_on_homepage(http):
+    client, mock = http
+    mock.get(url__regex=HOME).respond(200, **html('<a href="https://jobs.lever.co/acme">Careers</a>'))
+    d = discover(client, ACME)
+    assert d.on_company_site and d.scan.ats_hints == [{"vendor": "lever", "slug": "acme"}]
+
+
+def test_discover_follows_nav_link_one_level_deeper(http):
+    client, mock = http
+    mock.get(url__regex=HOME).respond(200, **html('<a href="/about">About</a><a href="/join">Join us</a>'))
+    mock.get("https://acme-test.io/join").respond(200, **html('<a href="/join/open-roles">See open roles</a>'))
+    mock.get("https://acme-test.io/join/open-roles").respond(
+        200, **html('<script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script>'))
+    d = discover(client, ACME)
+    assert d.careers_url == "https://acme-test.io/join/open-roles"
+    assert d.scan.ats_hints[0]["vendor"] == "greenhouse"
+
+
+def test_discover_rejects_offsite_redirects(http):
+    client, mock = http
+    mock.get(url__regex=HOME).respond(200, **html('<a href="/careers">Careers</a>'))
+    mock.get("https://acme-test.io/careers").respond(302, headers={"location": "https://www.linkedin.com/company/acme/jobs"})
+    mock.get("https://www.linkedin.com/company/acme/jobs").respond(200, **html("lots of jobs"))
+    mock.get(url__regex=r"https://(acme-test\.io/jobs|careers\.acme-test\.io|jobs\.acme-test\.io).*").respond(404)
+    assert discover(client, ACME) is None
+
+
+# --- ownership ---------------------------------------------------------------
+
+def test_ownership_rules():
+    def result(board=None, url="https://boards.greenhouse.io/x/1", desc="We are hiring"):
+        return FetchResult([RawJob("1", "Analyst", url=url, description=desc)], board)
+
+    assert verify_ownership(ACME, result(), linked_from_site=True, careers_url="u")[0]
+    assert verify_ownership(ACME, result(board="Acme Analytics Inc"), linked_from_site=False, careers_url=None)[0]
+    assert verify_ownership(ACME, result(url="https://acme-test.io/jobs/1"), linked_from_site=False, careers_url=None)[0]
+    assert verify_ownership(ACME, result(desc="Join Acme Analytics"), linked_from_site=False, careers_url=None)[0]
+    ok, why = verify_ownership(ACME, result(board="Acme Plumbing Supplies"), linked_from_site=False, careers_url=None)
+    assert not ok and "no evidence" in why
+    assert not verify_ownership(ACME, FetchResult([]), linked_from_site=False, careers_url=None)[0]

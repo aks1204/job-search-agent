@@ -36,11 +36,30 @@ def test_is_junk(value, junk):
     ("https://job-boards.greenhouse.io/acme", {"vendor": "greenhouse", "slug": "acme"}),
     ("https://jobs.lever.co/acme-inc/abc-123", {"vendor": "lever", "slug": "acme-inc"}),
     ("https://jobs.ashbyhq.com/Acme", {"vendor": "ashby", "slug": "Acme"}),
-    ("https://acme.wd5.myworkdayjobs.com/en-US/External", {"vendor": "workday", "slug": "acme", "site": "External"}),
+    ("https://acme.wd5.myworkdayjobs.com/en-US/External",
+     {"vendor": "workday", "slug": "acme", "site": "External", "host": "acme.wd5"}),
+    ("//boards.greenhouse.io/embed/job_board/js?for=acme", {"vendor": "greenhouse", "slug": "acme"}),
+    ("https://jobs.lever.co/embed", None),
     ("https://acme.com/careers", None),
 ])
 def test_ats_hint(url, hint):
     assert ats_hint(url) == hint
+
+
+def test_ats_hints_in_page_finds_embeds_and_escaped_json():
+    from app.core.hosts import ats_hints_in
+
+    page = (
+        '<script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script>'
+        '<a href="https://jobs.lever.co/acme/123">Job</a>'
+        '{"careers":"https:\\/\\/jobs.ashbyhq.com\\/Acme"}'
+        '<a href="https://boards.greenhouse.io/acme">again</a>'
+    )
+    assert ats_hints_in(page) == [
+        {"vendor": "greenhouse", "slug": "acme"},
+        {"vendor": "lever", "slug": "acme"},
+        {"vendor": "ashby", "slug": "Acme"},
+    ]
 
 
 @pytest.mark.parametrize("raw, expected", [
