@@ -5,8 +5,10 @@ when the vendor reports one (used for the ownership check).
 """
 
 import html
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from app.core.http import PoliteClient
 from app.modules.m1_companies.enrich import html_to_text
@@ -197,6 +199,51 @@ def read_workday(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_
     return FetchResult(list(seen.values()))
 
 
+_ORACLE_SITE_NUMBER = re.compile(r'data-sitenumber="([^"]+)"', re.I)
+
+
+def read_oracle(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_per_role: int = 2) -> FetchResult:
+    """Oracle Recruiting Cloud (e.g. Uber). The public site name (UberCareers) maps to an internal
+    site number (CX_1) printed in the board page; the jobs API is then searched with the owner's roles."""
+    host, site = spec.host, spec.slug
+    page = http.get(f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/jobs")
+    if page.status_code == 404:
+        raise FeedNotFound(site)
+    page.raise_for_status()
+    m = _ORACLE_SITE_NUMBER.search(page.text)
+    if not m:
+        raise FeedNotFound(f"{site}: no site number on the board page")
+    site_number = m.group(1)
+
+    seen: dict[str, RawJob] = {}
+    for query in roles or [""]:
+        for p in range(pages_per_role):
+            finder = (f'findReqs;siteNumber={site_number},limit=25,offset={p * 25},'
+                      f'keyword="{query}",sortBy=POSTING_DATES_DESC')
+            url = (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+                   f"?onlyData=true&expand=requisitionList.secondaryLocations&finder={quote(finder, safe=';,=')}")
+            resp = http.get(url, headers={"Accept": "application/json"})
+            resp.raise_for_status()
+            items = resp.json().get("items") or []
+            reqs = (items[0].get("requisitionList") or []) if items else []
+            for j in reqs:
+                ext = str(j.get("Id") or "")
+                if ext and ext not in seen:
+                    seen[ext] = RawJob(
+                        external_id=ext, title=j.get("Title") or "", location=j.get("PrimaryLocation"),
+                        url=f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{ext}",
+                        department=j.get("JobFamily") or j.get("JobFunction"),
+                        employment_type=j.get("WorkerType") or j.get("JobType"),
+                        posted_at=j.get("PostedDate"),
+                        description=(j.get("ShortDescriptionStr") or None),
+                        payload={"workplace": j.get("WorkplaceTypeCode"), "country": j.get("PrimaryLocationCountry"),
+                                 "query": query},
+                    )
+            if len(reqs) < 25:
+                break
+    return FetchResult(list(seen.values()))
+
+
 # Workday spreads tenants across numbered servers (wd1, wd5, wd115, …) and moves them over time,
 # so a remembered "lilly.wd5" can be stale while "lilly.wd115" is live. Common ones first.
 WORKDAY_SERVERS = (
@@ -293,4 +340,5 @@ READERS = {
     "workable": read_workable,
     "recruitee": read_recruitee,
     "workday": read_workday,
+    "oracle": read_oracle,
 }

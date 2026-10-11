@@ -115,6 +115,40 @@ def test_workday_searches_with_roles_and_dedupes(http):
     assert r.jobs[0].url == "https://acme.wd5.myworkdayjobs.com/External/job/Bengaluru/SDA_R1"
 
 
+def test_oracle_hint_and_vendor_detection():
+    from app.core.hosts import ats_hint, detect_vendors
+
+    url = "https://iaziqy.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/UberCareers/my-profile/sign-in"
+    assert ats_hint(url) == {"vendor": "oracle", "slug": "UberCareers", "host": "iaziqy.fa.ocs.oraclecloud.com"}
+    page = ('<a href="https://acme.icims.com/jobs/123">Apply</a>'
+            '<script src="https://cdn.phenompeople.com/CareerConnectResources/x.js"></script>'
+            '<a href="https://acme.wd3.myworkdayjobs.com/External">Jobs</a>')
+    assert detect_vendors(page) == {"icims", "phenom", "workday"}
+
+
+def test_oracle_reader_resolves_site_number_and_searches_roles(http):
+    client, mock = http
+    host = "pod.fa.ocs.oraclecloud.com"
+    mock.get(f"https://{host}/hcmUI/CandidateExperience/en/sites/AcmeCareers/jobs").respond(
+        200, html='<div data-fahosturl="" data-sitenumber="CX_7" data-x="y"></div>')
+    import re
+
+    searches = mock.get(url__regex=rf"https://{re.escape(host)}/hcmRestApi/resources/latest/recruitingCEJobRequisitions.*").respond(
+        json={"items": [{"TotalJobsCount": 1, "requisitionList": [
+            {"Id": "303068", "Title": "Data Analyst II, Tech", "PrimaryLocation": "Hyderabad, Telangana, India",
+             "PostedDate": "2026-10-08", "JobFamily": "Data", "WorkplaceTypeCode": "ORA_ONSITE"}]}]})
+    from app.modules.m1_companies.watch.readers import read_oracle
+
+    r = read_oracle(client, FeedSpec("oracle", "AcmeCareers", host=host), ["Data Analyst", "Product Analyst"])
+
+    assert [(j.external_id, j.title, j.location) for j in r.jobs] == [
+        ("303068", "Data Analyst II, Tech", "Hyderabad, Telangana, India")]
+    assert r.jobs[0].url == f"https://{host}/hcmUI/CandidateExperience/en/sites/AcmeCareers/job/303068"
+    assert searches.call_count == 2  # one search per role
+    sent = str(searches.calls[0].request.url)
+    assert "siteNumber=CX_7" in sent and "findReqs;" in sent and "%22Data%20Analyst%22" in sent
+
+
 # --- careers discovery -----------------------------------------------------
 
 def test_scan_page_finds_job_links_and_ats():

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
 # Reading methods, cheapest reliable rung first (spec §1.5 step 2).
-METHODS = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "adapter", "aggregator")
+METHODS = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "oracle", "adapter", "aggregator")
 
 
 class CompanyFeed(Base):
@@ -27,6 +27,8 @@ class CompanyFeed(Base):
     host: Mapped[str | None] = mapped_column(String(255))  # Workday "tenant.wdN"
     careers_url: Mapped[str | None] = mapped_column(Text)
     ownership_evidence: Mapped[str | None] = mapped_column(Text)
+    # Every job-system vendor recognised during discovery (readable or not) — drives the coverage report.
+    detected_vendors: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cadence: Mapped[str] = mapped_column(String(8), default="active", server_default=text("'active'"))
     health: Mapped[str] = mapped_column(String(8), default="pending", server_default=text("'pending'"))

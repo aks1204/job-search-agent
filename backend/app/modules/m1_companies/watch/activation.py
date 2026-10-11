@@ -30,8 +30,8 @@ from app.modules.m1_companies.watch.sync import SyncResult, aggregator_jobs, syn
 
 log = logging.getLogger(__name__)
 
-# The ladder: public ATS endpoints → Workday → per-company adapters → aggregator floor.
-LADDER = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "adapter")
+# The ladder: public ATS endpoints → Workday / Oracle → per-company adapters → aggregator floor.
+LADDER = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "oracle", "adapter")
 GUESSABLE = ("greenhouse", "lever", "ashby", "smartrecruiters")
 
 
@@ -152,7 +152,8 @@ def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[Fet
 
 def activate(session: Session, company: Company, http: PoliteClient, *, llm=None) -> tuple[CompanyFeed, SyncResult]:
     now = datetime.now(timezone.utc)
-    discovery = discover(http, company, llm=llm, session=session) if company.domain else None
+    vendors: set[str] = set()
+    discovery = discover(http, company, llm=llm, session=session, vendors_seen=vendors) if company.domain else None
 
     chosen: tuple[FeedCandidate, str] | None = None
     best_jobs = -1
@@ -190,11 +191,18 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
     else:
         feed.method, feed.slug, feed.site, feed.host = "aggregator", None, None, None
         n = len(aggregator_jobs(session, company.id))
-        note = "custom careers page (browser reader not built yet)" if discovery else "no careers page found"
+        unreadable = sorted(vendors - set(READERS) - {"phenom"})
+        if unreadable:
+            note = f"jobs are on {', '.join(unreadable)} (no reader yet)"
+        elif discovery:
+            note = "custom careers page (browser reader not built yet)"
+        else:
+            note = "no careers page found"
         feed.ownership_evidence = f"aggregator floor: {note}; {n} recent job-site listings"
         if attempts:
             feed.ownership_evidence += " | tried: " + "; ".join(attempts[:10])
     feed.careers_url = discovery.careers_url if discovery else feed.careers_url
+    feed.detected_vendors = sorted(vendors | ({feed.method} if feed.method != "aggregator" else set()))
     feed.verified_at = now
     feed.needs_reactivation = False
     feed.consecutive_failures = 0

@@ -43,6 +43,8 @@ ATS_DOMAINS = frozenset({
     "recruitee.com", "myworkdayjobs.com", "bamboohr.com", "breezy.hr", "jobvite.com",
     "icims.com", "teamtailor.com", "personio.de", "personio.com", "zohorecruit.com",
     "zohorecruit.in", "keka.com", "darwinbox.in", "freshteam.com", "pinpointhq.com",
+    "oraclecloud.com", "taleo.net", "successfactors.com", "successfactors.eu", "eightfold.ai",
+    "avature.net", "applytojob.com",
 })
 
 _ATS_PATTERNS: list[tuple[str, re.Pattern]] = [
@@ -54,18 +56,58 @@ _ATS_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("smartrecruiters", re.compile(r"^(?:jobs|careers)\.smartrecruiters\.com/([\w-]+)", re.I)),
     ("recruitee", re.compile(r"^([\w-]+)\.recruitee\.com", re.I)),
     ("workday", re.compile(r"^([\w-]+)\.(wd\d+)\.myworkdayjobs\.com/(?:[a-z]{2}-[a-z]{2}/)?([\w-]+)", re.I)),
+    # Oracle Recruiting Cloud: https://POD.fa.REGION.oraclecloud.com/hcmUI/CandidateExperience/en/sites/SITE/…
+    ("oracle", re.compile(
+        r"^([a-z0-9-]+\.fa(?:\.[a-z0-9-]+)*\.oraclecloud\.com)/hcmUI/CandidateExperience/[a-z]{2}(?:-[a-z]{2})?/sites/([\w-]+)",
+        re.I)),
 ]
 
 # Path segments that look like slugs but aren't.
 _NOT_SLUGS = {"embed", "api", "js", "v0", "v1", "jobs", "careers", "job", "apply", "www", "app", "widget", "en-us"}
 
-# Any ATS URL inside raw HTML/JS (hrefs, iframes, script srcs, JSON config).
+# Any readable-ATS URL inside raw HTML/JS (hrefs, iframes, script srcs, JSON config).
 ATS_URL = re.compile(
     # Scheme optional: server-rendered JSON sometimes carries bare hosts ("lilly.wd115.myworkdayjobs.com/LLY/…").
     r"(?<![\w.-])(?:(?:https?:)?//)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:greenhouse\.io|lever\.co|ashbyhq\.com|"
-    r"workable\.com|smartrecruiters\.com|recruitee\.com|myworkdayjobs\.com)(?:/[^\s\"'<>)\\]*)?",
+    r"workable\.com|smartrecruiters\.com|recruitee\.com|myworkdayjobs\.com|oraclecloud\.com)(?:/[^\s\"'<>)\\]*)?",
     re.I,
 )
+
+# Job-system vendors we can RECOGNISE on a page, readable or not. Unreadable ones feed the
+# coverage report, which says which reader to build next.
+VENDOR_SIGNATURES: dict[str, re.Pattern] = {name: re.compile(p, re.I) for name, p in {
+    "greenhouse": r"greenhouse\.io/",
+    "lever": r"jobs(?:\.eu)?\.lever\.co/",
+    "ashby": r"jobs\.ashbyhq\.com/",
+    "smartrecruiters": r"smartrecruiters\.com/",
+    "workable": r"apply\.workable\.com/",
+    "recruitee": r"[\w-]+\.recruitee\.com",
+    "workday": r"\.myworkdayjobs\.com",
+    "oracle": r"\.oraclecloud\.com/hcmUI/CandidateExperience",
+    "successfactors": r"(?:career\d*\.successfactors\.(?:com|eu)|jobs\.sap\.com|/sfcareer/)",
+    "icims": r"[\w-]+\.icims\.com",
+    "taleo": r"[\w-]+\.taleo\.net",
+    "eightfold": r"[\w-]+\.eightfold\.ai",
+    "avature": r"[\w-]+\.avature\.net",
+    "jobvite": r"jobs\.jobvite\.com",
+    "bamboohr": r"[\w-]+\.bamboohr\.com/(?:careers|jobs)",
+    "personio": r"[\w-]+\.jobs\.personio\.(?:de|com)",
+    "teamtailor": r"[\w-]+\.teamtailor\.com",
+    "keka": r"[\w-]+\.keka\.com/careers",
+    "darwinbox": r"[\w-]+\.darwinbox\.in",
+    "zoho_recruit": r"zohorecruit\.(?:com|in)",
+    "freshteam": r"[\w-]+\.freshteam\.com",
+    "breezy": r"[\w-]+\.breezy\.hr",
+    "jazzhr": r"[\w-]+\.applytojob\.com",
+    "pinpoint": r"[\w-]+\.pinpointhq\.com",
+    "rippling": r"ats\.rippling\.com",
+    "phenom": r"cdn\.phenompeople\.com",  # a careers-site platform (usually fronting another ATS)
+}.items()}
+
+
+def detect_vendors(raw_html: str) -> set[str]:
+    text = raw_html.replace("\\/", "/")
+    return {name for name, pattern in VENDOR_SIGNATURES.items() if pattern.search(text)}
 
 
 def hostname(url_or_host: str | None) -> str | None:
@@ -121,6 +163,8 @@ def ats_hint(url: str | None) -> dict | None:
             if site.lower() in _NOT_SLUGS:
                 return None
             return {"vendor": vendor, "slug": tenant, "site": site, "host": f"{tenant}.{wd}"}
+        if vendor == "oracle":
+            return {"vendor": vendor, "slug": m.group(2), "host": m.group(1).lower()}
         slug = m.group(1)
         if slug.lower() in _NOT_SLUGS:
             return None

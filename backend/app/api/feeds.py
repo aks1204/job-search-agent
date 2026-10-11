@@ -44,6 +44,14 @@ def list_feeds(
     }
 
 
+@router.get("/coverage")
+def coverage_report(session: Session = Depends(get_session)) -> dict:
+    """How kept companies' jobs are read, and which job-system reader would close the most gaps."""
+    from app.modules.m1_companies.watch.coverage import coverage
+
+    return coverage(session)
+
+
 @router.get("/postings")
 def list_postings(
     company_id: int | None = None,

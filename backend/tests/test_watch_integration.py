@@ -166,6 +166,30 @@ def test_ai_suggested_workday_on_stale_server_is_corrected(db_session, mock, htt
     assert first.new == 1
 
 
+def test_uber_shaped_site_activates_on_oracle_and_coverage_counts_it(db_session, mock, http):
+    """Careers site (own domain) links an Oracle Recruiting board → read via the Oracle reader."""
+    from app.modules.m1_companies.watch.coverage import coverage
+
+    host = "pod.fa.ocs.oraclecloud.com"
+    company = _company(db_session, name="Ubertest", domain="ubertest.com")
+    mock.get(url__regex=r"https://ubertest\.com/?$").respond(
+        200, headers={"content-type": "text/html"}, html='<a href="https://jobs.ubertest.com/en/">Careers</a>')
+    mock.get("https://jobs.ubertest.com/en/").respond(
+        200, headers={"content-type": "text/html"},
+        html=f'<a href="https://{host}/hcmUI/CandidateExperience/en/sites/UbertestCareers/my-profile/sign-in">Sign in</a>')
+    mock.get(f"https://{host}/hcmUI/CandidateExperience/en/sites/UbertestCareers/jobs").respond(
+        200, html='<div data-sitenumber="CX_1"></div>')
+    mock.get(url__regex=r"https://pod\.fa\.ocs\.oraclecloud\.com/hcmRestApi/.*").respond(json={"items": [
+        {"requisitionList": [{"Id": "1", "Title": "Data Analyst II", "PrimaryLocation": "Hyderabad, India"}]}]})
+
+    feed, first = activate(db_session, company, http)
+
+    assert (feed.method, feed.slug, feed.host) == ("oracle", "UbertestCareers", host)
+    assert "oracle" in feed.detected_vendors and first.new == 1
+    report = coverage(db_session)
+    assert report["direct_by_method"].get("oracle", 0) >= 1
+
+
 def test_gardening_cadence_staleness_and_pruning(db_session, mock, http):
     _greenhouse(mock)
     company = _company(db_session)

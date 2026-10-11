@@ -380,6 +380,29 @@ def probe_workday_cmd(tenant: str, site: str, server: int | None) -> int:
     return 1
 
 
+def coverage_cmd() -> int:
+    from app.db import session_scope
+    from app.modules.m1_companies.watch.coverage import coverage
+
+    with session_scope() as s:
+        r = coverage(s)
+    print(f"Kept companies: {r['kept_companies']}")
+    print(f"  read directly:        {r['read_directly']}  " +
+          ", ".join(f"{m} {n}" for m, n in r["direct_by_method"].items()))
+    print(f"  job-site fallback:    {r['on_job_site_fallback']}")
+    print(f"  awaiting feed setup:  {r['awaiting_setup']}  (set up automatically every 15 min)")
+    empty = r["direct_but_no_matching_openings"]
+    if empty["count"]:
+        print(f"  readable, no matching openings right now: {empty['count']}  e.g. {', '.join(empty['examples'][:3])}")
+    if r["gaps"]:
+        print("Gaps (fallback companies, by cause):")
+        for g in r["gaps"]:
+            print(f"  {g['companies']:>3}  {g['reason']}  — e.g. {', '.join(g['examples'][:3])}")
+    if r["build_next"]:
+        print("Readers that would close the most gaps: " + ", ".join(r["build_next"]))
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -411,6 +434,7 @@ def main() -> None:
     p_jobs = sub.add_parser("jobs", help="a company's open postings")
     p_jobs.add_argument("--domain", required=True)
     sub.add_parser("garden", help="run the weekly upkeep now")
+    sub.add_parser("coverage", help="how kept companies' jobs are read; which reader to build next")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -441,6 +465,8 @@ def main() -> None:
         sys.exit(jobs_cmd(args.domain))
     if args.command == "garden":
         sys.exit(garden_cmd())
+    if args.command == "coverage":
+        sys.exit(coverage_cmd())
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

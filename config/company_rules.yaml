@@ -6,7 +6,7 @@
 # Every verdict is logged with its reasons and can be overridden; overrides become precedents.
 
 evaluation:
-  max_new_per_day: 50          # companies judged per day (each costs ~2¢ of AI)
+  max_new_per_day: 100         # companies judged per day
   batch_size: 10               # companies per scheduler tick
   interval_minutes: 30
   # Who gets judged first when there's a backlog.

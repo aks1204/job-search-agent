@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
-from app.core.hosts import ats_hint, ats_hints_in, is_ats_url, normalize_domain
+from app.core.hosts import ats_hint, ats_hints_in, detect_vendors, is_ats_url, normalize_domain
 from app.core.http import PoliteClient, RobotsDisallowed
 from app.core.search import search_available, web_search
 
@@ -34,6 +34,7 @@ class PageScan:
     links: list[tuple[str, str]] = field(default_factory=list)  # (absolute href, link text)
     ats_hints: list[dict] = field(default_factory=list)
     job_links: list[str] = field(default_factory=list)
+    vendors: set[str] = field(default_factory=set)  # every job-system vendor recognised on the page
 
     @property
     def is_listing(self) -> bool:
@@ -65,7 +66,8 @@ def scan_page(raw_html: str, base_url: str) -> PageScan:
             continue
         links.append((urljoin(base_url, href), _TAG.sub(" ", text).strip()[:80]))
     job_links = list(dict.fromkeys(h for h, _ in links if JOB_PATH.search(urlsplit(h).path)))
-    return PageScan(url=base_url, links=links, ats_hints=ats_hints_in(raw_html), job_links=job_links)
+    return PageScan(url=base_url, links=links, ats_hints=ats_hints_in(raw_html), job_links=job_links,
+                    vendors=detect_vendors(raw_html))
 
 
 def fetch_html(http: PoliteClient, url: str) -> tuple[str, str] | None:
@@ -113,7 +115,7 @@ def _get_text(http: PoliteClient, url: str) -> str | None:
     return resp.text if resp.status_code < 400 else None
 
 
-def _from_sitemaps(http: PoliteClient, hosts: list[str], domain: str) -> Discovery | None:
+def _from_sitemaps(http: PoliteClient, hosts: list[str], domain: str, seen: set[str]) -> Discovery | None:
     for host in hosts:
         robots = _get_text(http, f"{host}/robots.txt") or ""
         sitemaps = [u for u in _SITEMAP_LINE.findall(robots) if _on_domain(u, domain)][:3] or [f"{host}/sitemap.xml"]
@@ -130,6 +132,7 @@ def _from_sitemaps(http: PoliteClient, hosts: list[str], domain: str) -> Discove
                 page = fetch_html(http, page_url)
                 if not page:
                     continue
+                seen |= detect_vendors(page[1])
                 hints = ats_hints_in(page[1])
                 if hints:
                     scan = PageScan(url=page[0], ats_hints=hints)
@@ -137,10 +140,17 @@ def _from_sitemaps(http: PoliteClient, hosts: list[str], domain: str) -> Discove
     return None
 
 
-def discover(http: PoliteClient, company, *, llm=None, session=None) -> Discovery | None:
+def discover(
+    http: PoliteClient, company, *, llm=None, session=None, vendors_seen: set[str] | None = None
+) -> Discovery | None:
+    """Find a listing page. `vendors_seen` collects every job-system vendor recognised along the way
+    (readable or not) so a fallback can say which reader it was missing."""
+    seen = vendors_seen if vendors_seen is not None else set()
     domain = company.domain
     home = fetch_html(http, f"https://{domain}") or fetch_html(http, f"https://www.{domain}")
     home_scan = scan_page(home[1], home[0]) if home else None
+    if home_scan:
+        seen |= home_scan.vendors
 
     # Rung 1a: the homepage itself links to an ATS board.
     if home_scan and home_scan.ats_hints:
@@ -164,13 +174,17 @@ def discover(http: PoliteClient, company, *, llm=None, session=None) -> Discover
             continue
         tried.add(url)
         found, scan = _check(http, url, domain, how)
+        if scan:
+            seen |= scan.vendors
         if found:
             return found
         # One level deeper: careers landing pages often link to "open positions".
         for href, text in (scan.links if scan else []):
             if CAREER_WORDS.search(text) and href not in tried and (_on_domain(href, domain) or is_ats_url(href)):
                 tried.add(href)
-                found, _ = _check(http, href, domain, f"{how} → “{text}”")
+                found, deeper = _check(http, href, domain, f"{how} → “{text}”")
+                if deeper:
+                    seen |= deeper.vendors
                 if found:
                     return found
                 break
@@ -180,7 +194,7 @@ def discover(http: PoliteClient, company, *, llm=None, session=None) -> Discover
     hosts = [f"https://{domain}"] + [
         f"{urlsplit(u).scheme}://{urlsplit(u).netloc}" for u in tried if _on_domain(u, domain)
     ]
-    if found := _from_sitemaps(http, list(dict.fromkeys(hosts))[:4], domain):
+    if found := _from_sitemaps(http, list(dict.fromkeys(hosts))[:4], domain, seen):
         return found
 
     # Rung 2: web search, keeping only the company's own site or ATS boards (never LinkedIn/Glassdoor).
