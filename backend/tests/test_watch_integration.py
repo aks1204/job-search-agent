@@ -190,6 +190,28 @@ def test_uber_shaped_site_activates_on_oracle_and_coverage_counts_it(db_session,
     assert report["direct_by_method"].get("oracle", 0) >= 1
 
 
+def test_hn_and_waas_posts_become_leads_for_fallback_companies(db_session, mock, http):
+    """A small startup whose only job ad is its HN post (and a WaaS listing) still gets those jobs."""
+    company = _company(db_session, name="Tinyhire", domain="tinyhire-test.io")
+    intake(db_session, Candidate(scout="hn", external_id="t:42", name="Tinyhire", domain="tinyhire-test.io",
+                                 url="https://news.ycombinator.com/item?id=42",
+                                 data={"headline": "Tinyhire | Senior Data Analyst | Remote (India) | Full-time",
+                                       "text": "We build hiring tools. Email jobs@tinyhire-test.io"}))
+    intake(db_session, Candidate(scout="waas", external_id="777", name="Tinyhire",
+                                 url="https://www.workatastartup.com/jobs/777",
+                                 data={"title": "Product Analyst", "location": "Bengaluru, IN / Remote (IN)"}))
+    mock.get(url__regex=r"https://([\w-]+\.)?tinyhire-test\.io.*").respond(404)
+    mock.get(url__regex=r"https://(boards-api\.greenhouse\.io|api\.lever\.co|api\.ashbyhq\.com|api\.smartrecruiters\.com)/.*").respond(404)
+
+    feed, first = activate(db_session, company, http)
+
+    assert feed.method == "aggregator" and first.new == 2
+    leads = {p.title: p for p in db_session.scalars(select(RawPosting).where(RawPosting.feed_id == feed.id))}
+    assert set(leads) == {"Senior Data Analyst", "Product Analyst"}
+    assert leads["Senior Data Analyst"].location == "Remote (India)" and leads["Senior Data Analyst"].lead_only
+    assert leads["Product Analyst"].url == "https://www.workatastartup.com/jobs/777"
+
+
 def test_gardening_cadence_staleness_and_pruning(db_session, mock, http):
     _greenhouse(mock)
     company = _company(db_session)

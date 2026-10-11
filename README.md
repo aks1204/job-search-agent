@@ -63,6 +63,7 @@ Scouts find companies and feed one candidate pipe. A company's identity is its w
 | `packs` | Curated [seed packs](config/seed_packs/README.md): India GCCs, large Indian companies, Indian unicorns | nothing | daily 05:10 |
 | `peers` | "Companies like the ones you keep", suggested by AI and confirmed against each live website | Anthropic key | daily 07:30 |
 | `yc` | Public YC directory (yc-oss mirror) | nothing | daily 05:30 |
+| `waas` | YC Work at a Startup: public category pages only, never logged in. Your decision; it relaxes the spec's original "never crawl" rule | nothing | daily 06:45 |
 | `adzuna` | Adzuna jobs API, India | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | daily 06:00 |
 | `jooble` | Jooble jobs API | `JOOBLE_API_KEY` | daily 06:15 |
 | `remotive` | Remotive remote-jobs API | nothing | daily 06:30 |

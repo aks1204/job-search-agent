@@ -104,7 +104,7 @@ class SeedPack(Strict):
 
 # --- scouts.yaml ----------------------------------------------------------
 
-SCOUT_NAMES = ("seeds", "packs", "peers", "yc", "adzuna", "jooble", "remotive", "hn")
+SCOUT_NAMES = ("seeds", "packs", "peers", "yc", "waas", "adzuna", "jooble", "remotive", "hn")
 
 
 class Schedule(Strict):
@@ -142,6 +142,13 @@ class YCScout(ScoutBase):
     min_batch_year: int = 2022
     require_hiring: bool = True
     regions_any: list[str] = Field(default_factory=lambda: ["India", "Remote"])
+
+
+class WaaSScout(ScoutBase):
+    """YC Work at a Startup, public category pages only (owner-approved deviation, 2026-10-12)."""
+
+    schedule: Schedule = Field(default_factory=lambda: Schedule(hour="6", minute="45"))
+    categories: list[str] = Field(default_factory=lambda: ["product-manager", "operations", "finance", "science"])
 
 
 class AdzunaScout(ScoutBase):
@@ -185,6 +192,7 @@ class ScoutsConfig(Strict):
     packs: PacksScout = Field(default_factory=PacksScout)
     peers: PeersScout = Field(default_factory=PeersScout)
     yc: YCScout = Field(default_factory=YCScout)
+    waas: WaaSScout = Field(default_factory=WaaSScout)
     adzuna: AdzunaScout = Field(default_factory=AdzunaScout)
     jooble: JoobleScout = Field(default_factory=JoobleScout)
     remotive: RemotiveScout = Field(default_factory=RemotiveScout)

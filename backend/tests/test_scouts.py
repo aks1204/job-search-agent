@@ -133,6 +133,33 @@ def test_remotive_location_filter(cfg, ctx):
     assert {c.name for c in out} == {"Anywhere Inc", "Desi Co"}
 
 
+def _waas_page(jobs):
+    import html as _html
+    import json as _json
+
+    data = _html.escape(_json.dumps({"component": "Jobs", "props": {"jobs": jobs, "totalJobsCount": len(jobs)}}))
+    return f'<html><body><div id="app" data-page="{data}"></div></body></html>'
+
+
+@respx.mock
+def test_waas_reads_public_category_pages(cfg, ctx):
+    respx.get(url__regex=r"https://www\.workatastartup\.com/robots\.txt").respond(200, text="User-Agent: *\nDisallow:")
+    route = respx.get(url__regex=r"https://www\.workatastartup\.com/jobs/l/[\w-]+").respond(
+        200, headers={"content-type": "text/html"}, html=_waas_page([
+            {"id": 25984, "companyName": "GiveCampus", "companySlug": "givecampus", "companyBatch": "S15",
+             "title": "Lead Product Manager, Integrations", "location": "US / Remote (US)", "jobType": "Full-time",
+             "roleType": "Product", "salary": "$150K - $190K", "companyOneLiner": "The fundraising platform for schools."},
+            {"id": 1, "companyName": "Confidential", "title": "x"},
+        ]))
+    out = _run("waas", cfg, ctx)
+    assert route.call_count == 4  # one page per configured category
+    c = out[0]
+    assert (c.name, c.external_id, c.type_hint) == ("GiveCampus", "25984", "startup")
+    assert c.url == "https://www.workatastartup.com/jobs/25984"
+    assert c.data["title"] == "Lead Product Manager, Integrations" and c.data["batch"] == "S15"
+    assert {x.name for x in out} == {"GiveCampus"}  # placeholder name skipped
+
+
 HN_ITEMS = {
     100: {"id": 100, "title": "Ask HN: Who wants to be hired? (October 2026)"},
     99: {"id": 99, "title": "Ask HN: Who is hiring? (October 2026)", "kids": [1, 2, 3]},

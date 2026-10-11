@@ -28,6 +28,14 @@ yc:               # public YC directory (yc-oss mirror; ycombinator.com is not s
   require_hiring: true
   regions_any: ["India", "Remote"]      # keep companies whose regions/locations mention any of these
 
+# YC's Work at a Startup — public, logged-out category pages only (newest ~25-30 jobs each).
+# OWNER DECISION (2026-10-12): relaxes spec §7.2 "never crawl Work-at-a-Startup". robots.txt
+# allows it; the agent never logs in. Set enabled: false to restore the original rule.
+waas:
+  enabled: true
+  schedule: {hour: "6", minute: "45"}
+  categories: ["product-manager", "operations", "finance", "science"]
+
 adzuna:           # needs ADZUNA_APP_ID + ADZUNA_APP_KEY in .env (free)
   enabled: true
   schedule: {hour: "6", minute: "0"}

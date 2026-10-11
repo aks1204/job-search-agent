@@ -18,8 +18,19 @@ from app.settings import redact
 
 log = logging.getLogger(__name__)
 
-AGGREGATOR_SCOUTS = ("adzuna", "jooble", "remotive")
+AGGREGATOR_SCOUTS = ("adzuna", "jooble", "remotive")  # job sites (also used by the staleness cross-check)
+# Every source whose sightings ARE job posts. HN "Who is hiring" comments and Work at a Startup listings
+# are often a small startup's only job ad, so they count as leads too.
+LEAD_SCOUTS = (*AGGREGATOR_SCOUTS, "waas", "hn")
+LEAD_WINDOW_DAYS = {"hn": 45}  # monthly thread: posts stay relevant longer
 AGGREGATOR_WINDOW_DAYS = 21
+
+
+def _hn_role(headline: str) -> tuple[str, str | None]:
+    """'Acme | Senior Data Analyst | Remote (India) | Full-time' → ('Senior Data Analyst', 'Remote (India)')."""
+    parts = [p.strip() for p in headline.split("|")]
+    title = parts[1] if len(parts) > 1 and parts[1] else headline
+    return title[:300], (parts[2] if len(parts) > 2 else None)
 
 
 @dataclass
@@ -37,24 +48,32 @@ def _hash(job: RawJob) -> str:
 
 
 def aggregator_jobs(session: Session, company_id: int) -> list[RawJob]:
-    """The guaranteed floor: what job sites showed us for this company recently (leads only)."""
-    since = datetime.now(timezone.utc) - timedelta(days=AGGREGATOR_WINDOW_DAYS)
+    """The guaranteed floor: job posts seen for this company recently — job sites, Work at a Startup,
+    HN 'Who is hiring' comments. Leads only: Module 2 never acts on them without a canonical posting."""
+    now = datetime.now(timezone.utc)
     rows = session.scalars(
         select(CompanySighting).where(
             CompanySighting.company_id == company_id,
-            CompanySighting.scout.in_(AGGREGATOR_SCOUTS),
-            CompanySighting.last_seen_at >= since,
+            CompanySighting.scout.in_(LEAD_SCOUTS),
+            CompanySighting.last_seen_at >= now - timedelta(days=max(LEAD_WINDOW_DAYS.values())),
         )
     ).all()
-    return [
-        RawJob(
-            external_id=f"{s.scout}:{s.external_id}"[:255], title=(s.data or {}).get("title") or "(untitled)",
-            location=(s.data or {}).get("location"), url=s.url,
-            posted_at=str((s.data or {}).get("created") or (s.data or {}).get("published") or "") or None,
-            description=(s.data or {}).get("description"), payload={"scout": s.scout},
-        )
-        for s in rows
-    ]
+    jobs = []
+    for s in rows:
+        if s.last_seen_at < now - timedelta(days=LEAD_WINDOW_DAYS.get(s.scout, AGGREGATOR_WINDOW_DAYS)):
+            continue
+        d = s.data or {}
+        if s.scout == "hn":
+            title, location = _hn_role(d.get("headline") or "")
+            description = d.get("text")
+        else:
+            title, location, description = d.get("title") or "(untitled)", d.get("location"), d.get("description")
+        jobs.append(RawJob(
+            external_id=f"{s.scout}:{s.external_id}"[:255], title=title, location=location, url=s.url,
+            posted_at=str(d.get("created") or d.get("published") or d.get("posted") or "") or None,
+            description=description, payload={"scout": s.scout, "salary": d.get("salary")},
+        ))
+    return jobs
 
 
 def fetch_jobs(session: Session, http: PoliteClient, feed: CompanyFeed, company: Company) -> list[RawJob]:

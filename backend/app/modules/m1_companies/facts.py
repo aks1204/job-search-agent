@@ -95,6 +95,16 @@ def feeder_facts(source_data: dict) -> list[tuple[str, object, str, str]]:
         if _REMOTE.search(headline) and (_INDIA.search(headline) or _REMOTE_GLOBAL.search(headline)):
             facts.append(("hires_remote_from_india", "yes", "inferred", "hn"))
 
+    if waas := source_data.get("waas"):
+        facts.append(("actively_hiring", "yes", "verified", "waas"))
+        loc = waas.get("location") or ""
+        if _INDIA.search(loc):
+            facts.append(("india_presence", "yes", "inferred", "waas"))
+        if _REMOTE.search(loc) and (_INDIA.search(loc) or _REMOTE_GLOBAL.search(loc)):
+            facts.append(("hires_remote_from_india", "yes", "inferred", "waas"))
+        if waas.get("one_liner"):
+            facts.append(("what_they_build", waas["one_liner"], "inferred", "waas"))
+
     if source_data.get("adzuna"):
         facts.append(("actively_hiring", "yes", "verified", "adzuna"))
         facts.append(("india_presence", "yes", "verified", "adzuna"))  # Adzuna India search

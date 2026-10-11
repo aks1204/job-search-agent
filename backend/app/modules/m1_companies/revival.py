@@ -21,7 +21,7 @@ from app.modules.m1_companies.facts import fact_card, value
 from app.modules.m1_companies.override import latest_verdict
 
 # Fresh sightings from these scouts are hiring signals.
-HIRING_SCOUTS = {"yc", "hn", "adzuna", "jooble", "remotive"}
+HIRING_SCOUTS = {"yc", "hn", "waas", "adzuna", "jooble", "remotive"}
 
 
 def _requeue(session: Session, company: Company, reason: str, why: str) -> None:
