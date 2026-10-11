@@ -8,43 +8,21 @@ the rules they depended on change.
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from typing import Any, TypeVar
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ValidationError
 
+from app.config_schemas import AppConfig, OwnerStub, ScoutsConfig, SeedList
 from app.settings import get_settings
+
+M = TypeVar("M", bound=BaseModel)
 
 
 class ConfigError(RuntimeError):
     pass
-
-
-class QuietHours(BaseModel):
-    start: time
-    end: time
-
-
-class AppConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    timezone: str = "Asia/Kolkata"
-    quiet_hours: QuietHours = QuietHours(start=time(22), end=time(8))
-    summary_mail_times: list[time] = [time(8), time(20)]
-    heartbeat_interval_seconds: int = Field(60, ge=10, le=3600)
-
-    @field_validator("timezone")
-    @classmethod
-    def _known_timezone(cls, v: str) -> str:
-        try:
-            ZoneInfo(v)
-        except (ZoneInfoNotFoundError, ValueError) as e:
-            raise ValueError(f"unknown timezone {v!r}") from e
-        return v
 
 
 @dataclass(frozen=True)
@@ -57,8 +35,11 @@ class ConfigFile:
 @dataclass(frozen=True)
 class LoadedConfig:
     files: dict[str, ConfigFile]
-    app: AppConfig
     version: str
+    app: AppConfig
+    scouts: ScoutsConfig
+    seeds: SeedList
+    owner: OwnerStub | None  # None until config/owner_stub.yaml exists
 
     def file_version(self, name: str) -> str | None:
         f = self.files.get(name)
@@ -68,6 +49,15 @@ class LoadedConfig:
 def _hash(data: Any) -> str:
     canonical = json.dumps(data, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def _validate(files: dict[str, ConfigFile], name: str, model: type[M]) -> M | None:
+    if name not in files:
+        return None
+    try:
+        return model.model_validate(files[name].data)
+    except ValidationError as e:
+        raise ConfigError(f"{name}.yaml: {e}") from e
 
 
 def load_config(config_dir: Path) -> LoadedConfig:
@@ -84,13 +74,14 @@ def load_config(config_dir: Path) -> LoadedConfig:
             raise ConfigError(f"{path.name}: invalid YAML: {e}") from e
         files[path.stem] = ConfigFile(path.stem, _hash(data), data)
 
-    try:
-        app_cfg = AppConfig.model_validate(files["app"].data if "app" in files else {})
-    except ValidationError as e:
-        raise ConfigError(f"app.yaml: {e}") from e
-
-    version = _hash({name: f.version for name, f in files.items()})
-    return LoadedConfig(files=files, app=app_cfg, version=version)
+    return LoadedConfig(
+        files=files,
+        version=_hash({name: f.version for name, f in files.items()}),
+        app=_validate(files, "app", AppConfig) or AppConfig(),
+        scouts=_validate(files, "scouts", ScoutsConfig) or ScoutsConfig(),
+        seeds=_validate(files, "seed_companies", SeedList) or SeedList(),
+        owner=_validate(files, "owner_stub", OwnerStub),
+    )
 
 
 @lru_cache(maxsize=1)

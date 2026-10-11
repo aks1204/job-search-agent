@@ -13,6 +13,11 @@ location: "Bengaluru, India"
 # field (e.g. for analytics, Uber can beat Pfizer).
 career_field: "analytics / data science"
 
+# Job titles the job-site scouts (Adzuna / Jooble / Remotive) search for.
+target_roles:
+  - "Senior Data Analyst"
+  - "Product Analyst"
+
 current_role:
   title: "Senior Associate"
   company: "Current Company"

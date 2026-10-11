@@ -61,6 +61,52 @@ def test_unknown_app_key_rejected(tmp_path):
         load_config(tmp_path)
 
 
+OWNER = """
+name: "T"
+career_field: "analytics"
+current_role: {title: "Analyst", company: "Co", started: "2024-03"}
+employment_history: [{company: "Co", title: "Analyst", start: "2024-03"}]
+"""
+
+
+def test_owner_stub_optional_and_validated(tmp_path):
+    assert load_config(tmp_path).owner is None
+    _write(tmp_path, "owner_stub.yaml", OWNER)
+    owner = load_config(tmp_path).owner
+    assert owner.current_role.started == "2024-03" and owner.target_roles == []
+
+
+def test_owner_stub_bad_date_names_the_file(tmp_path):
+    _write(tmp_path, "owner_stub.yaml", OWNER.replace('started: "2024-03"', 'started: "March 2024"'))
+    with pytest.raises(ConfigError, match="owner_stub.yaml"):
+        load_config(tmp_path)
+
+
+def test_seeds_and_scouts_parse(tmp_path):
+    _write(tmp_path, "seed_companies.yaml", "companies:\n  - {name: Uber, domain: uber.com, type: established}\n")
+    _write(tmp_path, "scouts.yaml", 'hn: {enabled: false}\nyc: {min_batch_year: 2023}\n')
+    cfg = load_config(tmp_path)
+    assert cfg.seeds.companies[0].name == "Uber"
+    assert cfg.scouts.hn.enabled is False and cfg.scouts.yc.min_batch_year == 2023
+    assert cfg.scouts.adzuna.enabled is True  # untouched sections keep defaults
+
+
+def test_seed_with_bad_type_rejected(tmp_path):
+    _write(tmp_path, "seed_companies.yaml", "companies:\n  - {name: X, domain: x.com, type: mnc}\n")
+    with pytest.raises(ConfigError, match="seed_companies.yaml"):
+        load_config(tmp_path)
+
+
+def test_shipped_config_files_are_valid():
+    from pathlib import Path
+
+    shipped = Path(__file__).resolve().parents[2] / "config"
+    if not shipped.is_dir():  # inside the container config is mounted at /config instead
+        shipped = Path("/config")
+    cfg = load_config(shipped)
+    assert len(cfg.seeds.companies) >= 1
+
+
 def test_missing_dir(tmp_path):
     with pytest.raises(ConfigError):
         load_config(tmp_path / "nope")

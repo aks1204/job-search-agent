@@ -1,0 +1,46 @@
+# Scouts: where the agent discovers companies. Read-only in the dashboard:
+# edit this file, then `docker compose restart`.
+# Schedules use app.yaml's timezone (IST by default). Quote all values.
+
+seeds:            # config/seed_companies.yaml — also loaded every time the worker starts
+  enabled: true
+  schedule: {hour: "5", minute: "0"}
+
+yc:               # public YC directory (yc-oss mirror; ycombinator.com is not scraped)
+  enabled: true
+  schedule: {hour: "5", minute: "30"}
+  min_batch_year: 2022
+  require_hiring: true
+  regions_any: ["India", "Remote"]      # keep companies whose regions/locations mention any of these
+
+adzuna:           # needs ADZUNA_APP_ID + ADZUNA_APP_KEY in .env (free)
+  enabled: true
+  schedule: {hour: "6", minute: "0"}
+  country: "in"
+  max_days_old: 21
+  results_per_page: 50
+  pages_per_role: 2
+
+jooble:           # needs JOOBLE_API_KEY in .env (free)
+  enabled: true
+  schedule: {hour: "6", minute: "15"}
+  location: "India"
+
+remotive:         # no key needed
+  enabled: true
+  schedule: {hour: "6", minute: "30"}
+  limit: 100
+  locations_any: ["worldwide", "anywhere", "india", "asia", "apac"]
+
+hn:               # "Ask HN: Who is hiring?" via the official HN API
+  enabled: true
+  schedule: {day_of_month: "2,16", hour: "7", minute: "0"}
+  max_comments_per_run: 1500
+
+resolver:         # finds the website of companies seen only by name (needs BRAVE_API_KEY)
+  interval_minutes: 60
+  batch_size: 25
+  max_attempts: 4
+  brave_monthly_budget: 600     # of the ~2,000 free searches/month; the rest is kept for later modules
+
+company_name_skiplist: ["confidential", "company name withheld", "undisclosed", "stealth", "hiring company"]

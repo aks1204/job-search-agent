@@ -2,7 +2,7 @@
 
 A self-hosted AI agent that finds relevant job openings, prepares outreach for your approval, and tracks your pipeline. It runs 24/7 on your own server. Full design: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-> **Status:** Module 0 (platform foundation) only. Nothing job-related runs yet.
+> **Status:** Module 0 (platform foundation) ✅ · Module 1 Part 1a (company discovery) — in review.
 
 ## You need an always-on host
 
@@ -52,6 +52,30 @@ Then open http://localhost:8000/docs on your laptop.
 | `api` | FastAPI backend (`:8000`) |
 | `worker` | Celery worker: does the background work |
 | `beat` | Celery scheduler: what makes the agent run unattended |
+
+## Company discovery (Module 1, Part 1a)
+
+Scouts find companies and feed one candidate pipe. A company's identity is its website domain, so the same company seen by several scouts becomes one record.
+
+| Scout | Source | Needs | Runs (IST) |
+|---|---|---|---|
+| `seeds` | `config/seed_companies.yaml` (your list) | nothing | on worker start-up + daily 05:00 |
+| `yc` | Public YC directory (yc-oss mirror) | nothing | daily 05:30 |
+| `adzuna` | Adzuna jobs API, India | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | daily 06:00 |
+| `jooble` | Jooble jobs API | `JOOBLE_API_KEY` | daily 06:15 |
+| `remotive` | Remotive remote-jobs API | nothing | daily 06:30 |
+| `hn` | HN "Who is hiring?" (official API) | nothing | 2nd + 16th of the month |
+
+Companies that are only seen by name, mostly from job sites, stay **unresolved** until their website is found. With `BRAVE_API_KEY` set, an hourly resolver searches for them. Without it they wait for Part 1b. Expect a good share of job-site companies to sit here.
+
+The job-site scouts search for the `target_roles` in `config/owner_stub.yaml`.
+
+```bash
+docker compose exec api python -m app.cli scout yc        # run one scout now
+docker compose exec api python -m app.cli stats           # what's been found + scout health
+```
+
+API (via `/docs`): `GET /api/companies`, `GET /api/companies/{id}`, `GET /api/scouts`, `POST /api/scouts/{name}/run`, `GET /api/audit`.
 
 ## Configuration
 

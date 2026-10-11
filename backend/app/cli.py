@@ -1,6 +1,9 @@
 """Operator commands.
 
-    python -m app.cli selftest     # end-to-end check of the whole stack; exit code 1 on failure
+    python -m app.cli selftest       # end-to-end check of the whole stack; exit code 1 on failure
+    python -m app.cli scout <name>   # run one scout now (seeds, yc, adzuna, jooble, remotive, hn)
+    python -m app.cli resolve        # run one batch of the domain resolver now
+    python -m app.cli stats          # what's in the database + per-scout health
 """
 
 import argparse
@@ -105,14 +108,75 @@ def selftest() -> int:
     return 0 if all(results) else 1
 
 
+def scout(name: str) -> int:
+    from app.modules.m1_companies.runner import run_scout
+
+    print(f"Running scout '{name}'…")
+    result = run_scout(name)
+    print(f"  status: {result['status']}")
+    for key in ("reason", "error"):
+        if result.get(key):
+            print(f"  {key}: {result[key]}")
+    for outcome, n in sorted(result.get("counts", {}).items()):
+        print(f"  {outcome}: {n}")
+    return 0 if result["status"] in ("ok", "skipped") else 1
+
+
+def resolve() -> int:
+    from app.modules.m1_companies.resolver import run_resolver
+
+    print("Resolving domains for companies seen by name only…")
+    for outcome, n in sorted(run_resolver().items()):
+        print(f"  {outcome}: {n}")
+    return 0
+
+
+def stats() -> int:
+    from sqlalchemy import func, select
+
+    from app.db import session_scope
+    from app.models import Company, CompanySighting, ContactLead
+    from app.modules.m1_companies.health import scout_health
+
+    with session_scope() as s:
+        print("Companies by status:")
+        for status, n in s.execute(select(Company.status, func.count()).group_by(Company.status)).all():
+            print(f"  {status:<12} {n}")
+        print("Companies by type:")
+        for ctype, n in s.execute(select(Company.type, func.count()).group_by(Company.type)).all():
+            print(f"  {ctype:<12} {n}")
+        print("Companies seen per scout:")
+        per_scout = select(CompanySighting.scout, func.count(func.distinct(CompanySighting.company_id)))
+        for name, n in s.execute(per_scout.group_by(CompanySighting.scout)).all():
+            print(f"  {name:<12} {n}")
+        print(f"Contact leads: {s.scalar(select(func.count()).select_from(ContactLead))}")
+        print("Scout health:")
+        for h in scout_health(s):
+            last = h["last_run"]
+            when = f"last run {last['started_at']:%Y-%m-%d %H:%M} UTC, {last['status']}" if last else "never run"
+            note = h["reason"] or (last or {}).get("error") or ""
+            print(f"  {h['scout']:<9} {h['health']:<15} {when}" + (f" — {note[:120]}" if note else ""))
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("selftest", help="end-to-end check of the whole stack")
+    p_scout = sub.add_parser("scout", help="run one scout now")
+    p_scout.add_argument("name")
+    sub.add_parser("resolve", help="run one domain-resolver batch now")
+    sub.add_parser("stats", help="database contents + scout health")
     args = parser.parse_args()
 
     if args.command == "selftest":
         sys.exit(selftest())
+    if args.command == "scout":
+        sys.exit(scout(args.name))
+    if args.command == "resolve":
+        sys.exit(resolve())
+    if args.command == "stats":
+        sys.exit(stats())
 
 
 if __name__ == "__main__":

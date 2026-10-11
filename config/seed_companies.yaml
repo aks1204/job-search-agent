@@ -1,0 +1,49 @@
+# Owner's seed list. Seeds are judged like every other company — being on this
+# list gets a company considered, not accepted. `trusted: true` would bypass the
+# evaluator but is unused by default.
+#
+# type: established → judged by brand comparison vs. your career (Module 1 §1.1).
+# type: startup     → judged by viability + novelty (incl. the category blocklist).
+
+companies:
+  # Travel / consumer tech
+  - {name: "Airbnb", domain: "airbnb.com", type: established}
+  - {name: "Booking.com", domain: "booking.com", type: established}
+  - {name: "Expedia", domain: "expedia.com", type: established}
+  - {name: "Uber", domain: "uber.com", type: established}
+
+  # Pharma / healthcare
+  - {name: "Pfizer", domain: "pfizer.com", type: established}
+  - {name: "Eli Lilly", domain: "lilly.com", type: established}
+  - {name: "Amgen", domain: "amgen.com", type: established}
+  - {name: "Sanofi", domain: "sanofi.com", type: established}
+  - {name: "Bristol Myers Squibb", domain: "bms.com", type: established}
+  - {name: "Merck & Co. (MSD)", domain: "merck.com", type: established, notes: "Not Merck KGaA (merckgroup.com)"}
+  - {name: "UnitedHealth Group", domain: "unitedhealthgroup.com", type: established}
+  - {name: "Optum", domain: "optum.com", type: established, notes: "UnitedHealth Group subsidiary"}
+
+  # Financial services
+  - {name: "American Express", domain: "americanexpress.com", type: established}
+  - {name: "Visa", domain: "visa.com", type: established}
+  - {name: "Goldman Sachs", domain: "goldmansachs.com", type: established}
+  - {name: "JPMorgan Chase", domain: "jpmorganchase.com", type: established}
+  - {name: "Morgan Stanley", domain: "morganstanley.com", type: established}
+
+  # Strategy consulting
+  - {name: "McKinsey & Company", domain: "mckinsey.com", type: established}
+  - {name: "Bain & Company", domain: "bain.com", type: established}
+  - {name: "Boston Consulting Group", domain: "bcg.com", type: established}
+
+  # Big tech / retail
+  - {name: "Google", domain: "google.com", type: established}
+  - {name: "Meta", domain: "meta.com", type: established}
+  - {name: "Walmart", domain: "walmart.com", type: established}
+  - {name: "Palantir", domain: "palantir.com", type: established}
+
+  # Indian consumer & fintech
+  - {name: "Flipkart", domain: "flipkart.com", type: established}
+  - {name: "Meesho", domain: "meesho.com", type: established}
+  - {name: "Zomato (Eternal)", domain: "zomato.com", type: established}
+  - {name: "PhonePe", domain: "phonepe.com", type: established}
+  - {name: "Groww", domain: "groww.in", type: established}
+  - {name: "slice", domain: "sliceit.com", type: established}

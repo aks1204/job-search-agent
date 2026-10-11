@@ -26,6 +26,21 @@ class Settings(BaseSettings):
     jooble_api_key: str = ""
 
 
+    def secrets(self) -> list[str]:
+        values = [
+            self.anthropic_api_key, self.brave_api_key, self.adzuna_app_id,
+            self.adzuna_app_key, self.jooble_api_key,
+        ]
+        return [v for v in values if v and len(v) >= 4]
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
+
+
+def redact(text: str) -> str:
+    """Strip configured secrets from text that will be stored or shown (errors, logs)."""
+    for secret in get_settings().secrets():
+        text = text.replace(secret, "***")
+    return text
