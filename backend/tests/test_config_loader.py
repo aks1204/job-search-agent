@@ -76,6 +76,11 @@ def test_owner_stub_optional_and_validated(tmp_path):
     assert owner.current_role.started == "2024-03" and owner.target_roles == []
 
 
+def test_owner_stub_placeholders_detected(tmp_path):
+    _write(tmp_path, "owner_stub.yaml", OWNER.replace('company: "Co"', 'company: "Current Company"', 1))
+    assert load_config(tmp_path).owner.placeholder_fields() == ["current_role.company"]
+
+
 def test_owner_stub_bad_date_names_the_file(tmp_path):
     _write(tmp_path, "owner_stub.yaml", OWNER.replace('started: "2024-03"', 'started: "March 2024"'))
     with pytest.raises(ConfigError, match="owner_stub.yaml"):

@@ -83,6 +83,19 @@ def _precedents(session: Session, company: Company, card: dict, profile: str) ->
     return [e for e, _ in same_profile[:PRECEDENTS_K]]
 
 
+def _require_owner(cfg):
+    """Established companies are judged against the owner's real history — refuse to guess without it."""
+    owner = cfg.owner
+    if owner is None:
+        raise RuntimeError("config/owner_stub.yaml is required to judge established companies")
+    if placeholders := owner.placeholder_fields():
+        raise RuntimeError(
+            "config/owner_stub.yaml still has sample values (" + ", ".join(placeholders)
+            + ") — fill in your real history before established companies can be judged"
+        )
+    return owner
+
+
 def _profile_for(company: Company, card: dict) -> str:
     if company.type in ("startup", "established"):
         return company.type
@@ -156,6 +169,8 @@ def evaluate(
     apply_feeder_facts(session, company)
     card = fact_card(session, company.id)
     profile = _profile_for(company, card)
+    if profile == "established":
+        _require_owner(cfg)  # fail before spending anything
     if profile == "startup":
         c = C.category_blocklist(card, rules, feeder_tags=_feeder_tags(company))
         if c.failed:
@@ -206,9 +221,7 @@ def evaluate(
         passed = j.verdict == "novel" or (j.verdict == "borderline" and rules.startup.novelty_borderline == "pass")
         c = C.Check("novelty", "pass" if passed else "fail", f"{j.verdict}: {j.reasoning}")
     else:
-        owner = cfg.owner
-        if owner is None:
-            raise RuntimeError("config/owner_stub.yaml is required to judge established companies")
+        owner = _require_owner(cfg)
         j = track(llm.structured(
             "judge", system=_brand_system(rules, owner), schema=BrandJudgment, purpose="m1.judge_brand",
             user=_card_text(company, card) + precedent_text, session=session, subject=subject,

@@ -102,8 +102,9 @@ def test_outsourcing_shop_fails_shared_check_before_judgment(db_session, http):
 
 @pytest.mark.parametrize("direction, passed", [("up", True), ("lateral", True), ("down", False), ("unknown", False)])
 def test_established_brand_judgment(db_session, http, direction, passed):
-    if get_config().owner is None:
-        pytest.skip("needs config/owner_stub.yaml")
+    owner = get_config().owner
+    if owner is None or owner.placeholder_fields():
+        pytest.skip("needs a filled-in config/owner_stub.yaml")
     company = _new(db_session, "Megacorp", "megacorp-test.com", scout="seeds", type_hint="established")
     llm = FakeLLM(
         CompanyProfile=profile(company_stage="established", employee_estimate="10000+"),

@@ -107,6 +107,17 @@ def selftest() -> int:
     has_key = bool(get_settings().anthropic_api_key)
     results.append(_line(has_key, "ANTHROPIC_API_KEY set", "" if has_key else "required before Module 1"))
 
+    from app.config_loader import get_config
+
+    owner = get_config().owner
+    if owner is None:
+        results.append(_line(False, "owner_stub.yaml", "missing — copy config/owner_stub.example.yaml"))
+    else:
+        placeholders = owner.placeholder_fields()
+        results.append(_line(not placeholders, "owner_stub.yaml filled in",
+                             "still has sample values: " + ", ".join(placeholders) if placeholders else
+                             f"{len(owner.employment_history)} jobs, {len(owner.target_roles)} target roles"))
+
     passed = sum(results)
     print(f"\n{passed}/{len(results)} checks passed")
     return 0 if all(results) else 1

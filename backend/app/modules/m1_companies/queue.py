@@ -39,13 +39,18 @@ def judged_today(session: Session) -> int:
 
 def pick_candidates(session: Session, n: int) -> list[int]:
     """Re-evaluations first, then by best source (seeds, hn, yc, …), then oldest; failed ones last."""
-    priority = {s: i for i, s in enumerate(get_config().rules.evaluation.source_priority)}
-    rows = session.execute(
+    cfg = get_config()
+    priority = {s: i for i, s in enumerate(cfg.rules.evaluation.source_priority)}
+    stmt = (
         select(Company.id, Company.reeval_reason, Company.first_seen_at, func.array_agg(CompanySighting.scout))
         .join(CompanySighting, CompanySighting.company_id == Company.id)
         .where(Company.status == STATUS_CANDIDATE)
         .group_by(Company.id)
-    ).all()
+    )
+    if cfg.owner is None or cfg.owner.placeholder_fields():
+        # Established companies are judged against the owner's real history; wait for it.
+        stmt = stmt.where(Company.type != "established")
+    rows = session.execute(stmt).all()
 
     def key(row):
         _, reeval, first_seen, scouts = row

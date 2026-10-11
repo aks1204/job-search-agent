@@ -66,6 +66,19 @@ class OwnerStub(Strict):
     employment_history: list[OwnerJob] = Field(min_length=1)
     target_roles: list[str] = Field(default_factory=list)
 
+    def placeholder_fields(self) -> list[str]:
+        """Fields still holding owner_stub.example.yaml's sample values."""
+        samples = {"your name", "current company", "previous company"}
+        found = []
+        if self.name.strip().lower() in samples:
+            found.append("name")
+        if self.current_role.company.strip().lower() in samples:
+            found.append("current_role.company")
+        for i, job in enumerate(self.employment_history):
+            if job.company.strip().lower() in samples:
+                found.append(f"employment_history[{i}].company")
+        return found
+
 
 # --- seed_companies.yaml --------------------------------------------------
 
