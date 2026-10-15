@@ -16,7 +16,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from app.config_schemas import (
-    AppConfig, CompanyRules, LLMConfig, OwnerStub, ScoutsConfig, SeedList, SeedPack, WatchConfig,
+    AppConfig, CompanyRules, JobRules, LLMConfig, OwnerStub, ScoutsConfig, SeedList, SeedPack, WatchConfig,
 )
 from app.settings import get_settings
 
@@ -43,6 +43,7 @@ class LoadedConfig:
     seeds: SeedList
     owner: OwnerStub | None  # None until config/owner_stub.yaml exists
     rules: CompanyRules
+    job_rules: JobRules
     llm: LLMConfig
     watch: WatchConfig
     adapters: dict[str, dict]  # giant-company adapters from config/adapters/*.yaml, keyed by domain
@@ -93,6 +94,7 @@ def load_config(config_dir: Path) -> LoadedConfig:
         seeds=_validate(files, "seed_companies", SeedList) or SeedList(),
         owner=_validate(files, "owner_stub", OwnerStub),
         rules=_validate(files, "company_rules", CompanyRules) or CompanyRules(),
+        job_rules=_validate(files, "job_rules", JobRules) or JobRules(),
         llm=_validate(files, "llm", LLMConfig) or LLMConfig(),
         watch=_validate(files, "watch", WatchConfig) or WatchConfig(),
         adapters=_load_adapters(config_dir / "adapters"),

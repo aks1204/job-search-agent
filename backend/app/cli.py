@@ -13,6 +13,9 @@
     python -m app.cli feeds                                      # watchlist health
     python -m app.cli jobs --domain acme.com                     # a company's open postings
     python -m app.cli garden                                     # run the weekly upkeep now
+    python -m app.cli pipeline [--refilter]                      # Module 2: process job postings now
+    python -m app.cli funnel                                     # Module 2: counts + top filter reasons
+    python -m app.cli passed [--domain acme.com]                 # Module 2: postings that passed the free filters
 """
 
 import argparse
@@ -111,6 +114,10 @@ def selftest() -> int:
 
     has_key = bool(get_settings().anthropic_api_key)
     results.append(_line(has_key, "ANTHROPIC_API_KEY set", "" if has_key else "required before Module 1"))
+
+    resume = get_settings().config_dir / "resume.pdf"
+    results.append(_line(resume.is_file(), "config/resume.pdf present",
+                         f"{resume.stat().st_size // 1024} KB" if resume.is_file() else "needed for Module 2 scoring"))
 
     from app.config_loader import get_config
 
@@ -403,6 +410,59 @@ def coverage_cmd() -> int:
     return 0
 
 
+def pipeline_cmd(refilter: bool) -> int:
+    from app.db import session_scope
+    from app.modules.m2_jobs.pipeline import refilter_all, run_pipeline
+
+    if refilter:
+        with session_scope() as s:
+            print(f"Re-applied filters: {dict(refilter_all(s))}")
+    print("Processing job postings…")
+    _print_counts(run_pipeline())
+    return 0
+
+
+def funnel_cmd() -> int:
+    from app.db import session_scope
+    from app.modules.m2_jobs.pipeline import funnel
+
+    with session_scope() as s:
+        f = funnel(s)
+    print(f"Open postings: {f['open_postings']}  (job-site/HN/WaaS leads among them: {f['open_leads']})")
+    for status, n in sorted(f["by_filter_status"].items()):
+        print(f"  {status:<8} {n}")
+    if f["passed_by_description"]:
+        print("Passed — description: " + ", ".join(f"{k} {v}" for k, v in sorted(f["passed_by_description"].items())))
+    if f["top_filter_reasons"]:
+        print("Most common reasons filtered out:")
+        for reason, n in f["top_filter_reasons"]:
+            print(f"  {n:>5}  {reason}")
+    print(f"Sibling clusters (same role, several req IDs): {f['sibling_clusters']}")
+    return 0
+
+
+def passed_cmd(domain: str | None, limit: int) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company, JobPosting
+
+    with session_scope() as s:
+        q = (select(JobPosting, Company).join(Company, Company.id == JobPosting.company_id)
+             .where(JobPosting.status == "open", JobPosting.filter_status == "passed"))
+        if domain:
+            q = q.where(Company.domain == domain.lower())
+        rows = s.execute(q.order_by(JobPosting.first_seen_at.desc()).limit(limit)).all()
+        for j, c in rows:
+            where = "India" if j.is_india else ("remote" if j.is_remote else "abroad")
+            age = f"posted {j.posted_at:%d %b}" if j.posted_at else "date unknown"
+            tag = " · lead" if j.lead_only else ""
+            print(f"- {c.name}: {j.title} | {j.location or '—'} [{where}, {j.employment_type}, {age}, "
+                  f"description {j.description_status}{tag}]")
+        print(f"{len(rows)} shown (passed the free filters; the AI read comes in Part 2b)")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -435,6 +495,12 @@ def main() -> None:
     p_jobs.add_argument("--domain", required=True)
     sub.add_parser("garden", help="run the weekly upkeep now")
     sub.add_parser("coverage", help="how kept companies' jobs are read; which reader to build next")
+    p_pipe = sub.add_parser("pipeline", help="Module 2: process job postings now")
+    p_pipe.add_argument("--refilter", action="store_true", help="re-apply filters to all open postings first")
+    sub.add_parser("funnel", help="Module 2: where postings stand and why they were filtered out")
+    p_pass = sub.add_parser("passed", help="Module 2: postings that passed the free filters")
+    p_pass.add_argument("--domain")
+    p_pass.add_argument("--limit", type=int, default=40)
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -467,6 +533,12 @@ def main() -> None:
         sys.exit(garden_cmd())
     if args.command == "coverage":
         sys.exit(coverage_cmd())
+    if args.command == "pipeline":
+        sys.exit(pipeline_cmd(args.refilter))
+    if args.command == "funnel":
+        sys.exit(funnel_cmd())
+    if args.command == "passed":
+        sys.exit(passed_cmd(args.domain, args.limit))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

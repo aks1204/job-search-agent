@@ -27,6 +27,7 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
         # Weekly gardening, Sunday 03:00 in the app timezone.
         "m1-garden": {"task": "m1.garden", "schedule": crontab(minute="0", hour="3", day_of_week="sun")},
         "m1-check-rules": {"task": "m1.check_rules_changes", "schedule": crontab(minute="30", hour="4")},
+        "m2-process": {"task": "m2.process", "schedule": cfg.watch.tick_minutes * 60.0},
     }
     for name in SCOUT_NAMES:
         scout = getattr(cfg.scouts, name)
@@ -48,7 +49,7 @@ celery_app = Celery(
     "job_agent",
     broker=_settings.redis_url,
     backend=_settings.redis_url,
-    include=["app.tasks.system", "app.modules.m1_companies.tasks"],
+    include=["app.tasks.system", "app.modules.m1_companies.tasks", "app.modules.m2_jobs.tasks"],
 )
 
 celery_app.conf.update(

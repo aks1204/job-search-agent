@@ -1,0 +1,40 @@
+# Job rules (Module 2 §2.1). LOCKED: read-only in the dashboard. Edit + `docker compose restart`.
+#
+# Kind 1 — hard filters, applied before any AI cost. Titles are a broad net only: what a role
+# really is (family, level) is read from the DESCRIPTION by the AI in the next step.
+# Your role families and excluded families come from config/owner_stub.yaml.
+
+kind1:
+  max_age_days: 21
+  allowed_employment_types: ["full_time"]     # unknown types pass; the AI read confirms
+  # Obvious non-matches for an analytics / strategy career, matched as whole words in the
+  # title (plurals and -ing forms included). Your excluded role families are added on top.
+  noise_titles:
+    - "intern"
+    - "internship"
+    - "apprentice"
+    - "nurse"
+    - "driver"
+    - "technician"
+    - "chemist"
+    - "chemistry"
+    - "biologist"
+    - "microbiologist"
+    - "pharmacist"
+    - "physician"
+    - "clinical research associate"
+    - "medical science liaison"
+    - "sales representative"
+    - "account executive"
+    - "attorney"
+    - "counsel"
+    - "paralegal"
+    - "accountant"
+    - "warehouse"
+    - "mechanic"
+    - "electrician"
+    - "cashier"
+    - "customer service representative"
+
+descriptions:
+  per_run: 80     # full job descriptions fetched per 15-minute tick (only for jobs that passed Kind 1)

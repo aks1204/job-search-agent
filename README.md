@@ -136,6 +136,27 @@ docker compose exec api python -m app.cli garden                  # run the week
 
 API: `GET /api/feeds`, `GET /api/postings`, `POST /api/companies/{id}/activate`.
 
+## Job shortlisting (Module 2), Part 2a: intake and free filters
+
+Every 15 minutes, raw postings from the watched companies' feeds are turned into **job postings** in one standard shape. That means parsed dates (including Workday's "Posted 7 Days Ago"), employment type, India/remote flags and stated pay.
+
+- **Siblings** (the same role under several requisition IDs) form one cluster, so they're scored once and shown as one card.
+- **Re-seen postings** only update their "last seen" date. A **material change** marks the posting for one re-score.
+- **Free filters** (`config/job_rules.yaml`), with no AI involved:
+  - a broad title net built from your role families in `owner_stub.yaml`;
+  - your excluded families and obvious noise titles;
+  - full-time only (unknown types pass on to the AI read);
+  - posted within the last 21 days.
+- **Full descriptions** are fetched for jobs that passed, from Workday, Oracle, Eightfold and SmartRecruiters, whose list endpoints give titles only.
+
+```bash
+docker compose exec api python -m app.cli pipeline      # process now
+docker compose exec api python -m app.cli funnel        # counts + top reasons for filtering out
+docker compose exec api python -m app.cli passed --domain lilly.com
+```
+
+Part 2b adds the AI read of each description. Part 2c adds scoring and bands.
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

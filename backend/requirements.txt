@@ -13,3 +13,4 @@ anthropic>=0.40
 fastembed>=0.4,<1
 tldextract>=5,<6
 tzdata
+pypdf>=4,<6

@@ -4,7 +4,7 @@ from datetime import date, time
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 
 class Strict(BaseModel):
@@ -58,6 +58,31 @@ class OwnerJob(Strict):
     end: YearMonth | None = None
 
 
+class Compensation(Strict):
+    annual_ctc: int = Field(ge=0)
+    currency: str = "INR"
+    includes_variable: bool = True
+    last_confirmed: YearMonth | None = None
+
+
+class RoleFamilies(Strict):
+    progression: list[str] = Field(default_factory=list)
+    lateral: list[str] = Field(default_factory=list)
+    excluded: list[str] = Field(default_factory=list)
+
+
+class Skills(Strict):
+    must_have: list[str] = Field(default_factory=list)
+    nice_to_have: list[str] = Field(default_factory=list)
+
+
+class WorkAuthorization(Strict):
+    citizenship: str = "India"
+    visas_held: list[str] = Field(default_factory=list)
+    open_to_relocation: bool = False
+    relocation_countries: list[str] = Field(default_factory=list)
+
+
 class OwnerStub(Strict):
     name: str
     location: str = ""
@@ -65,6 +90,26 @@ class OwnerStub(Strict):
     current_role: OwnerRole
     employment_history: list[OwnerJob] = Field(min_length=1)
     target_roles: list[str] = Field(default_factory=list)
+    # Module 2 inputs (temporary home until Module 5's resume flow).
+    current_compensation: Compensation | None = None
+    level_ladder: list[str] = Field(default_factory=list)
+    current_level: str | None = None
+    total_experience_years: float | None = None
+    track: Literal["individual_contributor", "people_manager"] = "individual_contributor"
+    open_to_management_track: bool = False
+    role_families: RoleFamilies = Field(default_factory=RoleFamilies)
+    skills: Skills = Field(default_factory=Skills)
+    work_authorization: WorkAuthorization = Field(default_factory=WorkAuthorization)
+    preferred_locations_india: list[str] = Field(default_factory=list)
+    remote_ok: bool = True
+    hybrid_ok: bool = True
+    notice_period_days: int | None = None
+
+    @model_validator(mode="after")
+    def _level_on_ladder(self):
+        if self.current_level and self.level_ladder and self.current_level not in self.level_ladder:
+            raise ValueError(f"current_level {self.current_level!r} is not one of level_ladder {self.level_ladder}")
+        return self
 
     def placeholder_fields(self) -> list[str]:
         """Fields still holding owner_stub.example.yaml's sample values."""
@@ -298,6 +343,26 @@ class Adapter(Strict):
     url_template: str | None = None  # e.g. "https://careers.example.com/job/{external_id}"
     pagination: AdapterPagination | None = None
     maintainer: str = ""
+
+
+# --- job_rules.yaml (Module 2) -------------------------------------------------
+
+class Kind1Rules(Strict):
+    """Hard filters applied before any AI cost."""
+
+    max_age_days: int = 21
+    allowed_employment_types: list[str] = Field(default_factory=lambda: ["full_time"])
+    # Obvious non-matches, matched on word stems in the title (owner's excluded families are added on top).
+    noise_titles: list[str] = Field(default_factory=list)
+
+
+class DescriptionFetch(Strict):
+    per_run: int = Field(80, ge=1, le=1000)
+
+
+class JobRules(Strict):
+    kind1: Kind1Rules = Field(default_factory=Kind1Rules)
+    descriptions: DescriptionFetch = Field(default_factory=DescriptionFetch)
 
 
 # --- llm.yaml ---------------------------------------------------------------
