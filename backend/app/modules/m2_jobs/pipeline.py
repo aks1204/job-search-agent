@@ -235,7 +235,7 @@ def funnel(session: Session) -> dict:
     ai_reasons: Counter = Counter()
     for (rs,) in session.execute(select(JobAssessment.reasons).where(JobAssessment.outcome == "rejected")).all():
         for r in rs or []:
-            ai_reasons[r.split(":")[0] if ":" in r else r.split(" (")[0]] += 1
+            ai_reasons[r.split(" (")[0].split(":")[0]] += 1  # "family: …", "lateral (…)", "not doable … (“Location: …”)"
     return {
         "open_postings": sum(by_filter.values()),
         "by_filter_status": by_filter,
