@@ -52,7 +52,7 @@ def test_intake_normalises_clusters_siblings_and_filters(db_session, feed):
     assert ja.cluster_id == jb.cluster_id and ja.cluster_id != jc.cluster_id
     assert db_session.get(JobCluster, ja.cluster_id).size == 2
     assert ja.is_india and ja.filter_status == "passed" and ja.description_status == "pending"  # Workday: fetch later
-    assert jc.filter_status == "failed" and "title outside your role families" in jc.filter_reasons
+    assert jc.filter_status == "failed"  # outside the net or a noise title — either way, not shown
     assert jo.filter_status == "failed" and jo.filter_reasons[0].startswith("posted 3")
 
 

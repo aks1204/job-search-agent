@@ -80,6 +80,15 @@ def _check_celery_roundtrip() -> bool:
     try:
         reply = celery_app.send_task("system.ping").get(timeout=30)
     except Exception as e:
+        # A slow reply usually means every worker slot is busy with a long round (judging, syncing).
+        # If the worker answers an inspect call, it's alive — report what it's doing instead of failing.
+        try:
+            active = celery_app.control.inspect(timeout=3).active() or {}
+        except Exception:
+            active = {}
+        running = sorted({t.get("name", "?") for tasks in active.values() for t in tasks})
+        if active:
+            return _line(True, "celery round-trip", "worker alive but busy running " + ", ".join(running or ["tasks"]))
         return _line(False, "celery round-trip", str(e))
     return _line(True, "celery round-trip", reply)
 
