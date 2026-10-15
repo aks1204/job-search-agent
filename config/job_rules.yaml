@@ -35,6 +35,16 @@ kind1:
     - "electrician"
     - "cashier"
     - "customer service representative"
+    # Bank back-office and engineering roles (owner decision 2026-10-16: saves the daily AI reads)
+    - "reference data"
+    - "fund servicing"
+    - "product controller"
+    - "trading services"
+    - "surveillance"
+    - "credit documentation"
+    - "disclosure of interest"
+    - "external reporting"
+    - "site reliability"
 
   # Titles that are clearly 2+ rungs above your current level (owner_stub.yaml level_ladder) are
   # dropped for free. "Associate Director"-style titles are ambiguous and go to the AI read instead.

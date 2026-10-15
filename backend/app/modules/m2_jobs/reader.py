@@ -82,6 +82,12 @@ Role families: analytics and insights work applied to ANY business domain (marke
 operations, customer, commercial, pharma, product) counts as the candidate's core "business analytics"
 progression family — unless the work is mainly one of the candidate's EXCLUDED families, which always win
 (e.g. a role that is mostly risk modelling or ML model building is excluded if those are excluded).
+
+Levels: map the role onto the candidate's own ladder by the experience and scope asked for, not the
+title alone. Banks and financial firms use their own ladder (Analyst < Associate < Vice President <
+Executive Director / Director < Managing Director): there an "Associate" is a mid-level individual
+contributor (typically 3-6 years), NOT a manager, unless the description says they manage people;
+a "Vice President" is usually a senior individual contributor or team lead, not an executive.
 Answer in the requested JSON format."""
 
 
