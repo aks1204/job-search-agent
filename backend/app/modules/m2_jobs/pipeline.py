@@ -198,13 +198,17 @@ def refilter_all(session: Session) -> Counter:
     return counts
 
 
-def run_pipeline() -> dict:
-    counts: Counter = Counter()
+def run_pipeline(*, assess: bool = True) -> dict:
+    from app.modules.m2_jobs.assess import run_assessments
+
+    counts: dict = {}
     with session_scope() as s:
         counts.update({f"intake_{k}": v for k, v in intake(s).items()})
     with PoliteClient() as http, session_scope() as s:
         counts.update({f"descriptions_{k}": v for k, v in fetch_descriptions(s, http).items()})
-    return dict(counts)
+    if assess:
+        counts.update({f"ai_read_{k}": v for k, v in run_assessments().items()})
+    return counts
 
 
 def funnel(session: Session) -> dict:
@@ -221,6 +225,14 @@ def funnel(session: Session) -> dict:
     clusters = session.scalar(select(func.count()).select_from(JobCluster).where(JobCluster.size > 1)) or 0
     leads = session.scalar(select(func.count()).select_from(JobPosting).where(
         JobPosting.status == "open", JobPosting.lead_only.is_(True))) or 0
+
+    from app.models.assessment import JobAssessment
+
+    by_outcome = dict(session.execute(select(JobAssessment.outcome, func.count()).group_by(JobAssessment.outcome)).all())
+    ai_reasons: Counter = Counter()
+    for (rs,) in session.execute(select(JobAssessment.reasons).where(JobAssessment.outcome == "rejected")).all():
+        for r in rs or []:
+            ai_reasons[r.split(":")[0] if ":" in r else r.split(" (")[0]] += 1
     return {
         "open_postings": sum(by_filter.values()),
         "by_filter_status": by_filter,
@@ -228,4 +240,6 @@ def funnel(session: Session) -> dict:
         "top_filter_reasons": reasons.most_common(8),
         "sibling_clusters": clusters,
         "open_leads": leads,
+        "ai_read_by_outcome": by_outcome,
+        "top_ai_reject_reasons": ai_reasons.most_common(8),
     }

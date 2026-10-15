@@ -28,6 +28,7 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
         "m1-garden": {"task": "m1.garden", "schedule": crontab(minute="0", hour="3", day_of_week="sun")},
         "m1-check-rules": {"task": "m1.check_rules_changes", "schedule": crontab(minute="30", hour="4")},
         "m2-process": {"task": "m2.process", "schedule": cfg.watch.tick_minutes * 60.0},
+        "m2-refresh-rates": {"task": "m2.refresh_rates", "schedule": crontab(minute="0", hour="4", day_of_month="20", month_of_year="1")},
     }
     for name in SCOUT_NAMES:
         scout = getattr(cfg.scouts, name)

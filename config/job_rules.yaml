@@ -36,5 +36,26 @@ kind1:
     - "cashier"
     - "customer service representative"
 
+  # Titles that are clearly 2+ rungs above your current level (owner_stub.yaml level_ladder) are
+  # dropped for free. "Associate Director"-style titles are ambiguous and go to the AI read instead.
+  drop_titles_two_rungs_up: true
+  senior_title_words: ["director", "vice president", "vp", "svp", "evp", "head of", "chief"]
+  keep_title_phrases: ["associate director", "assistant director", "deputy director", "chief of staff"]
+
 descriptions:
   per_run: 80     # full job descriptions fetched per 15-minute tick (only for jobs that passed Kind 1)
+
+# Kind 2 — one AI read of each role's description (once per sibling cluster), then these rules.
+kind2:
+  max_reads_per_day: 150        # ≈ $0.10/day with the fast model
+  reads_per_tick: 20
+  # Services-flavoured work (client delivery, consulting projects for others) at a mid-tier brand: −10
+  # in scoring. Prestige services firms are exempt, as are companies whose brand verdict was "step up".
+  services_penalty: 10
+  prestige_service_domains: ["mckinsey.com", "bcg.com", "bain.com"]
+
+# Pay must beat your current pay (owner_stub.yaml current_compensation). Within ±marginal_band of it →
+# passes, flagged "comp: marginal". Foreign pay: remote-paid-from-abroad → nominal exchange rate;
+# relocation → PPP-adjusted (World Bank factors, refreshed yearly). Unstated → AI estimate.
+pay:
+  marginal_band: 0.15

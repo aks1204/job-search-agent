@@ -105,7 +105,8 @@ def test_stems_handle_possessives_plurals_and_ing():
 
 
 def _job(**kw):
-    base = dict(title="Senior Data Analyst", employment_type="unknown", posted_at=None, first_seen_at=NOW)
+    base = dict(title="Senior Data Analyst", employment_type="unknown", posted_at=None, first_seen_at=NOW,
+                is_india=True, is_remote=False, location="Bengaluru")
     return SimpleNamespace(**{**base, **kw})
 
 

@@ -354,15 +354,33 @@ class Kind1Rules(Strict):
     allowed_employment_types: list[str] = Field(default_factory=lambda: ["full_time"])
     # Obvious non-matches, matched on word stems in the title (owner's excluded families are added on top).
     noise_titles: list[str] = Field(default_factory=list)
+    drop_titles_two_rungs_up: bool = True
+    senior_title_words: list[str] = Field(
+        default_factory=lambda: ["director", "vice president", "vp", "svp", "evp", "head of", "chief"])
+    keep_title_phrases: list[str] = Field(
+        default_factory=lambda: ["associate director", "assistant director", "deputy director", "chief of staff"])
 
 
 class DescriptionFetch(Strict):
     per_run: int = Field(80, ge=1, le=1000)
 
 
+class Kind2Rules(Strict):
+    max_reads_per_day: int = Field(150, ge=0)
+    reads_per_tick: int = Field(20, ge=1, le=200)
+    services_penalty: int = 10
+    prestige_service_domains: list[str] = Field(default_factory=lambda: ["mckinsey.com", "bcg.com", "bain.com"])
+
+
+class PayRules(Strict):
+    marginal_band: float = Field(0.15, ge=0, le=1)
+
+
 class JobRules(Strict):
     kind1: Kind1Rules = Field(default_factory=Kind1Rules)
     descriptions: DescriptionFetch = Field(default_factory=DescriptionFetch)
+    kind2: Kind2Rules = Field(default_factory=Kind2Rules)
+    pay: PayRules = Field(default_factory=PayRules)
 
 
 # --- llm.yaml ---------------------------------------------------------------

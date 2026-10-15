@@ -155,7 +155,39 @@ docker compose exec api python -m app.cli funnel        # counts + top reasons f
 docker compose exec api python -m app.cli passed --domain lilly.com
 ```
 
-Part 2b adds the AI read of each description. Part 2c adds scoring and bands.
+### Part 2b: the AI read and the rules on it
+
+**Two more free rules** run first:
+- titles two or more rungs above your level (*Director, VP, Head of, Chief*) are dropped, while "Associate Director" and "Chief of Staff" go on to the AI;
+- jobs outside India and not remote are dropped, but only if `open_to_relocation: false`.
+
+Then **one AI read per role** (Claude Haiku 5.5, about $0.001; once per sibling cluster; capped at `kind2.max_reads_per_day`). From the description, not the title, it works out:
+- whether the job is doable from India without a visa you'd arrange, and whether it's a 6-day week;
+- the real role family, and **the rung on your own ladder**;
+- years of experience asked for, people management, and employment type;
+- stated or estimated pay;
+- flags: shift, travel, on-call, relocation.
+
+**Your rules are then applied in code:**
+- **Level:** your level or one up.
+- **Track:** no switch to people management unless you've allowed it.
+- **Laterals:** only at a step-up brand.
+- **Dealbreakers:** visa, 6-day week, non-full-time.
+- **Pay** must beat your current pay. Relocation uses **PPP** (World Bank, refreshed yearly), remote-from-abroad uses the exchange rate; within ±15% is "marginal", and unstated pay is estimated and flagged.
+- **Services penalty:** −10 for services-flavoured work at mid-tier brands.
+
+Salary and seniority are independent gates.
+
+Changing a rule or a value in `owner_stub.yaml` re-applies the rules for free. Only a change to what the AI is told about you triggers new reads.
+
+```bash
+docker compose exec api python -m app.cli assess --limit 10
+docker compose exec api python -m app.cli assessed --passed
+docker compose exec api python -m app.cli assessed --rejected
+docker compose exec api python -m app.cli rates --refresh
+```
+
+Part 2c adds scoring and bands.
 
 ## Configuration
 

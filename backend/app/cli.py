@@ -16,6 +16,9 @@
     python -m app.cli pipeline [--refilter]                      # Module 2: process job postings now
     python -m app.cli funnel                                     # Module 2: counts + top filter reasons
     python -m app.cli passed [--domain acme.com]                 # Module 2: postings that passed the free filters
+    python -m app.cli assess [--limit N] [--force]               # Module 2: AI-read descriptions now
+    python -m app.cli assessed [--passed|--rejected] [--domain]  # Module 2: AI-read roles, reasons, flags
+    python -m app.cli rates [--refresh]                          # Module 2: PPP / exchange-rate factors
 """
 
 import argparse
@@ -447,6 +450,60 @@ def funnel_cmd() -> int:
         for reason, n in f["top_filter_reasons"]:
             print(f"  {n:>5}  {reason}")
     print(f"Sibling clusters (same role, several req IDs): {f['sibling_clusters']}")
+    if f["ai_read_by_outcome"]:
+        print("AI read (one per role): " + ", ".join(f"{k} {v}" for k, v in sorted(f["ai_read_by_outcome"].items())))
+        for reason, n in f["top_ai_reject_reasons"]:
+            print(f"  {n:>5}  {reason}")
+    return 0
+
+
+def assess_cmd(limit: int | None, force: bool) -> int:
+    from app.modules.m2_jobs.assess import run_assessments
+
+    print("Reading job descriptions (AI) and applying your rules…")
+    _print_counts(run_assessments(limit=limit, force=force))
+    return 0
+
+
+def assessed_cmd(outcome: str | None, domain: str | None, last: int) -> int:
+    import textwrap
+
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company, JobAssessment, JobPosting
+
+    with session_scope() as s:
+        q = (select(JobAssessment, JobPosting, Company).join(JobPosting, JobPosting.id == JobAssessment.job_id)
+             .join(Company, Company.id == JobPosting.company_id))
+        if outcome:
+            q = q.where(JobAssessment.outcome == outcome)
+        if domain:
+            q = q.where(Company.domain == domain.lower())
+        rows = s.execute(q.order_by(JobAssessment.updated_at.desc()).limit(last)).all()
+        for a, j, c in rows:
+            mark = "PASS  " if a.outcome == "passed" else "REJECT"
+            level = a.level.get("job") or "?"
+            comp = a.comp.get("verdict", "?")
+            print(f"{mark} {c.name}: {j.title} | {j.location or '—'}")
+            print(f"       {a.read.get('one_liner', '')}  [level {level}, pay {comp}, ${a.cost_usd:.4f}]")
+            for line in a.reasons + [f"flag: {x}" for x in a.flags] + [f"penalty: {p['points']} {p['name']}" for p in a.penalties]:
+                print(textwrap.fill(line, 100, initial_indent="         - ", subsequent_indent="           "))
+        print(f"{len(rows)} shown")
+    return 0
+
+
+def rates_cmd(refresh: bool) -> int:
+    from app.core.http import PoliteClient
+    from app.db import session_scope
+    from app.modules.m2_jobs.rates import factors, refresh_from_world_bank
+
+    if refresh:
+        with PoliteClient() as http, session_scope() as s:
+            print(f"World Bank refresh: {refresh_from_world_bank(s, http)}")
+    with session_scope() as s:
+        for cur, (ppp, fx, source) in factors(s).items():
+            print(f"  {cur}  PPP {ppp:>8.3f} per intl $   FX {fx:>8.3f} per US$   ({source})")
     return 0
 
 
@@ -510,6 +567,17 @@ def main() -> None:
     p_pass = sub.add_parser("passed", help="Module 2: postings that passed the free filters")
     p_pass.add_argument("--domain")
     p_pass.add_argument("--limit", type=int, default=40)
+    p_assess = sub.add_parser("assess", help="Module 2: AI-read job descriptions now (daily limit applies)")
+    p_assess.add_argument("--limit", type=int)
+    p_assess.add_argument("--force", action="store_true", help="ignore the daily limit")
+    p_assd = sub.add_parser("assessed", help="Module 2: AI-read roles with reasons and flags")
+    g = p_assd.add_mutually_exclusive_group()
+    g.add_argument("--passed", action="store_true")
+    g.add_argument("--rejected", action="store_true")
+    p_assd.add_argument("--domain")
+    p_assd.add_argument("--last", type=int, default=20)
+    p_rates = sub.add_parser("rates", help="Module 2: pay-conversion factors (PPP + exchange rates)")
+    p_rates.add_argument("--refresh", action="store_true", help="fetch the latest from the World Bank")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -548,6 +616,12 @@ def main() -> None:
         sys.exit(funnel_cmd())
     if args.command == "passed":
         sys.exit(passed_cmd(args.domain, args.limit))
+    if args.command == "assess":
+        sys.exit(assess_cmd(args.limit, args.force))
+    if args.command == "assessed":
+        sys.exit(assessed_cmd("passed" if args.passed else "rejected" if args.rejected else None, args.domain, args.last))
+    if args.command == "rates":
+        sys.exit(rates_cmd(args.refresh))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 
