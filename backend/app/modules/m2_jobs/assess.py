@@ -43,10 +43,15 @@ def rules_version() -> str:
     return _hash([owner, cfg.job_rules.kind2.model_dump(mode="json"), cfg.job_rules.pay.model_dump(mode="json")])
 
 
-def _apply(session: Session, row: JobAssessment, job: JobPosting, read: dict) -> None:
+def _evaluate(session: Session, job: JobPosting, read: dict):
+    """Run the rules on a read. Pure lookups only — call before the row is (re)attached to the session."""
     cfg = get_config()
     company = session.get(Company, job.company_id)
-    outcome = assess(read, cfg.owner, cfg.job_rules, _context(session, company, job), factors(session))
+    return assess(read, cfg.owner, cfg.job_rules, _context(session, company, job), factors(session))
+
+
+def _apply(session: Session, row: JobAssessment, job: JobPosting, read: dict) -> None:
+    outcome = _evaluate(session, job, read)
     row.outcome, row.reasons, row.flags = outcome.outcome, outcome.reasons, outcome.flags
     row.penalties, row.comp, row.level = outcome.penalties, outcome.comp, outcome.level
     row.rules_version = rules_version()
@@ -106,13 +111,18 @@ def assess_one(session: Session, llm, cluster: JobCluster, job: JobPosting, vers
     )
     read = result.parsed.model_dump(mode="json")
 
+    # Evaluate BEFORE adding a new row: the rule lookups autoflush, and a half-filled row would be
+    # inserted with empty NOT NULL columns.
+    outcome = _evaluate(session, job, read)
     row = session.scalar(select(JobAssessment).where(JobAssessment.cluster_id == cluster.id))
     if row is None:
         row = JobAssessment(cluster_id=cluster.id)
-        session.add(row)
     row.job_id, row.content_hash, row.profile_version = job.id, job.content_hash, version
     row.read, row.lead_only, row.cost_usd = read, job.lead_only, round(result.cost_usd, 6)
-    _apply(session, row, job, read)
+    row.outcome, row.reasons, row.flags = outcome.outcome, outcome.reasons, outcome.flags
+    row.penalties, row.comp, row.level = outcome.penalties, outcome.comp, outcome.level
+    row.rules_version = rules_version()
+    session.add(row)
     session.flush()
     return row
 
@@ -147,10 +157,10 @@ def run_assessments(*, limit: int | None = None, force: bool = False) -> dict:
                 row = assess_one(s, llm, s.get(JobCluster, cluster_id), s.get(JobPosting, job_id), version)
                 counts[row.outcome] += 1
                 cost += row.cost_usd
-        except LLMError as e:
+        except Exception as e:  # one bad job must not stop the round (LLMError, data issues, …)
             errors += 1
             counts["errors"] += 1
-            log.warning("job read failed for cluster %s: %s", cluster_id, e)
+            log.warning("job read failed for cluster %s: %s", cluster_id, e if isinstance(e, LLMError) else repr(e))
             if errors >= 3:
                 counts["stopped_after_errors"] = 1
                 break
