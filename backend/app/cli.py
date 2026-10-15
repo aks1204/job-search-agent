@@ -19,6 +19,10 @@
     python -m app.cli assess [--limit N] [--force]               # Module 2: AI-read descriptions now
     python -m app.cli assessed [--passed|--rejected] [--domain]  # Module 2: AI-read roles, reasons, flags
     python -m app.cli rates [--refresh]                          # Module 2: PPP / exchange-rate factors
+    python -m app.cli brand <domain> up|lateral|down "<reason>"  # your own brand call for a company
+    python -m app.cli score [--limit N] [--force]                # Module 2: similarity + AI grades now
+    python -m app.cli shortlist [--band fast_lane|inbox|maybe]   # Module 2: scored roles, best first
+    python -m app.cli feedback <cluster_id> act|skip|thumbs_up|thumbs_down|maybe_rescue ["reason"]
 """
 
 import argparse
@@ -493,6 +497,89 @@ def assessed_cmd(outcome: str | None, domain: str | None, last: int) -> int:
     return 0
 
 
+def brand_cmd(domain: str, level: str, reason: str) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company
+    from app.modules.m2_jobs.brand import set_brand
+
+    with session_scope() as s:
+        company = s.scalar(select(Company).where(Company.domain == domain.lower()))
+        if company is None:
+            print(f"No company with domain {domain}")
+            return 1
+        n = set_brand(s, company, level, reason)
+        print(f"{company.name}: brand recorded as '{level}' (saved as a precedent). "
+              f"{n} assessed role(s) will be re-checked for free on the next round.")
+    return 0
+
+
+def score_cmd(limit: int | None, force: bool) -> int:
+    from app.modules.m2_jobs.scoring import run_scoring
+
+    print("Scoring roles (similarity for all, AI grade for the top ones)…")
+    _print_counts(run_scoring(grade_limit=limit, force=force))
+    return 0
+
+
+BAND_LABEL = {"fast_lane": "FAST LANE", "inbox": "INBOX", "maybe": "MAYBE", "archive": "ARCHIVE"}
+
+
+def shortlist_cmd(band: str | None, limit: int) -> int:
+    import textwrap
+
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company, JobAssessment, JobCluster, JobPosting, JobScore
+
+    with session_scope() as s:
+        q = (select(JobScore, JobAssessment, JobPosting, Company, JobCluster)
+             .join(JobAssessment, JobAssessment.id == JobScore.assessment_id)
+             .join(JobPosting, JobPosting.id == JobAssessment.job_id)
+             .join(Company, Company.id == JobPosting.company_id)
+             .join(JobCluster, JobCluster.id == JobScore.cluster_id))
+        q = q.where(JobScore.band == band) if band else q.where(JobScore.band != "archive")
+        rows = s.execute(q.order_by(JobScore.score.desc()).limit(limit)).all()
+        for sc, a, j, c, cl in rows:
+            graded = "AI-graded" if sc.graded else "similarity only"
+            siblings = f" · {cl.size} req IDs" if cl.size > 1 else ""
+            print(f"[{sc.score:>3}] {BAND_LABEL[sc.band]:<9} {c.name}: {j.title} | {j.location or '—'}{siblings}")
+            print(f"        {sc.grade.get('one_liner') or a.read.get('one_liner', '')}  ({graded}, cluster {cl.id})")
+            for r in sc.grade.get("reasons", [])[:3]:
+                print(textwrap.fill(r, 100, initial_indent="          + ", subsequent_indent="            "))
+            if sc.grade.get("missing"):
+                print(textwrap.fill("gaps: " + ", ".join(sc.grade["missing"][:5]), 100,
+                                    initial_indent="          - ", subsequent_indent="            "))
+            notes = [*a.flags, *(f"{p['points']} {p['name']}" for p in sc.breakdown.get("penalties", [])),
+                     *sc.breakdown.get("caps", [])]
+            if notes:
+                print(textwrap.fill("notes: " + "; ".join(notes), 100,
+                                    initial_indent="          · ", subsequent_indent="            "))
+            if j.url:
+                print(f"          {j.url}")
+        print(f"{len(rows)} shown")
+    return 0
+
+
+def feedback_cmd(cluster_id: int, action: str, reason: str | None) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import JobScore
+    from app.modules.m2_jobs.scoring import record_feedback
+
+    with session_scope() as s:
+        row = s.scalar(select(JobScore).where(JobScore.cluster_id == cluster_id))
+        if row is None:
+            print(f"No scored role with cluster id {cluster_id} (see `shortlist`)")
+            return 1
+        record_feedback(s, row, action, reason)
+        print(f"Recorded '{action}'. Role now: {row.score} → {row.band}")
+    return 0
+
+
 def rates_cmd(refresh: bool) -> int:
     from app.core.http import PoliteClient
     from app.db import session_scope
@@ -576,6 +663,20 @@ def main() -> None:
     g.add_argument("--rejected", action="store_true")
     p_assd.add_argument("--domain")
     p_assd.add_argument("--last", type=int, default=20)
+    p_brand = sub.add_parser("brand", help="record your own view of a company's brand vs your career")
+    p_brand.add_argument("domain")
+    p_brand.add_argument("level", choices=["up", "lateral", "down"])
+    p_brand.add_argument("reason")
+    p_score = sub.add_parser("score", help="Module 2: similarity + AI grades now (daily limit applies)")
+    p_score.add_argument("--limit", type=int)
+    p_score.add_argument("--force", action="store_true")
+    p_short = sub.add_parser("shortlist", help="Module 2: scored roles, best first")
+    p_short.add_argument("--band", choices=["fast_lane", "inbox", "maybe", "archive"])
+    p_short.add_argument("--limit", type=int, default=25)
+    p_fb = sub.add_parser("feedback", help="Module 2: act / skip / thumbs_up / thumbs_down / maybe_rescue a role")
+    p_fb.add_argument("cluster_id", type=int)
+    p_fb.add_argument("action", choices=["act", "skip", "thumbs_up", "thumbs_down", "maybe_rescue"])
+    p_fb.add_argument("reason", nargs="?")
     p_rates = sub.add_parser("rates", help="Module 2: pay-conversion factors (PPP + exchange rates)")
     p_rates.add_argument("--refresh", action="store_true", help="fetch the latest from the World Bank")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
@@ -622,6 +723,14 @@ def main() -> None:
         sys.exit(assessed_cmd("passed" if args.passed else "rejected" if args.rejected else None, args.domain, args.last))
     if args.command == "rates":
         sys.exit(rates_cmd(args.refresh))
+    if args.command == "brand":
+        sys.exit(brand_cmd(args.domain, args.level, args.reason))
+    if args.command == "score":
+        sys.exit(score_cmd(args.limit, args.force))
+    if args.command == "shortlist":
+        sys.exit(shortlist_cmd(args.band, args.limit))
+    if args.command == "feedback":
+        sys.exit(feedback_cmd(args.cluster_id, args.action, args.reason))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

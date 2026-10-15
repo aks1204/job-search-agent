@@ -49,10 +49,42 @@ descriptions:
 kind2:
   max_reads_per_day: 150        # ≈ $0.10/day with the fast model
   reads_per_tick: 20
-  # Services-flavoured work (client delivery, consulting projects for others) at a mid-tier brand: −10
-  # in scoring. Prestige services firms are exempt, as are companies whose brand verdict was "step up".
+  # Services-flavoured work (client delivery, consulting projects for others) at a MIDDLE-tier brand: −10
+  # in scoring. Exempt: companies on prestige_brands, and companies whose brand is "step up" or
+  # "lateral" for you (Module 1's verdict, or your own call via `cli brand <domain> up|lateral|down`).
   services_penalty: 10
-  prestige_service_domains: ["mckinsey.com", "bcg.com", "bain.com"]
+  prestige_brands:
+    - "mckinsey.com"
+    - "bcg.com"
+    - "bain.com"
+    - "goldmansachs.com"
+    - "morganstanley.com"
+    - "jpmorganchase.com"
+    - "google.com"
+    - "microsoft.com"
+    - "amazon.com"
+    - "apple.com"
+    - "meta.com"
+
+# Kind 3 — scoring (spec §2.3). Stage 1: free resume/profile similarity for every role that passed.
+# Stage 2: the top grades_per_day by similarity get an AI grade (stronger model). Final score =
+# weighted average of the grade's dimensions (equal weights to start), minus penalties.
+scoring:
+  grades_per_day: 20
+  grades_per_tick: 5
+  weights:                     # equal to start; feedback tuning adjusts these (changes are logged)
+    skills_fit: 1
+    experience_fit: 1
+    domain_fit: 1
+    career_growth: 1
+    brand_value: 1
+    location_fit: 1
+  bands: {fast_lane: 85, inbox: 65, maybe: 40}   # below maybe → archive
+  # Tenure-aware lateral appetite: once you've been in your role this long, laterals score lower.
+  lateral_tenure_years: 2
+  lateral_penalty: 5
+  # Roles not (yet) AI-graded are banded by similarity alone and never above Maybe; so are leads.
+  ungraded_max_score: 64
 
 # Pay must beat your current pay (owner_stub.yaml current_compensation). Within ±marginal_band of it →
 # passes, flagged "comp: marginal". Foreign pay: remote-paid-from-abroad → nominal exchange rate;

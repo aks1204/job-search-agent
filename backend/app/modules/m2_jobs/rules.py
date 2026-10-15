@@ -28,7 +28,7 @@ class Context:
     """Facts about the company the rules need (from Module 1)."""
 
     company_domain: str | None
-    brand_step_up: bool          # Module 1's brand verdict for this company was "up"
+    brand_level: str             # up | lateral | down | unknown — owner's call (cli brand) or Module 1's verdict
     job_is_india: bool
     job_is_remote: bool
     stated_salary: dict | None   # parsed from the listing itself, if any
@@ -59,7 +59,7 @@ def _family_and_track(read: dict, owner: OwnerStub, ctx: Context, gap: int | Non
         a.reasons.append(f"family: {family} is outside your role families")
     elif match == "lateral":
         # Laterals require a step-up brand AND senior level within the family.
-        if not ctx.brand_step_up:
+        if ctx.brand_level != "up":
             a.reasons.append(f"lateral ({family}) at a company that isn't a step up for you")
         elif gap is not None and gap < 0:
             a.reasons.append(f"lateral ({family}) below your level")
@@ -104,7 +104,8 @@ def _flags(read: dict, a: Assessment) -> None:
 def _services(read: dict, rules: JobRules, ctx: Context, a: Assessment) -> None:
     if not read.get("services_flavored"):
         return
-    prestige = (ctx.company_domain or "") in rules.kind2.prestige_service_domains or ctx.brand_step_up
+    # Middle-tier = not on the prestige list and not a brand that is a step up or lateral for the owner.
+    prestige = (ctx.company_domain or "") in rules.kind2.prestige_brands or ctx.brand_level in ("up", "lateral")
     if not prestige:
         a.penalties.append({"name": "services-flavoured work at a mid-tier brand",
                             "points": -rules.kind2.services_penalty})

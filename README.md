@@ -174,11 +174,17 @@ Then **one AI read per role** (Claude Haiku 5.5, about $0.001; once per sibling 
 - **Laterals:** only at a step-up brand.
 - **Dealbreakers:** visa, 6-day week, non-full-time.
 - **Pay** must beat your current pay. Relocation uses **PPP** (World Bank, refreshed yearly), remote-from-abroad uses the exchange rate; within ±15% is "marginal", and unstated pay is estimated and flagged.
-- **Services penalty:** −10 for services-flavoured work at mid-tier brands.
+- **Services penalty:** −10 for services-flavoured work, except at brands listed in `kind2.prestige_brands` or rated up/lateral against your career.
 
 Salary and seniority are independent gates.
 
 Changing a rule or a value in `owner_stub.yaml` re-applies the rules for free. Only a change to what the AI is told about you triggers new reads.
+
+**Your own brand call.** If you disagree with Module 1's view of a company's brand, record your view. It wins from then on, and that company's roles are re-checked for free:
+
+```bash
+docker compose exec api python -m app.cli brand morganstanley.com up "Stronger brand than ZS"
+```
 
 ```bash
 docker compose exec api python -m app.cli assess --limit 10
@@ -187,7 +193,47 @@ docker compose exec api python -m app.cli assessed --rejected
 docker compose exec api python -m app.cli rates --refresh
 ```
 
-Part 2c adds scoring and bands.
+### Part 2c: scoring and bands
+
+Scoring runs in two stages:
+1. **Free match.** Every role that passed is compared with your resume (`config/resume.pdf`) and profile, using local embeddings.
+2. **Paid grade.** The best matches get **one AI grade each** (Claude Sonnet 5.5, about 1–2¢). The cap is `scoring.grades_per_day`, default 20.
+
+The grade gives scores on six dimensions: skills, experience, domain, growth, brand and location. It also gives reasons, the skills you're missing, and a one-liner.
+
+**Score** = weighted average of the six, minus penalties (services; a lateral move after 2+ years in your role).
+
+**Bands:**
+
+| Score | Band |
+|---|---|
+| 85+ | **Fast lane** |
+| 65–84 | **Inbox** |
+| 40–64 | **Maybe** |
+| below 40 | **Archive** |
+
+Some roles can't go above Maybe:
+- roles not graded yet;
+- leads (job-site, HN or WaaS mentions without a confirmed posting).
+
+An open question (location, level or hours) also keeps a role out of the fast lane.
+
+Editing the weights or bands in `job_rules.yaml` re-bands everything for free. A role is re-graded only if its posting, your resume or your profile changes.
+
+Your feedback (`act`, `skip`, `thumbs_up`, `thumbs_down`, `maybe_rescue`) applies right away:
+- skip and thumbs-down move the role to the archive;
+- a rescue lifts it into the Inbox.
+
+Feedback is also stored for later tuning.
+
+```bash
+docker compose exec api python -m app.cli score --limit 5
+docker compose exec api python -m app.cli shortlist
+docker compose exec api python -m app.cli shortlist --band maybe
+docker compose exec api python -m app.cli feedback <cluster_id> skip "Not my domain"
+```
+
+API: `GET /api/shortlist`, `POST /api/jobs/{cluster_id}/feedback`.
 
 ## Configuration
 

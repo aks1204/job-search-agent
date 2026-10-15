@@ -369,11 +369,43 @@ class Kind2Rules(Strict):
     max_reads_per_day: int = Field(150, ge=0)
     reads_per_tick: int = Field(20, ge=1, le=200)
     services_penalty: int = 10
-    prestige_service_domains: list[str] = Field(default_factory=lambda: ["mckinsey.com", "bcg.com", "bain.com"])
+    prestige_brands: list[str] = Field(default_factory=lambda: [
+        "mckinsey.com", "bcg.com", "bain.com", "goldmansachs.com", "morganstanley.com", "jpmorganchase.com",
+        "google.com", "microsoft.com", "amazon.com", "apple.com", "meta.com",
+    ])
 
 
 class PayRules(Strict):
     marginal_band: float = Field(0.15, ge=0, le=1)
+
+
+DIMENSIONS = ("skills_fit", "experience_fit", "domain_fit", "career_growth", "brand_value", "location_fit")
+
+
+class Bands(Strict):
+    fast_lane: int = 85
+    inbox: int = 65
+    maybe: int = 40
+
+
+class ScoringRules(Strict):
+    grades_per_day: int = Field(20, ge=0)
+    grades_per_tick: int = Field(5, ge=1, le=100)
+    weights: dict[str, float] = Field(default_factory=lambda: {d: 1.0 for d in DIMENSIONS})
+    bands: Bands = Field(default_factory=Bands)
+    lateral_tenure_years: float = 2
+    lateral_penalty: int = 5
+    ungraded_max_score: int = Field(64, ge=0, le=100)
+
+    @field_validator("weights")
+    @classmethod
+    def _known_dimensions(cls, v: dict[str, float]) -> dict[str, float]:
+        unknown = set(v) - set(DIMENSIONS)
+        if unknown:
+            raise ValueError(f"unknown scoring dimensions {sorted(unknown)}; use {list(DIMENSIONS)}")
+        if sum(v.values()) <= 0:
+            raise ValueError("weights must add up to more than 0")
+        return v
 
 
 class JobRules(Strict):
@@ -381,6 +413,7 @@ class JobRules(Strict):
     descriptions: DescriptionFetch = Field(default_factory=DescriptionFetch)
     kind2: Kind2Rules = Field(default_factory=Kind2Rules)
     pay: PayRules = Field(default_factory=PayRules)
+    scoring: ScoringRules = Field(default_factory=ScoringRules)
 
 
 # --- llm.yaml ---------------------------------------------------------------

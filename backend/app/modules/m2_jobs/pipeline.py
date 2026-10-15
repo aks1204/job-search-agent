@@ -207,7 +207,10 @@ def run_pipeline(*, assess: bool = True) -> dict:
     with PoliteClient() as http, session_scope() as s:
         counts.update({f"descriptions_{k}": v for k, v in fetch_descriptions(s, http).items()})
     if assess:
+        from app.modules.m2_jobs.scoring import run_scoring
+
         counts.update({f"ai_read_{k}": v for k, v in run_assessments().items()})
+        counts.update({f"score_{k}": v for k, v in run_scoring().items()})
     return counts
 
 

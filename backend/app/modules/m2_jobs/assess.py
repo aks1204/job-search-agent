@@ -15,7 +15,7 @@ from app.models.assessment import JobAssessment
 from app.models.company import Company
 from app.models.job import JobCluster, JobPosting
 from app.models.llm_call import LLMCall
-from app.modules.m1_companies.override import latest_verdict
+from app.modules.m2_jobs.brand import brand_level
 from app.modules.m1_companies.queue import start_of_today_utc
 from app.modules.m2_jobs.rates import factors
 from app.modules.m2_jobs.reader import SYSTEM, candidate_brief, job_brief, read_model
@@ -94,9 +94,7 @@ def due_clusters(session: Session, version: str, limit: int) -> list[tuple[JobCl
 
 
 def _context(session: Session, company: Company, job: JobPosting) -> Context:
-    verdict = latest_verdict(session, company.id)
-    brand_up = bool(verdict and verdict.passed and (verdict.judgment or {}).get("direction") == "up")
-    return Context(company_domain=company.domain, brand_step_up=brand_up,
+    return Context(company_domain=company.domain, brand_level=brand_level(session, company),
                    job_is_india=job.is_india, job_is_remote=job.is_remote, stated_salary=job.salary)
 
 

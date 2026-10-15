@@ -77,6 +77,11 @@ SYSTEM = """You read one job posting for a job seeker based in India and fill in
 The title is only a hint: judge family, level and requirements from the description itself.
 Be literal about geography fine print ("must be authorized to work in...", "visa sponsorship available").
 If the description is missing, judge from the title and location and mark uncertain fields "unclear".
+
+Role families: analytics and insights work applied to ANY business domain (marketing, sales, finance,
+operations, customer, commercial, pharma, product) counts as the candidate's core "business analytics"
+progression family — unless the work is mainly one of the candidate's EXCLUDED families, which always win
+(e.g. a role that is mostly risk modelling or ML model building is excluded if those are excluded).
 Answer in the requested JSON format."""
 
 

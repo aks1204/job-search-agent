@@ -46,7 +46,7 @@ def read(**overrides) -> dict:
 
 
 def ctx(**overrides) -> Context:
-    base = dict(company_domain="acme.com", brand_step_up=False, job_is_india=True, job_is_remote=False,
+    base = dict(company_domain="acme.com", brand_level="unknown", job_is_india=True, job_is_remote=False,
                 stated_salary=None)
     return Context(**{**base, **overrides})
 
@@ -101,8 +101,8 @@ def test_ic_to_management_jump_needs_permission():
 
 def test_lateral_needs_step_up_brand():
     r = read(family_match="lateral", role_family="product analytics")
-    assert assess(r, owner(), RULES, ctx(brand_step_up=False), TABLE).outcome == "rejected"
-    ok = assess(r, owner(), RULES, ctx(brand_step_up=True), TABLE)
+    assert assess(r, owner(), RULES, ctx(brand_level="unknown"), TABLE).outcome == "rejected"
+    ok = assess(r, owner(), RULES, ctx(brand_level="up"), TABLE)
     assert ok.outcome == "passed" and "lateral move: product analytics" in ok.flags
 
 
@@ -148,7 +148,10 @@ def test_services_penalty_spares_prestige_and_step_up_brands():
     r = read(services_flavored=True)
     assert assess(r, owner(), RULES, ctx(), TABLE).penalties[0]["points"] == -10
     assert assess(r, owner(), RULES, ctx(company_domain="bcg.com"), TABLE).penalties == []
-    assert assess(r, owner(), RULES, ctx(brand_step_up=True), TABLE).penalties == []
+    assert assess(r, owner(), RULES, ctx(brand_level="up"), TABLE).penalties == []
+    assert assess(r, owner(), RULES, ctx(brand_level="lateral"), TABLE).penalties == []    # comparable brand
+    assert assess(r, owner(), RULES, ctx(company_domain="morganstanley.com"), TABLE).penalties == []  # prestige
+    assert assess(r, owner(), RULES, ctx(brand_level="down"), TABLE).penalties[0]["points"] == -10
 
 
 def test_flags_have_no_score_impact():

@@ -6,10 +6,11 @@ from app.models.feed import CompanyFeed, RawPosting
 from app.models.job import JobCluster, JobPosting
 from app.models.llm_call import LLMCall
 from app.models.memory import MemoryEntry
+from app.models.score import JobFeedback, JobScore
 from app.models.scout import ScoutRun, ScoutState
 from app.models.verdict import CompanyFact, CompanyVerdict
 
 __all__ = [
     "AuditLog", "Company", "CompanyFact", "CompanyFeed", "CompanySighting", "CompanyVerdict", "ContactLead",
-    "ExchangeFactor", "JobAssessment", "JobCluster", "JobPosting", "LLMCall", "MemoryEntry", "RawPosting", "ScoutRun", "ScoutState",
+    "ExchangeFactor", "JobAssessment", "JobCluster", "JobFeedback", "JobPosting", "JobScore", "LLMCall", "MemoryEntry", "RawPosting", "ScoutRun", "ScoutState",
 ]
