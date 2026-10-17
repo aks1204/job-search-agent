@@ -2,6 +2,7 @@
 from app.models.assessment import ExchangeFactor, JobAssessment
 from app.models.audit import AuditLog
 from app.models.company import Company, CompanySighting, ContactLead
+from app.models.contact import Bench, BenchMember, Contact, ContactEmail, EnrichmentLookup, MailDomain, RoleChannel
 from app.models.feed import CompanyFeed, RawPosting
 from app.models.job import JobCluster, JobPosting
 from app.models.llm_call import LLMCall
@@ -11,6 +12,7 @@ from app.models.scout import ScoutRun, ScoutState
 from app.models.verdict import CompanyFact, CompanyVerdict
 
 __all__ = [
-    "AuditLog", "Company", "CompanyFact", "CompanyFeed", "CompanySighting", "CompanyVerdict", "ContactLead",
+    "AuditLog", "Bench", "BenchMember", "Company", "CompanyFact", "CompanyFeed", "CompanySighting", "CompanyVerdict", "Contact", "ContactEmail",
+    "ContactLead", "EnrichmentLookup", "MailDomain", "RoleChannel",
     "ExchangeFactor", "JobAssessment", "JobCluster", "JobFeedback", "JobPosting", "JobScore", "LLMCall", "MemoryEntry", "RawPosting", "ScoutRun", "ScoutState",
 ]

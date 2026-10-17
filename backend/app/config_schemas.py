@@ -416,6 +416,94 @@ class JobRules(Strict):
     scoring: ScoringRules = Field(default_factory=ScoringRules)
 
 
+# --- outreach.yaml (Module 3) --------------------------------------------------
+
+SLOT_KINDS = ("founder", "recruiting", "hiring_manager")
+
+
+class BenchShape(Strict):
+    """How many people of each kind one bench holds (spec §3.1 caps)."""
+    founder: int = Field(0, ge=0, le=10)
+    recruiting: int = Field(0, ge=0, le=10)
+    hiring_manager: int = Field(0, ge=0, le=10)
+
+    @property
+    def cap(self) -> int:
+        return self.founder + self.recruiting + self.hiring_manager
+
+
+class Benches(Strict):
+    startup: BenchShape = Field(default_factory=lambda: BenchShape(founder=2, recruiting=3))
+    mid_size: BenchShape = Field(default_factory=lambda: BenchShape(recruiting=3, hiring_manager=2))
+    mnc: BenchShape = Field(default_factory=lambda: BenchShape(recruiting=7))
+
+
+class CompanyClasses(Strict):
+    """Company size buckets (fact `employee_estimate`) → which bench shape applies."""
+    startup_sizes: list[str] = Field(default_factory=lambda: ["1-10", "11-50", "51-200"])
+    mid_sizes: list[str] = Field(default_factory=lambda: ["201-1000"])
+    # Unknown size: startups use the startup shape, established companies the MNC shape.
+
+
+class EnrichmentBudget(Strict):
+    """One pooled credit budget (spec §0); the ladder spends providers in this order."""
+    hunter_finder_per_month: int = Field(20, ge=0)
+    hunter_domain_search_per_month: int = Field(5, ge=0)
+    apollo_per_month: int = Field(50, ge=0)
+    enrich_per_bench: int = Field(2, ge=0, le=10)  # rest of the bench is built from the learned pattern
+
+
+class VerificationBudget(Strict):
+    smtp_handshake: bool = True
+    smtp_timeout_seconds: float = Field(8, gt=0, le=60)
+    smtp_blocked_retry_hours: int = Field(24, ge=1)  # port 25 blocked (most home ISPs) → don't retry for a day
+    myemailverifier_per_day: int = Field(100, ge=0)
+    hunter_verifier_per_month: int = Field(40, ge=0)
+    max_candidates_per_person: int = Field(4, ge=1, le=12)  # construction: how many formats to test
+
+
+class ContactRules(Strict):
+    # Which roles get a contact search: these bands automatically, plus roles you marked `act`.
+    auto_bands: list[Literal["fast_lane", "inbox", "maybe"]] = Field(default_factory=lambda: ["fast_lane"])
+    searches_per_month: int = Field(80, ge=0)       # Brave searches for people (spec ~50-80/mo)
+    searches_per_tick: int = Field(4, ge=0)
+    results_per_search: int = Field(20, ge=1, le=20)
+    benches: Benches = Field(default_factory=Benches)
+    classes: CompanyClasses = Field(default_factory=CompanyClasses)
+    # MNC benches are per function + geography; the role family is mapped onto one of these functions.
+    functions: dict[str, list[str]] = Field(default_factory=lambda: {
+        "analytics": ["analytics", "insight", "data", "business intelligence"],
+        "strategy": ["strategy", "bizops", "business operations", "chief of staff", "consulting"],
+        "product": ["product"],
+    })
+    default_function: str = "analytics"
+    retry_no_contact_days: int = Field(14, ge=1)
+    reverify_after_days: int = Field(180, ge=1)     # on-use re-check of person + mailbox
+    sweep_hot_days: int = Field(30, ge=1)
+    sweep_warm_days: int = Field(90, ge=1)
+    sweep_searches_per_week: int = Field(10, ge=0)
+    enrichment: EnrichmentBudget = Field(default_factory=EnrichmentBudget)
+    verification: VerificationBudget = Field(default_factory=VerificationBudget)
+    # Address formats tried, best first, when no real address at the domain shows its pattern.
+    common_formats: list[str] = Field(default_factory=lambda: [
+        "{first}.{last}", "{first}", "{f}{last}", "{first}{last}", "{first}_{last}", "{f}.{last}", "{last}.{first}",
+    ])
+    startup_formats: list[str] = Field(default_factory=lambda: ["{first}", "{first}.{last}", "{f}{last}", "{first}{last}"])
+    # Companies whose staff mail lives on another domain (website domain → mail domain).
+    mail_domains: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("default_function")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("default_function can't be empty")
+        return v
+
+
+class OutreachConfig(Strict):
+    contacts: ContactRules = Field(default_factory=ContactRules)
+
+
 # --- llm.yaml ---------------------------------------------------------------
 
 class LLMTier(Strict):

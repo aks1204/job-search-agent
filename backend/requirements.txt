@@ -14,3 +14,4 @@ fastembed>=0.4,<1
 tldextract>=5,<6
 tzdata
 pypdf>=4,<6
+dnspython>=2.6,<3

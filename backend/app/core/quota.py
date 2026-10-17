@@ -24,3 +24,24 @@ def try_consume(service: str, monthly_limit: int) -> bool:
 
 def used_this_month(service: str) -> int:
     return int(get_redis().get(_key(service)) or 0)
+
+
+def _daily_key(service: str) -> str:
+    return f"quota:{service}:{datetime.now(timezone.utc):%Y-%m-%d}"
+
+
+def try_consume_daily(service: str, daily_limit: int) -> bool:
+    """Same as try_consume, for budgets that reset every day (UTC)."""
+    r = get_redis()
+    key = _daily_key(service)
+    used = r.incr(key)
+    if used == 1:
+        r.expire(key, 2 * 86400)
+    if used > daily_limit:
+        r.decr(key)
+        return False
+    return True
+
+
+def used_today(service: str) -> int:
+    return int(get_redis().get(_daily_key(service)) or 0)

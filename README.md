@@ -235,6 +235,50 @@ docker compose exec api python -m app.cli feedback <cluster_id> skip "Not my dom
 
 API: `GET /api/shortlist`, `POST /api/jobs/{cluster_id}/feedback`.
 
+## Cold outreach (Module 3), Part 3a: finding the right people
+
+**Nothing in this part sends email.** In Module 3, every email is approved by you, one at a time.
+
+Contacts are found for **pursued roles**: fast-lane roles automatically, plus any role you mark `act`. Each pursued role gets one **channel**:
+
+| Channel | When |
+|---|---|
+| **Designated** | The posting names an address ("send your CV to…"). That address is the *only* channel for the role, with no hunting for people. |
+| **Bench** | People at the company. Startups: founders + recruiters. Mid-size: recruiters + hiring managers. MNCs: recruiters, per function and geography. Caps: 5 / 5 / 7. |
+| **Mailbox** | No people found, but the company publishes a hiring mailbox (jobs@, careers@). |
+| **None** | Nothing found. The role goes to the apply list anyway, and the agent looks again in 2 weeks. |
+
+**How people are found:**
+- **Public search snippets only.** The agent runs Brave searches shaped to return LinkedIn profile results, and reads only what the search engine shows. It never logs into, opens or crawls LinkedIn.
+- **No guessing on identity.** Each person is matched on name, title, location, snippet and profile URL, never on the name alone. Two same-name profiles at one company are frozen and never guessed at.
+
+**How addresses are found:** published → lookup service (Hunter, then Apollo; one pooled budget, cached forever) → built from the company's address pattern. The pattern is learned from one real address; otherwise common formats are tried.
+
+**How addresses are checked:**
+- **Mail server:** the domain must accept email.
+- **Mailbox check:** first a direct check with the company's mail server, which is often blocked on home internet; then MyEmailVerifier, then Hunter's verifier.
+- **Catch-all domains:** if the domain accepts any made-up address, every address there stays low-confidence.
+- **History wins:** an address that has already delivered or been replied to beats every other signal.
+
+**Be realistic:** for roughly 30–50% of companies, no usable contact will be found.
+
+**Setup (all optional; add keys to `.env`, then run `docker compose up -d`):**
+- `BRAVE_API_KEY`: without it, contacts come only from postings and HN posts.
+- `HUNTER_API_KEY`, `APOLLO_API_KEY`: email lookups. Apollo's free API needs an account registered with a work email.
+- `MYEMAILVERIFIER_API_KEY`: mailbox verification.
+
+```bash
+docker compose exec api python -m app.cli lookups              # which services are set up, free-tier use
+docker compose exec api python -m app.cli feedback <cluster_id> act
+docker compose exec api python -m app.cli contacts --cluster <cluster_id>
+docker compose exec api python -m app.cli channel <cluster_id>
+docker compose exec api python -m app.cli bench <domain>
+docker compose exec api python -m app.cli designate <cluster_id> <email>|auto "<reason>"
+docker compose exec api python -m app.cli add-contact <domain> "<name>" --email <email> --title "<title>"
+```
+
+API: `GET /api/roles/{cluster_id}/channel`, `GET /api/companies/{company_id}/benches`.
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

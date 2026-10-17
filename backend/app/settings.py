@@ -24,12 +24,18 @@ class Settings(BaseSettings):
     adzuna_app_id: str = ""
     adzuna_app_key: str = ""
     jooble_api_key: str = ""
-
+    # Module 3 (all optional): contact lookup + email verification free tiers
+    hunter_api_key: str = ""
+    apollo_api_key: str = ""
+    myemailverifier_api_key: str = ""
+    # Local mailbox check (SMTP handshake) needs a hostname to introduce itself with
+    smtp_helo_host: str = ""
 
     def secrets(self) -> list[str]:
         values = [
             self.anthropic_api_key, self.brave_api_key, self.adzuna_app_id,
             self.adzuna_app_key, self.jooble_api_key,
+            self.hunter_api_key, self.apollo_api_key, self.myemailverifier_api_key,
         ]
         return [v for v in values if v and len(v) >= 4]
 

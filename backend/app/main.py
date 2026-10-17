@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api import audit, companies, feeds, health, jobs, scouts, verdicts
+from app.api import audit, companies, contacts, feeds, health, jobs, scouts, verdicts
 from app.api import config as config_api
 from app.config_loader import get_config
 
@@ -10,7 +10,8 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Job Agent", version="0.4.0")
     app.include_router(health.router)
-    for router in (config_api.router, companies.router, scouts.router, audit.router, verdicts.router, feeds.router, jobs.router):
+    for router in (config_api.router, companies.router, scouts.router, audit.router, verdicts.router, feeds.router, jobs.router,
+                   contacts.router):
         app.include_router(router, prefix="/api")
     return app
 

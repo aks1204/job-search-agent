@@ -1,0 +1,63 @@
+# Module 3: cold outreach. Read-only in the dashboard: edit this file, then `docker compose restart`.
+# Part 3a: contact discovery. Nothing in this part sends email.
+
+contacts:
+  # Which roles get a contact search: roles in these bands automatically, plus any role you
+  # marked `act` (cli feedback <cluster_id> act). Searches are scarce, so start with the fast lane.
+  auto_bands: ["fast_lane"]
+
+  # Brave searches for people (public LinkedIn search snippets only — never logs into LinkedIn).
+  searches_per_month: 80
+  searches_per_tick: 4
+  results_per_search: 20
+
+  # Bench = the people one company's outreach can use (spec §3.1 caps). Slots that can't be filled
+  # stay open; the sweeps top them up later.
+  benches:
+    startup:  {founder: 2, recruiting: 3}
+    mid_size: {recruiting: 3, hiring_manager: 2}
+    mnc:      {recruiting: 7}          # per function + geography
+
+  # Size buckets (Module 1 fact `employee_estimate`). Unknown size: a startup gets the startup bench,
+  # an established company the MNC bench.
+  classes:
+    startup_sizes: ["1-10", "11-50", "51-200"]
+    mid_sizes: ["201-1000"]
+
+  # MNC benches are kept per function: the role's family is matched against these words.
+  functions:
+    analytics: ["analytics", "insight", "data", "business intelligence"]
+    strategy: ["strategy", "bizops", "business operations", "chief of staff", "consulting"]
+    product: ["product"]
+  default_function: analytics
+
+  retry_no_contact_days: 14     # no one found → the role goes to apply anyway; look again after this
+  reverify_after_days: 180      # before a contact is used again: still there? mailbox still works?
+  sweep_hot_days: 30            # contacts on benches for live roles
+  sweep_warm_days: 90           # contacts at watched companies without a live role
+  sweep_searches_per_week: 10
+
+  # Email lookup services (all optional; keys in .env). One pooled budget, spent in this order,
+  # results cached forever. Check your own plan's limits and lower these if needed.
+  # (FinalScout from the spec has no public API, so it isn't used.)
+  enrichment:
+    hunter_finder_per_month: 20
+    hunter_domain_search_per_month: 5
+    apollo_per_month: 50
+    enrich_per_bench: 2         # look up the first 2 people; the rest use the address pattern learned
+
+  verification:
+    smtp_handshake: true        # ask the company's mail server directly first (free)
+    smtp_timeout_seconds: 8
+    smtp_blocked_retry_hours: 24
+    myemailverifier_per_day: 100
+    hunter_verifier_per_month: 40
+    max_candidates_per_person: 4
+
+  # Address formats to try, best first, when no real address at the company shows its pattern.
+  common_formats: ["{first}.{last}", "{first}", "{f}{last}", "{first}{last}", "{first}_{last}", "{f}.{last}", "{last}.{first}"]
+  startup_formats: ["{first}", "{first}.{last}", "{f}{last}", "{first}{last}"]
+
+  # Companies whose staff email lives on a different domain from their website.
+  mail_domains:
+    jpmorganchase.com: jpmorgan.com

@@ -23,6 +23,13 @@
     python -m app.cli score [--limit N] [--force]                # Module 2: similarity + AI grades now
     python -m app.cli shortlist [--band fast_lane|inbox|maybe]   # Module 2: scored roles, best first
     python -m app.cli feedback <cluster_id> act|skip|thumbs_up|thumbs_down|maybe_rescue ["reason"]
+    python -m app.cli contacts [--cluster N] [--limit N]           # Module 3: find contacts for pursued roles
+    python -m app.cli channel <cluster_id>                       # Module 3: designated address or bench for a role
+    python -m app.cli bench <domain>                             # Module 3: a company's benches
+    python -m app.cli designate <cluster_id> <email>|auto "<reason>"  # your override: the only address for a role
+    python -m app.cli add-contact <domain> "<name>" [--email] [--title] [--kind]
+    python -m app.cli sweep                                      # Module 3: re-check people on benches
+    python -m app.cli lookups                                    # Module 3: contact services + free-tier use
 """
 
 import argparse
@@ -616,6 +623,152 @@ def passed_cmd(domain: str | None, limit: int) -> int:
     return 0
 
 
+# --- Module 3 Part 3a: contacts ---------------------------------------------------------------
+
+def contacts_cmd(cluster_id: int | None, limit: int | None) -> int:
+    from app.modules.m3_outreach.pipeline import run_contacts
+
+    print("Finding contacts for pursued roles (no email is sent)…")
+    _print_counts(run_contacts(cluster_ids=[cluster_id] if cluster_id else None, limit=limit))
+    return 0
+
+
+def _print_bench(s, bench) -> None:
+    from app.modules.m3_outreach.addresses import best_address
+    from app.modules.m3_outreach.bench import members, open_slots
+
+    rows = members(s, bench)
+    print(f"  bench '{bench.key}' ({bench.shape}): {len(rows)} people, {open_slots(s, bench)} open slot(s)")
+    for m, c in rows:
+        addr = best_address(s, c)
+        tag = "FROZEN (same-name profiles)" if m.co_suspects else c.status if c.status != "active" else ""
+        where = f" · {c.location}" if c.location else ""
+        print(f"   {m.rank:>2}. {c.full_name} — {c.title or c.kind}{where}  [{m.slot_kind}] {tag}")
+        if addr:
+            extra = " · provider vouches" if addr.vouched else ""
+            print(f"       {addr.email}  ({addr.confidence}, {addr.source}{extra})")
+        else:
+            print("       no address yet")
+        if c.linkedin_url:
+            print(f"       {c.linkedin_url}")
+
+
+def channel_cmd(cluster_id: int) -> int:
+    from app.db import session_scope
+    from app.models import Bench, Company, RoleChannel
+
+    with session_scope() as s:
+        ch = s.get(RoleChannel, cluster_id)
+        if ch is None:
+            print(f"No channel yet for role {cluster_id} — run: python -m app.cli contacts --cluster {cluster_id}")
+            return 1
+        company = s.get(Company, ch.company_id)
+        print(f"{company.name} · role {cluster_id}: {ch.mode.upper()}" + (" (set by you)" if ch.manual else ""))
+        if ch.note:
+            print(f"  {ch.note}")
+        if ch.designated_email:
+            print(f"  address: {ch.designated_email}")
+        if ch.designated_context:
+            print(f"  “{ch.designated_context[:200]}”")
+        if ch.next_retry_at:
+            print(f"  next look: {ch.next_retry_at:%d %b %Y}")
+        if ch.bench_id and ch.mode != "designated":
+            _print_bench(s, s.get(Bench, ch.bench_id))
+    return 0
+
+
+def bench_cmd(domain: str) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Bench
+
+    ids = _company_ids(domain)
+    with session_scope() as s:
+        benches = s.scalars(select(Bench).where(Bench.company_id == ids[0])).all()
+        if not benches:
+            print("No bench yet (benches are filled when a role there is pursued).")
+        for b in benches:
+            _print_bench(s, b)
+    return 0
+
+
+def designate_cmd(cluster_id: int, email: str, reason: str) -> int:
+    from app.db import session_scope
+    from app.modules.m3_outreach.pipeline import designate
+
+    with session_scope() as s:
+        try:
+            ch = designate(s, cluster_id, None if email == "auto" else email, reason)
+        except ValueError as e:
+            print(e)
+            return 1
+        print(f"Role {cluster_id}: " + (f"only {ch.designated_email} will be used." if ch.manual
+                                        else "back to automatic (decided on the next round)."))
+    return 0
+
+
+def add_contact_cmd(domain: str, name: str, email: str | None, title: str | None, kind: str) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company
+    from app.modules.m3_outreach.pipeline import add_contact
+
+    with session_scope() as s:
+        company = s.scalar(select(Company).where(Company.domain == domain.lower()))
+        if company is None:
+            print(f"No company with domain {domain}")
+            return 1
+        try:
+            c = add_contact(s, company, name, email, title, kind)
+        except ValueError as e:
+            print(e)
+            return 1
+        print(f"Added {c.full_name} at {company.name}; the next bench fill can use them.")
+    return 0
+
+
+def sweep_cmd() -> int:
+    from app.modules.m3_outreach.pipeline import sweep
+
+    print("Re-checking people on benches (are they still there?)…")
+    _print_counts(sweep())
+    return 0
+
+
+def lookups_cmd() -> int:
+    """Which contact services are set up, and how much of each free tier is used."""
+    from app.config_loader import get_config
+    from app.core.quota import used_this_month, used_today
+    from app.core.search import search_available
+    from app.modules.m3_outreach.verify import smtp_blocked
+
+    rules = get_config().outreach.contacts
+    st = get_settings()
+    e, v = rules.enrichment, rules.verification
+
+    def line(name, on, used, cap, period):
+        state = f"{used}/{cap} this {period}" if on else "not set up (optional)"
+        print(f"  {name:<28} {state}")
+
+    print("Contact services:")
+    line("Brave search (people)", search_available(), used_this_month("brave:contacts"), rules.searches_per_month, "month")
+    line("Hunter email finder", bool(st.hunter_api_key), used_this_month("hunter:finder"), e.hunter_finder_per_month, "month")
+    line("Hunter domain pattern", bool(st.hunter_api_key), used_this_month("hunter:domain"), e.hunter_domain_search_per_month, "month")
+    line("Hunter verifier", bool(st.hunter_api_key), used_this_month("hunter:verifier"), v.hunter_verifier_per_month, "month")
+    line("Apollo person match", bool(st.apollo_api_key), used_this_month("apollo:match"), e.apollo_per_month, "month")
+    line("MyEmailVerifier", bool(st.myemailverifier_api_key), used_today("myemailverifier"), v.myemailverifier_per_day, "day")
+    if not v.smtp_handshake:
+        smtp = "off in config"
+    elif smtp_blocked():
+        smtp = "blocked on this network (port 25) — using the services above instead"
+    else:
+        smtp = "on (tried first)"
+    print(f"  {'Local mailbox check':<28} {smtp}")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -679,6 +832,25 @@ def main() -> None:
     p_fb.add_argument("reason", nargs="?")
     p_rates = sub.add_parser("rates", help="Module 2: pay-conversion factors (PPP + exchange rates)")
     p_rates.add_argument("--refresh", action="store_true", help="fetch the latest from the World Bank")
+    p_ct = sub.add_parser("contacts", help="Module 3: find contacts for pursued roles now (sends nothing)")
+    p_ct.add_argument("--cluster", type=int, help="one role (any band), e.g. from `shortlist`")
+    p_ct.add_argument("--limit", type=int)
+    p_ch = sub.add_parser("channel", help="Module 3: how outreach for one role would reach the company")
+    p_ch.add_argument("cluster_id", type=int)
+    p_bn = sub.add_parser("bench", help="Module 3: the people on a company's benches")
+    p_bn.add_argument("domain")
+    p_dg = sub.add_parser("designate", help="Module 3: make one address the only channel for a role")
+    p_dg.add_argument("cluster_id", type=int)
+    p_dg.add_argument("email", help="the address, or 'auto' to go back to automatic")
+    p_dg.add_argument("reason")
+    p_ac = sub.add_parser("add-contact", help="Module 3: add a person you know at a company")
+    p_ac.add_argument("domain")
+    p_ac.add_argument("name")
+    p_ac.add_argument("--email")
+    p_ac.add_argument("--title")
+    p_ac.add_argument("--kind", choices=["founder", "recruiting", "hiring_manager"], default="recruiting")
+    sub.add_parser("sweep", help="Module 3: re-check people on benches now")
+    sub.add_parser("lookups", help="Module 3: which contact services are set up, and their free-tier use")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -731,6 +903,20 @@ def main() -> None:
         sys.exit(shortlist_cmd(args.band, args.limit))
     if args.command == "feedback":
         sys.exit(feedback_cmd(args.cluster_id, args.action, args.reason))
+    if args.command == "contacts":
+        sys.exit(contacts_cmd(args.cluster, args.limit))
+    if args.command == "channel":
+        sys.exit(channel_cmd(args.cluster_id))
+    if args.command == "bench":
+        sys.exit(bench_cmd(args.domain))
+    if args.command == "designate":
+        sys.exit(designate_cmd(args.cluster_id, args.email, args.reason))
+    if args.command == "add-contact":
+        sys.exit(add_contact_cmd(args.domain, args.name, args.email, args.title, args.kind))
+    if args.command == "sweep":
+        sys.exit(sweep_cmd())
+    if args.command == "lookups":
+        sys.exit(lookups_cmd())
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 
