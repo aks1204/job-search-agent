@@ -77,3 +77,12 @@ def test_keyword_fallback_spots_former_employees():
     gone = P._keyword_read(0, P.Snippet("u", "A B", "Recruiter at Globex", "ex-Acme"), co)
     assert now.works_there_now == "yes" and now.kind == "recruiting" and now.geo == "india"
     assert gone.works_there_now == "no"
+
+
+def test_schema_keeps_a_field_named_title():
+    """Regression: the schema clean-up strips JSON-schema 'title' labels, but must keep a FIELD named title."""
+    from app.core.llm import strict_schema
+
+    person = strict_schema(P.PeopleRead)["properties"]["people"]["items"]
+    assert "title" in person["properties"] and "title" in person["required"]
+    assert "title" not in person["properties"]["title"]  # the label inside the field is still stripped

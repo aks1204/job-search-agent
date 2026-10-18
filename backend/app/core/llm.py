@@ -50,14 +50,16 @@ def strict_schema(model: type[BaseModel]) -> dict:
     schema = model.model_json_schema()
     defs = schema.pop("$defs", {})
 
-    def walk(node):
+    def walk(node, field_names: bool = False):
         if isinstance(node, list):
             return [walk(n) for n in node]
         if not isinstance(node, dict):
             return node
+        if field_names:  # a "properties" map: keys are the model's own fields (one may be called "title")
+            return {k: walk(v) for k, v in node.items()}
         if "$ref" in node:
             return walk(copy.deepcopy(defs[node["$ref"].rsplit("/", 1)[-1]]))
-        out = {k: walk(v) for k, v in node.items() if k not in ("title", "default")}
+        out = {k: walk(v, field_names=(k == "properties")) for k, v in node.items() if k not in ("title", "default")}
         if out.get("type") == "object" and "properties" in out:
             out["additionalProperties"] = False
             out["required"] = list(out["properties"])

@@ -117,8 +117,12 @@ def read_snippets(session: Session, llm, company: Company, snippets: list[Snippe
     lines = [f"Company: {company.name} ({company.domain})", ""]
     for i, s in enumerate(snippets):
         lines.append(f"[{i}] {s.name} — {s.headline}\n    {s.text[:400]}")
-    result = llm.structured("fast", system=READ_SYSTEM, user="\n".join(lines), schema=PeopleRead,
-                            purpose="m3.read_people", session=session, subject=("company", str(company.id)))
+    try:
+        result = llm.structured("fast", system=READ_SYSTEM, user="\n".join(lines), schema=PeopleRead,
+                                purpose="m3.read_people", session=session, subject=("company", str(company.id)))
+    except Exception as e:  # an unusable AI answer shouldn't waste the search we already spent
+        log.warning("AI read of people snippets failed (%s); using keyword rules", str(e)[:200])
+        return [_keyword_read(i, s, company) for i, s in enumerate(snippets)]
     by_index = {p.index: p for p in result.parsed.people if 0 <= p.index < len(snippets)}
     return [by_index.get(i) or _keyword_read(i, s, company) for i, s in enumerate(snippets)]
 
