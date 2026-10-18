@@ -9,6 +9,10 @@
 name: "Your Name"
 location: "Bengaluru, India"
 
+# Used in the signature of outreach emails (optional; leave out to skip that line).
+mobile: "+91 98xxxxxxxx"
+linkedin_url: "https://www.linkedin.com/in/your-profile"
+
 # The field you build your career in. "Step-up brand" is judged within this
 # field (e.g. for analytics, Uber can beat Pfizer).
 career_field: "analytics / data science"

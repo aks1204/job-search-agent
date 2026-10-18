@@ -1,4 +1,4 @@
-"""Module 3 Part 3a: role channels and company benches (read-only; nothing here sends email)."""
+"""Module 3: role channels, company benches (3a) and drafts (3b). Read-only; nothing here sends email."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -42,3 +42,20 @@ def role_channel(cluster_id: int, session: Session = Depends(get_session)) -> di
 @router.get("/companies/{company_id}/benches")
 def company_benches(company_id: int, session: Session = Depends(get_session)) -> list[dict]:
     return [_bench(session, b) for b in session.scalars(select(Bench).where(Bench.company_id == company_id)).all()]
+
+
+@router.get("/roles/{cluster_id}/draft")
+def role_draft(cluster_id: int, session: Session = Depends(get_session)) -> dict:
+    """The role's one draft (Part 3b). `body` still holds {greeting}; `preview` is how the first recipient
+    would get it."""
+    from app.models import OutreachDraft
+    from app.modules.m3_outreach.drafting import render_for
+    from app.modules.m3_outreach.template import load_template
+
+    d = session.scalar(select(OutreachDraft).where(OutreachDraft.cluster_id == cluster_id))
+    if d is None:
+        raise HTTPException(404, "no draft for this role yet")
+    _, preview = render_for(d, load_template(), None)
+    return {"cluster_id": cluster_id, "version": d.version, "scenario": d.scenario, "status": d.status,
+            "subject": d.subject, "body": d.body, "preview": preview, "points": d.points, "req_ids": d.req_ids,
+            "attach_resume": d.attach_resume, "truth": d.truth, "cost_usd": d.cost_usd, "updated_at": d.updated_at}

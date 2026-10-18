@@ -30,6 +30,8 @@
     python -m app.cli add-contact <domain> "<name>" [--email] [--title] [--kind]
     python -m app.cli sweep                                      # Module 3: re-check people on benches
     python -m app.cli lookups                                    # Module 3: contact services + free-tier use
+    python -m app.cli drafts [--cluster N] [--force]              # Module 3: write outreach drafts now
+    python -m app.cli draft <cluster_id>                         # Module 3: show a draft as recipients get it
 """
 
 import argparse
@@ -769,6 +771,64 @@ def lookups_cmd() -> int:
     return 0
 
 
+# --- Module 3 Part 3b: drafts ------------------------------------------------------------------
+
+def drafts_run_cmd(cluster_id: int | None, force: bool) -> int:
+    from app.modules.m3_outreach.drafting import run_drafts
+
+    print("Writing outreach drafts (nothing is sent)…")
+    _print_counts(run_drafts(cluster_ids=[cluster_id] if cluster_id else None, force=force))
+    return 0
+
+
+def draft_cmd(cluster_id: int) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Bench, OutreachDraft, RoleChannel
+    from app.modules.m3_outreach.bench import usable_members
+    from app.modules.m3_outreach.drafting import attachment, render_for
+    from app.modules.m3_outreach.template import load_template
+
+    t = load_template()
+    with session_scope() as s:
+        d = s.scalar(select(OutreachDraft).where(OutreachDraft.cluster_id == cluster_id))
+        if d is None:
+            print(f"No draft yet for role {cluster_id} — run: python -m app.cli drafts --cluster {cluster_id}")
+            return 1
+        ch = s.get(RoleChannel, cluster_id)
+        if ch and ch.mode == "bench" and ch.bench_id:
+            recipients = [(c.full_name, a.email, a.confidence) for _, c, a in usable_members(s, s.get(Bench, ch.bench_id))]
+        elif ch and ch.designated_email:
+            recipients = [(None, ch.designated_email, ch.mode)]
+        else:
+            recipients = []
+        first = recipients[0] if recipients else (None, "(no recipient yet)", "")
+        subject, body = render_for(d, t, first[0])
+        status = "READY" if d.status == "ready" else "FLAGGED — read carefully before approving"
+        print(f"Draft v{d.version} for role {cluster_id} · {d.scenario} · {status}")
+        truth = d.truth or {}
+        last = (truth.get("rounds") or [{}])[-1]
+        print(f"Truth check: {last.get('claims', 0)} claims checked, {len(truth.get('rounds', [])) - 1} rewrite(s), "
+              f"{len(truth.get('cut', []))} sentence(s) cut")
+        for sentence in truth.get("cut", []):
+            print(f"  cut: “{sentence}”")
+        print("-" * 72)
+        print(f"To:      {first[1]}")
+        print(f"Subject: {subject}")
+        att = attachment()
+        if d.attach_resume:
+            print(f"Attach:  {att[0]} ({att[1] // 1024} KB)" if att else "Attach:  resume missing — add config/resume.pdf")
+        print("-" * 72)
+        print(body)
+        print("-" * 72)
+        if len(recipients) > 1:
+            print("Same email to the others on the bench (only the greeting changes):")
+            for name, email, conf in recipients[1:]:
+                print(f"  {render_for(d, t, name)[1].splitlines()[0]:<24} {email} ({conf})")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -851,6 +911,11 @@ def main() -> None:
     p_ac.add_argument("--kind", choices=["founder", "recruiting", "hiring_manager"], default="recruiting")
     sub.add_parser("sweep", help="Module 3: re-check people on benches now")
     sub.add_parser("lookups", help="Module 3: which contact services are set up, and their free-tier use")
+    p_dr = sub.add_parser("drafts", help="Module 3: write outreach drafts now (sends nothing)")
+    p_dr.add_argument("--cluster", type=int, help="one role")
+    p_dr.add_argument("--force", action="store_true", help="rewrite even if nothing changed")
+    p_d1 = sub.add_parser("draft", help="Module 3: show a role's draft exactly as recipients would get it")
+    p_d1.add_argument("cluster_id", type=int)
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -917,6 +982,10 @@ def main() -> None:
         sys.exit(sweep_cmd())
     if args.command == "lookups":
         sys.exit(lookups_cmd())
+    if args.command == "drafts":
+        sys.exit(drafts_run_cmd(args.cluster, args.force))
+    if args.command == "draft":
+        sys.exit(draft_cmd(args.cluster_id))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

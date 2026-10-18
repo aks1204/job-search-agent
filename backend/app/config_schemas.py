@@ -86,6 +86,9 @@ class WorkAuthorization(Strict):
 class OwnerStub(Strict):
     name: str
     location: str = ""
+    # Signature details for outreach emails (Module 3); private like the rest of this file.
+    mobile: str | None = None
+    linkedin_url: str | None = None
     career_field: str
     current_role: OwnerRole
     employment_history: list[OwnerJob] = Field(min_length=1)
@@ -500,8 +503,16 @@ class ContactRules(Strict):
         return v
 
 
+class DraftRules(Strict):
+    drafts_per_day: int = Field(15, ge=0)        # new or rewritten drafts (Sonnet, ~2-3 cents each)
+    drafts_per_tick: int = Field(3, ge=0)
+    template_file: str = "email_template.md"     # in the config folder
+    max_rewrites: int = Field(1, ge=0, le=3)     # truth check: rewrite rounds before unsupported claims are cut
+
+
 class OutreachConfig(Strict):
     contacts: ContactRules = Field(default_factory=ContactRules)
+    drafts: DraftRules = Field(default_factory=DraftRules)
 
 
 # --- llm.yaml ---------------------------------------------------------------

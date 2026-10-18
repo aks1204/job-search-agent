@@ -279,6 +279,29 @@ docker compose exec api python -m app.cli add-contact <domain> "<name>" --email 
 
 API: `GET /api/roles/{cluster_id}/channel`, `GET /api/companies/{company_id}/benches`.
 
+### Part 3b: drafts
+
+**Still nothing is sent.** Each pursued role with a channel gets **one draft**. Every recipient gets the same email; only the name in the greeting changes.
+
+**Your template** is `config/email_template.md`. It has three parts:
+- **settings:** subject line, greeting, number of points, whether to attach your resume;
+- **the email exactly as it goes out:** fixed wording with placeholders;
+- **instructions** for the two parts the AI writes: the intro and the numbered points.
+
+Edit the template and run `docker compose restart`, and every draft is rewritten on the next round. Your name, mobile number and LinkedIn URL come from your private `owner_stub.yaml` (`name`, `mobile`, `linkedin_url`). A signature line with no value is left out.
+
+**Truth check:** a second AI pass lists every claim the draft makes about you and checks each one against your resume and profile. Anything unsupported gets one rewrite. If it's still unsupported, the sentence is cut before you see the draft. A draft that couldn't be fixed cleanly is marked **FLAGGED**. Drafts never mention gaps.
+
+**When drafts are rewritten:** only when the posting, your resume or profile, the template, or the job IDs change. Each draft costs about 2–3¢, with at most 15 drafts a day.
+
+```bash
+docker compose exec api python -m app.cli drafts --cluster <cluster_id>   # write it now
+docker compose exec api python -m app.cli draft <cluster_id>              # read it as a recipient would
+docker compose exec api python -m app.cli drafts --cluster <cluster_id> --force   # rewrite
+```
+
+API: `GET /api/roles/{cluster_id}/draft`.
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

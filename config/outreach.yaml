@@ -61,3 +61,11 @@ contacts:
   # Companies whose staff email lives on a different domain from their website.
   mail_domains:
     jpmorganchase.com: jpmorgan.com
+
+# Part 3b: drafts. One draft per role; only the greeting name changes between recipients.
+# The email itself is shaped by config/email_template.md. Nothing here sends email.
+drafts:
+  drafts_per_day: 15
+  drafts_per_tick: 3
+  template_file: email_template.md
+  max_rewrites: 1        # truth check: claims your resume can't back up get one rewrite, then are cut
