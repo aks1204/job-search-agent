@@ -108,3 +108,26 @@ def edit_campaign(campaign_id: int, body: EditIn, session: Session = Depends(get
     except C.ReviewError as err:
         raise HTTPException(422, str(err)) from err
     return _campaign_out(session, c)
+
+
+class SendingIn(BaseModel):
+    on: bool
+
+
+@router.get("/outreach/sending")
+def sending_state(session: Session = Depends(get_session)) -> dict:
+    """The dashboard's Sending on/off switch (same switch as `cli outreach pause|unpause`)."""
+    from app.modules.m3_outreach import sender as S
+
+    b = S.breaker(session)
+    return {"on": not S.paused(), "breaker": b.state, "breaker_reason": b.reason}
+
+
+@router.put("/outreach/sending")
+def set_sending(body: SendingIn, session: Session = Depends(get_session)) -> dict:
+    from app.core import audit
+    from app.modules.m3_outreach import sender as S
+
+    S.set_paused(not body.on)
+    audit.record(session, "m3", "sending_switch", f"You turned sending {'on' if body.on else 'off'}")
+    return sending_state(session)
