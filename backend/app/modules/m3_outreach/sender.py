@@ -66,7 +66,7 @@ def _now() -> datetime:
 def recipient_tz(contact: Contact | None) -> ZoneInfo:
     where = f"{contact.location or ''} {contact.geo or ''}".lower() if contact else ""
     for pattern, tz in _TZ_HINTS:
-        if re.search(pattern, where):
+        if re.search(rf"\b({pattern})\b", where):  # whole words: "Indiana" is not "India"
             return ZoneInfo(tz)
     return ZoneInfo(get_config().app.timezone)
 
