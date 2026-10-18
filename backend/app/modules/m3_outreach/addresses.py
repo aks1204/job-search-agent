@@ -103,22 +103,34 @@ def find_address(session: Session, http: PoliteClient, contact: Contact, company
             md.pattern, md.pattern_source, pattern = hint["pattern"], "hunter domain search", hint["pattern"]
         if hint.get("accept_all"):
             md.catch_all = True
-    formats = [pattern] if pattern else (rules.startup_formats if startup else rules.common_formats)
-    rows: list[ContactEmail] = []
-    for fmt in formats[: rules.verification.max_candidates_per_person]:
-        try:
-            email = f"{render(fmt, contact.first_name, contact.last_name)}@{domain}"
-        except (KeyError, IndexError, ValueError):
-            continue
-        existing = _taken(session, company.id, email)
-        if existing is not None:
-            if existing.contact_id == contact.id and existing.confidence != "invalid":
-                rows.append(existing)
-            continue  # someone else's address (or already ruled out)
-        rows.append(_add(session, company, contact, email, "constructed", pattern=fmt))
+    common = rules.startup_formats if startup else rules.common_formats
+
+    def build(formats: list[str]) -> list[ContactEmail]:
+        out: list[ContactEmail] = []
+        for fmt in formats[: rules.verification.max_candidates_per_person]:
+            try:
+                email = f"{render(fmt, contact.first_name, contact.last_name)}@{domain}"
+            except (KeyError, IndexError, ValueError):
+                continue
+            existing = _taken(session, company.id, email)
+            if existing is not None:
+                if existing.contact_id == contact.id and existing.confidence != "invalid":
+                    out.append(existing)
+                continue  # someone else's address (or already ruled out)
+            out.append(_add(session, company, contact, email, "constructed", pattern=fmt))
+        return out
+
+    rows = build([pattern] if pattern else common)
+    chosen = verify_candidates(session, http, rows, **kw) if rows else None
+    if chosen is None and pattern and all(r.confidence == "invalid" for r in rows):
+        # The mail server said no to the domain's usual format for this person (a short name, a
+        # clash with a namesake…): try the other common formats, each still checked by the server.
+        more = build([f for f in common if f != pattern])
+        if more:
+            chosen = verify_candidates(session, http, more, **kw)
+            rows += more
     if not rows:
         return None
-    chosen = verify_candidates(session, http, rows, **kw)
     if chosen is not None and not pattern:
         md.pattern, md.pattern_source = chosen.pattern, chosen.email  # one confirmed guess teaches the domain
     if chosen is None:

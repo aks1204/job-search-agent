@@ -92,9 +92,15 @@ def _rank_key(session: Session, c: Contact, function: str, geo: str) -> tuple:
     return (fit, c.seniority, CONFIDENCE_RANK[addr.confidence] if addr else -1, addr.vouched if addr else False, history)
 
 
-def _drop_departed(session: Session, bench: Bench) -> None:
+def geo_fits(bench: Bench, c: Contact, geo: str) -> bool:
+    """MNC benches are per geography: an India bench never holds someone known to be elsewhere
+    (unknown location stays — ambiguity is not proof). Smaller companies' benches are company-wide."""
+    return bench.shape != "mnc" or geo != "india" or c.geo != "elsewhere"
+
+
+def _drop_departed(session: Session, bench: Bench, geo: str) -> None:
     for m, c in members(session, bench):
-        if c.status == "departed" or c.company_id != bench.company_id:
+        if c.status == "departed" or c.company_id != bench.company_id or not geo_fits(bench, c, geo):
             session.delete(m)
     session.flush()
 
@@ -109,7 +115,7 @@ def fill_bench(session: Session, http: PoliteClient, llm, company: Company, benc
     counts = {"searches": 0, "added": 0, "frozen": 0, "addresses": 0}
     now = datetime.now(timezone.utc)
     retry = timedelta(days=rules.retry_no_contact_days)
-    _drop_departed(session, bench)
+    _drop_departed(session, bench, geo)
     on_bench = {c.id for _, c in members(session, bench)}
     taken_suspects = {sid for m, _ in members(session, bench) for sid in m.co_suspects}
 
@@ -120,7 +126,8 @@ def fill_bench(session: Session, http: PoliteClient, llm, company: Company, benc
         # Store first: people we already know at this company.
         pool_people = session.scalars(select(Contact).where(
             Contact.company_id == company.id, Contact.kind == kind, Contact.status == "active")).all()
-        candidates = [c for c in pool_people if c.id not in on_bench and c.id not in taken_suspects]
+        candidates = [c for c in pool_people if c.id not in on_bench and c.id not in taken_suspects
+                      and geo_fits(bench, c, geo)]
         last = bench.searched.get(kind)
         searched_recently = last and now - datetime.fromisoformat(last) < retry
         if len(candidates) < need and not searched_recently and budget.take():
@@ -129,7 +136,8 @@ def fill_bench(session: Session, http: PoliteClient, llm, company: Company, benc
                 counts["searches"] += 1
                 bench.searched = {**bench.searched, kind: now.isoformat()}
                 ids = {c.id for c in candidates}
-                candidates += [c for c, read in found if read.kind == kind and c.id not in on_bench and c.id not in ids]
+                candidates += [c for c, read in found if read.kind == kind and c.id not in on_bench and c.id not in ids
+                               and geo_fits(bench, c, geo)]
         candidates.sort(key=lambda c: _rank_key(session, c, function, geo), reverse=True)
         for c in candidates:
             if need <= 0:

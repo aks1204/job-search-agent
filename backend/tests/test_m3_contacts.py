@@ -86,3 +86,14 @@ def test_schema_keeps_a_field_named_title():
     person = strict_schema(P.PeopleRead)["properties"]["people"]["items"]
     assert "title" in person["properties"] and "title" in person["required"]
     assert "title" not in person["properties"]["title"]  # the label inside the field is still stripped
+
+
+def test_india_bench_at_an_mnc_excludes_people_known_to_be_elsewhere():
+    from app.modules.m3_outreach.bench import geo_fits
+
+    mnc, startup = SimpleNamespace(shape="mnc"), SimpleNamespace(shape="startup")
+    us, unknown, india = (SimpleNamespace(geo=g) for g in ("elsewhere", "unknown", "india"))
+    assert not geo_fits(mnc, us, "india")
+    assert geo_fits(mnc, unknown, "india") and geo_fits(mnc, india, "india")
+    assert geo_fits(mnc, us, "remote")          # remote roles: anyone
+    assert geo_fits(startup, us, "india")       # small companies: one company-wide bench

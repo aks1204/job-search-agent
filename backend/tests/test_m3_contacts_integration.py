@@ -171,3 +171,17 @@ def test_learned_pattern_is_used_without_guessing(db_session, role):
     addr = addresses.find_address(db_session, None, c, company, allow_enrich=False, startup=False, pool=[],
                                   resolver=resolver, smtp=smtp)
     assert addr.email == f"miyer@{DOMAIN}" and addr.confidence == "verified" and addr.pattern == "{f}{last}"
+
+
+def test_other_formats_are_tried_when_the_domain_pattern_is_refused(db_session, role):
+    company, _ = role
+    db_session.add(MailDomain(domain=DOMAIN, mx_hosts=["mx.test"], has_mx=True, pattern="{first}.{last}",
+                              mx_checked_at=datetime.now(timezone.utc)))
+    c = Contact(company_id=company.id, full_name="Elizabeth Holt", name_key="elizabeth holt", first_name="elizabeth",
+                last_name="holt", kind="recruiting", source="search")
+    db_session.add(c)
+    db_session.flush()
+    addr = addresses.find_address(db_session, None, c, company, allow_enrich=False, startup=False, pool=[],
+                                  resolver=resolver, smtp=FakeSMTP({f"eholt@{DOMAIN}"}))
+    assert addr.email == f"eholt@{DOMAIN}" and addr.confidence == "verified"
+    assert db_session.get(MailDomain, DOMAIN).pattern == "{first}.{last}"   # one exception doesn't relearn the domain
