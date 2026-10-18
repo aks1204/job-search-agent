@@ -101,7 +101,7 @@ def sibling_req_ids(session: Session, cluster_id: int) -> list[str]:
     jobs = session.scalars(select(JobPosting).where(JobPosting.cluster_id == cluster_id, JobPosting.status == "open",
                                                     JobPosting.lead_only.is_(False))
                            .order_by(JobPosting.first_seen_at, JobPosting.id)).all()
-    return list(dict.fromkeys(r for j in jobs if (r := req_id(j))))
+    return sorted({r for j in jobs if (r := req_id(j))})  # stable order in the email (and in inputs_version)
 
 
 def scenario_for(session: Session, cluster_id: int, req_ids: list[str]) -> str:
