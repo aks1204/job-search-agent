@@ -510,9 +510,25 @@ class DraftRules(Strict):
     max_rewrites: int = Field(1, ge=0, le=3)     # truth check: rewrite rounds before unsupported claims are cut
 
 
+class SendingRules(Strict):
+    """Throttle stack (spec 3.3), applied in this order; none of it can be bypassed."""
+    global_per_day: int = Field(12, ge=0, le=50)
+    per_company_per_day: int = Field(2, ge=0, le=10)
+    stagger_minutes: tuple[int, int] = (30, 60)
+    wave_sizes: tuple[int, int] = (2, 2)          # day 0: primary + one more; day 1: next two; day 2: the rest
+    # Bounce breaker: trips at this many bounces, or above this rate once enough has been sent.
+    breaker_bounces: int = Field(2, ge=1)
+    breaker_rate: float = Field(0.05, gt=0, lt=1)
+    breaker_min_sends: int = Field(30, ge=1)
+    breaker_cooldown_hours: int = Field(6, ge=1)
+    delivered_after_hours: int = Field(48, ge=1)  # sent + no bounce this long = delivered (proves the address)
+    edit_examples: int = Field(5, ge=0, le=20)    # your recent edits shown to the AI as style examples
+
+
 class OutreachConfig(Strict):
     contacts: ContactRules = Field(default_factory=ContactRules)
     drafts: DraftRules = Field(default_factory=DraftRules)
+    sending: SendingRules = Field(default_factory=SendingRules)
 
 
 # --- llm.yaml ---------------------------------------------------------------

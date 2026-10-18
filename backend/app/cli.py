@@ -32,6 +32,9 @@
     python -m app.cli lookups                                    # Module 3: contact services + free-tier use
     python -m app.cli drafts [--cluster N] [--force]              # Module 3: write outreach drafts now
     python -m app.cli draft <cluster_id>                         # Module 3: show a draft as recipients get it
+    python -m app.cli gmail connect|status|test                  # Module 3: your Gmail (Google sign-in)
+    python -m app.cli review [show|approve|skip|export|import <campaign>] [--email N|--all] [--allow-low]
+    python -m app.cli outreach status|pause|unpause|reset-breaker | hold|release|stop <domain>
 """
 
 import argparse
@@ -774,10 +777,17 @@ def lookups_cmd() -> int:
 # --- Module 3 Part 3b: drafts ------------------------------------------------------------------
 
 def drafts_run_cmd(cluster_id: int | None, force: bool) -> int:
+    from app.db import session_scope
+    from app.modules.m3_outreach.campaigns import prepare_campaigns
     from app.modules.m3_outreach.drafting import run_drafts
 
     print("Writing outreach drafts (nothing is sent)…")
-    _print_counts(run_drafts(cluster_ids=[cluster_id] if cluster_id else None, force=force))
+    ids = [cluster_id] if cluster_id else None
+    _print_counts(run_drafts(cluster_ids=ids, force=force))
+    with session_scope() as s:
+        counts = prepare_campaigns(s, ids)
+    if counts["prepared"] or counts["refreshed"]:
+        print(f"  ready for your review: {counts['prepared'] + counts['refreshed']} campaign(s) — see: python -m app.cli review")
     return 0
 
 
@@ -827,6 +837,190 @@ def draft_cmd(cluster_id: int) -> int:
             for name, email, conf in recipients[1:]:
                 print(f"  {render_for(d, t, name)[1].splitlines()[0]:<24} {email} ({conf})")
     return 0
+
+
+# --- Module 3 Part 3c: Gmail, review, sending -------------------------------------------------
+
+def gmail_cmd(action: str) -> int:
+    from app.db import session_scope
+    from app.modules.m3_outreach import gmail
+
+    with session_scope() as s:
+        acct = gmail.account(s)
+        if action == "connect":
+            if not gmail.configured():
+                print("First add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and APP_SECRET_KEY to .env "
+                      "(README: Connect Gmail), then run: docker compose up -d")
+                return 1
+            print("Open this in your browser (on the laptop running the agent) and sign in with your Gmail:")
+            print(f"  {get_settings().public_base_url.rstrip('/')}/api/gmail/connect")
+            print("Tick both permissions (send, and read). Then run: python -m app.cli gmail status")
+            return 0
+        if action == "status":
+            if acct is None:
+                print("Gmail: not connected" + ("" if gmail.configured() else " (credentials not in .env yet)"))
+                return 1
+            print(f"Gmail: {acct.email} — {'connected' if acct.status == 'ok' else 'needs reconnecting'}")
+            return 0 if acct.status == "ok" else 1
+        if action == "test":
+            if acct is None:
+                print("Gmail isn't connected yet.")
+                return 1
+            msg = gmail.build_message(sender=acct.email, sender_name=None, to=acct.email,
+                                      subject="Job Agent test", body="Sending works. This went from you to you.",
+                                      attachment=None)
+            message_id, _ = gmail.send(s, msg)
+            print(f"Test email sent to yourself ({acct.email}); check your inbox. id {message_id}")
+            return 0
+    return 1
+
+
+def _campaign_or_exit(s, campaign_id: int):
+    from app.models import OutreachCampaign
+
+    c = s.get(OutreachCampaign, campaign_id)
+    if c is None:
+        raise SystemExit(f"No campaign {campaign_id} (see: python -m app.cli review)")
+    return c
+
+
+def review_cmd(action: str, campaign_id: int | None, email_pos: int | None, all_: bool, allow_low: bool) -> int:
+    from pathlib import Path
+
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company, OutreachCampaign
+    from app.modules.m3_outreach import campaigns as C
+    from app.modules.m3_outreach.drafting import attachment
+    from app.modules.m3_outreach.template import load_template
+
+    with session_scope() as s:
+        if action == "list":
+            rows = s.scalars(select(OutreachCampaign).where(OutreachCampaign.status.in_(C.ACTIVE))
+                             .order_by(OutreachCampaign.id)).all()
+            if not rows:
+                print("No campaigns waiting or running.")
+            for c in rows:
+                es = C.emails(s, c)
+                pending = sum(e.decision == "pending" for e in es)
+                print(f"[{c.id}] {s.get(Company, c.company_id).name} · role {c.cluster_id} · {c.status.upper()}"
+                      + (f" · {pending} to review" if pending else "")
+                      + f" · {sum(e.status == 'sent' for e in es)}/{sum(e.decision == 'approved' for e in es)} sent"
+                      + (f" · {c.status_reason}" if c.status_reason else ""))
+            return 0
+
+        c = _campaign_or_exit(s, campaign_id)
+        t = load_template()
+        es = C.emails(s, c)
+        if action == "show":
+            print(f"Campaign {c.id} · {s.get(Company, c.company_id).name} · role {c.cluster_id} · {c.status.upper()}"
+                  + (" · edited by you" if c.edited else ""))
+            att = attachment()
+            for e in es:
+                subject, body = C.render_email(t, c, e)
+                flag = " · NEEDS YOUR GO-AHEAD (--allow-low)" if C.needs_go_ahead(e) and e.decision == "pending" else ""
+                print("=" * 72)
+                print(f"Email {e.position} of {len(es)} · day {e.wave + 1} · {e.decision.upper()} · {e.status}{flag}")
+                print(f"To:      {e.to_name + ' <' + e.to_email + '>' if e.to_name else e.to_email}"
+                      f"   (address: {e.confidence}{', provider vouches' if e.vouched else ''})")
+                print(f"Subject: {subject}")
+                if c.attach_resume:
+                    print(f"Attach:  {att[0]}" if att else "Attach:  resume missing — add config/resume.pdf")
+                print("-" * 72)
+                print(body)
+            print("=" * 72)
+            print("Next: review approve|skip <campaign> --email N (or --all); review export <campaign> to edit.")
+            return 0
+        if action in ("approve", "skip"):
+            targets = es if all_ else [e for e in es if e.position == email_pos]
+            if not targets:
+                print("Say which email: --email N, or --all")
+                return 1
+            for e in targets:
+                if e.decision != "pending":
+                    continue
+                try:
+                    C.decide(s, c, e, action, allow_low=allow_low)
+                    print(f"  {action}d: {e.to_email}")
+                except C.ReviewError as err:
+                    print(f"  not {action}d: {err}")
+            print(f"Campaign {c.id}: {c.status}" + (" — the waves start now (within sending hours and limits)"
+                                                   if c.status == "scheduled" else ""))
+            return 0
+        if action == "export":
+            path = Path("/review") / f"campaign-{c.id}.txt"
+            path.write_text(C.export_text(c), encoding="utf-8")
+            print(f"Written to review/campaign-{c.id}.txt in your project folder. Edit it, save, then run:")
+            print(f"  python -m app.cli review import {c.id}")
+            return 0
+        if action == "import":
+            path = Path("/review") / f"campaign-{c.id}.txt"
+            if not path.is_file():
+                print(f"No review/campaign-{c.id}.txt — run: python -m app.cli review export {c.id}")
+                return 1
+            try:
+                subject, body = C.import_text(path.read_text(encoding="utf-8"))
+                C.edit(s, c, subject, body)
+            except C.ReviewError as err:
+                print(f"Not saved: {err}")
+                return 1
+            print(f"Saved your edit to campaign {c.id} (kept as a style example for future drafts). "
+                  "Approvals were reset: review it again with `review show`.")
+            return 0
+    return 1
+
+
+def outreach_cmd(action: str, domain: str | None) -> int:
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from app.config_loader import get_config
+    from app.core import audit
+    from app.core.redis_client import get_redis
+    from app.db import session_scope
+    from app.models import Company
+    from app.modules.m3_outreach import campaigns as C
+    from app.modules.m3_outreach import sender as S
+
+    with session_scope() as s:
+        if action == "status":
+            rules = get_config().outreach.sending
+            now = datetime.now(timezone.utc)
+            b = S.breaker(s)
+            nxt = get_redis().get(S.NEXT_SEND_KEY)
+            print(f"Sending: {'PAUSED by you' if S.paused() else 'on'} · bounce breaker: {b.state}"
+                  + (f" ({b.reason})" if b.reason else ""))
+            print(f"Today: {S._sent_since(s, S.start_of_day_utc(now))}/{rules.global_per_day} sent"
+                  + (f" · next send not before {datetime.fromisoformat(nxt):%H:%M} UTC" if nxt and datetime.fromisoformat(nxt) > now else ""))
+            due = S.next_candidates(s, now)
+            print(f"Approved and due now: {len(due)} email(s)")
+            return 0
+        if action in ("pause", "unpause"):
+            S.set_paused(action == "pause")
+            print("All sending paused." if action == "pause" else "Sending back on (limits and quiet hours still apply).")
+            return 0
+        if action == "reset-breaker":
+            b = S.breaker(s)
+            b.state, b.reason, b.reset_at = "ok", None, datetime.now(timezone.utc)
+            audit.record(s, "m3", "breaker_reset", "You reset the bounce breaker")
+            print("Bounce breaker reset; sending can continue.")
+            return 0
+        if not domain:
+            print("Give the company's domain, e.g. lilly.com")
+            return 1
+        company = s.scalar(select(Company).where(Company.domain == domain.lower()))
+        if company is None:
+            print(f"No company with domain {domain}")
+            return 1
+        if action == "hold":
+            print(f"{company.name}: {C.stop_company(s, company.id, 'held by you', pause=True)} unsent email(s) held.")
+        elif action == "release":
+            print(f"{company.name}: {C.resume_company(s, company.id)} campaign(s) released.")
+        elif action == "stop":
+            print(f"{company.name}: {C.stop_company(s, company.id, 'stopped by you')} unsent email(s) cancelled.")
+        return 0
 
 
 def main() -> None:
@@ -916,6 +1110,17 @@ def main() -> None:
     p_dr.add_argument("--force", action="store_true", help="rewrite even if nothing changed")
     p_d1 = sub.add_parser("draft", help="Module 3: show a role's draft exactly as recipients would get it")
     p_d1.add_argument("cluster_id", type=int)
+    p_gm = sub.add_parser("gmail", help="Module 3: connect your Gmail (Google sign-in), check it, send yourself a test")
+    p_gm.add_argument("action", choices=["connect", "status", "test"])
+    p_rv = sub.add_parser("review", help="Module 3: review outreach emails: approve / edit / skip each one")
+    p_rv.add_argument("action", nargs="?", default="list", choices=["list", "show", "approve", "skip", "export", "import"])
+    p_rv.add_argument("campaign", nargs="?", type=int)
+    p_rv.add_argument("--email", type=int, help="which email in the campaign (1, 2, ...)")
+    p_rv.add_argument("--all", action="store_true", help="every email still waiting in the campaign")
+    p_rv.add_argument("--allow-low", action="store_true", help="your go-ahead for addresses that couldn't be proven")
+    p_ou = sub.add_parser("outreach", help="Module 3: sending status; pause / unpause; hold / release / stop a company")
+    p_ou.add_argument("action", choices=["status", "pause", "unpause", "hold", "release", "stop", "reset-breaker"])
+    p_ou.add_argument("domain", nargs="?")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -986,6 +1191,14 @@ def main() -> None:
         sys.exit(drafts_run_cmd(args.cluster, args.force))
     if args.command == "draft":
         sys.exit(draft_cmd(args.cluster_id))
+    if args.command == "gmail":
+        sys.exit(gmail_cmd(args.action))
+    if args.command == "review":
+        if args.action != "list" and args.campaign is None:
+            parser.error("review show|approve|skip|export|import needs a campaign number")
+        sys.exit(review_cmd(args.action, args.campaign, args.email, args.all, args.allow_low))
+    if args.command == "outreach":
+        sys.exit(outreach_cmd(args.action, args.domain))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

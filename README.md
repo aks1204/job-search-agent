@@ -302,6 +302,72 @@ docker compose exec api python -m app.cli drafts --cluster <cluster_id> --force 
 
 API: `GET /api/roles/{cluster_id}/draft`.
 
+### Part 3c: review and sending
+
+**Nothing is ever sent without your approval of that exact email.** There is no auto-send mode.
+
+#### Connect Gmail (one time, about 15 minutes)
+
+Emails go out from **your own Gmail** and appear in your Sent folder. The agent only reads the threads it started. Use a personal Gmail account.
+
+1. At console.cloud.google.com, create a project and enable the **Gmail API** (APIs & Services → Library).
+2. In **Google Auth Platform** (the OAuth consent screen), click Get started. Fill in an app name and your email, and choose **External**.
+3. Under **Data Access**, add two scopes: `https://www.googleapis.com/auth/gmail.send` and `https://www.googleapis.com/auth/gmail.readonly`.
+4. Under **Audience**, click **Publish app** so it shows "In production". In "Testing" mode, Google signs the app out every 7 days. Google will call it unverified, which is normal for a personal app; you click past one warning when connecting.
+5. Under **Clients**, create a client: **Web application**, with redirect URI `http://localhost:8000/api/gmail/callback`.
+6. In `.env`, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and an `APP_SECRET_KEY` generated with:
+   `docker compose run --rm api python -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"`
+7. Run `docker compose up -d`, then `python -m app.cli gmail connect`. Open the link it prints, sign in, and tick both permissions. Then run `gmail status` and `gmail test`, which sends an email to yourself.
+
+Your sign-in is stored encrypted with `APP_SECRET_KEY`. To revoke access anytime, go to myaccount.google.com/permissions.
+
+#### Review: approve / edit / skip
+
+- **Campaign:** each drafted role becomes a campaign. Every recipient's email is shown exactly as it will go out: recipient, subject, body, attachment.
+- **Approve or skip each email.** An address that couldn't be proven (a catch-all domain, or one that couldn't be checked) needs your explicit `--allow-low`, unless a lookup service vouches for it.
+- **Edit:** your text replaces the shared email for every recipient. Earlier approvals are reset, so you approve the final text.
+- **Learning from your edits:** each edit is kept as a style example. Future drafts see your latest edits (5 by default) and follow your preferences. Facts still come only from your resume and still pass the truth check.
+- **Start:** once every email is approved or skipped, the waves start.
+
+#### Waves and limits
+
+**Waves:**
+- day 0: the first two people;
+- day 1: the next two;
+- day 2: the rest.
+
+Each wave goes out only if nobody at the company has replied.
+
+**Limits** (none can be bypassed):
+- your pause switch;
+- the bounce breaker;
+- quiet hours, in the recipient's local time (best effort);
+- **12 emails a day** in total;
+- **2 a day per company**;
+- **30–60 minutes** between any two emails.
+
+**When someone replies,** every unsent email to that company is held, and you're told. Read the reply in Gmail, then release or stop that company. Part 3d will sort replies into interested, redirect, out-of-office and so on, and act as the spec says. **The agent never replies and never sends follow-ups.**
+
+**When an email bounces:**
+- That address is dead, and a guessed address pattern at that domain is no longer trusted.
+- **Bounce breaker:** 2+ bounces, or more than 5% once 30+ are sent, freezes the unsent queue. Every queued address is re-checked, and sending resumes by itself after 6 hours once the queue is clean. A second spike within 7 days that guessed addresses don't explain waits for you.
+
+```bash
+docker compose exec api python -m app.cli review                         # what's waiting / running
+docker compose exec api python -m app.cli review show <campaign>         # every email exactly as it will go out
+docker compose exec api python -m app.cli review approve <campaign> --email 1     # or --all; add --allow-low if asked
+docker compose exec api python -m app.cli review skip <campaign> --email 3
+docker compose exec api python -m app.cli review export <campaign>       # edit review/campaign-N.txt in any editor…
+docker compose exec api python -m app.cli review import <campaign>       # …then load your edit
+docker compose exec api python -m app.cli outreach status
+docker compose exec api python -m app.cli outreach pause                  # stop all sending; `unpause` to continue
+docker compose exec api python -m app.cli outreach hold|release|stop <domain>
+```
+
+API: `GET /api/gmail/connect` · `GET /api/gmail/status` · `GET /api/campaigns` · `GET /api/campaigns/{id}` ·
+`POST /api/campaigns/{id}/emails/{email_id}` (`{"action": "approve"|"skip", "allow_low": false}`) ·
+`PUT /api/campaigns/{id}/text` (your edit).
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

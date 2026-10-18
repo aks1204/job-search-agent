@@ -53,6 +53,9 @@ services:
   api:
     <<: *backend
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ./config:/config:ro
+      - ./review:/review      # drafts exported for editing (cli review export / import)
     # Bound to localhost only: there is no login yet. Reach it via SSH tunnel.
     ports:
       - "127.0.0.1:8000:8000"

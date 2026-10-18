@@ -30,12 +30,18 @@ class Settings(BaseSettings):
     myemailverifier_api_key: str = ""
     # Local mailbox check (SMTP handshake) needs a hostname to introduce itself with
     smtp_helo_host: str = ""
+    # Module 3 Part 3c: sending from your own Gmail (Google sign-in). See README "Connect Gmail".
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    app_secret_key: str = ""          # encrypts the stored Gmail sign-in; generate once (README)
+    public_base_url: str = "http://localhost:8000"  # where your browser reaches the API
 
     def secrets(self) -> list[str]:
         values = [
             self.anthropic_api_key, self.brave_api_key, self.adzuna_app_id,
             self.adzuna_app_key, self.jooble_api_key,
             self.hunter_api_key, self.apollo_api_key, self.myemailverifier_api_key,
+            self.google_client_secret, self.app_secret_key,
         ]
         return [v for v in values if v and len(v) >= 4]
 

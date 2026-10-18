@@ -9,6 +9,7 @@ still unsupported is cut before the draft reaches the owner (and the draft is fl
 be made cleanly). Owner decision: drafts never mention gaps — only why the candidate is a strong fit.
 """
 
+import difflib
 import hashlib
 import json
 import logging
@@ -133,12 +134,40 @@ def inputs_version(t: Template, job: JobPosting, scenario: str, req_ids: list[st
     return hashlib.sha256(blob.encode()).hexdigest()[:32]
 
 
-def _system(t: Template) -> str:
-    """Stable across every job (template + candidate + resume) → cached by the API."""
+def style_examples(session: Session) -> str:
+    """The owner's latest edits to drafts (Part 3c review), as before→after line changes. They teach
+    style and preferences only; facts still come from the resume and pass the truth check."""
+    from app.models.outreach import DraftEdit
+
+    limit = get_config().outreach.sending.edit_examples
+    if limit <= 0:
+        return ""
+    edits = session.scalars(select(DraftEdit).order_by(DraftEdit.id.desc()).limit(limit)).all()
+    blocks = []
+    for i, ed in enumerate(edits, 1):
+        lines = []
+        if ed.before_subject != ed.after_subject:
+            lines += [f"- subject: {ed.before_subject}", f"+ subject: {ed.after_subject}"]
+        lines += [ln for ln in difflib.unified_diff(ed.before_body.splitlines(), ed.after_body.splitlines(),
+                                                    lineterm="", n=0)
+                  if ln[:1] in ("+", "-") and not ln.startswith(("+++", "---"))]
+        if lines:
+            blocks.append(f"Edit {i} (- what the AI wrote, + what the candidate sent instead):\n"
+                          + "\n".join(lines)[:1500])
+    if not blocks:
+        return ""
+    return ("\n\n## How the candidate edits drafts (most recent first)\n"
+            "Learn their preferences from these edits (wording, length, tone, what they add or remove) and "
+            "write the way they would. Don't copy job-specific details from them.\n\n" + "\n\n".join(blocks))
+
+
+def _system(t: Template, examples: str = "") -> str:
+    """Stable across jobs (template + candidate + resume + your edits) → cached by the API."""
     owner = get_config().owner
     sections = "\n\n".join(f"### {name}\n{text}" for name, text in t.sections.items())
     return (DRAFT_SYSTEM + "\n\n## The template's instructions\n" + sections
             + f"\n\nWrite between {t.settings.points_min} and {t.settings.points_max} points."
+            + examples
             + "\n\n## The candidate\n" + candidate_brief(owner)
             + f"\nTotal experience: {_years(owner) or 'not given'} years"
             + "\n\n--- resume ---\n" + (resume_text()[:12000] or "(resume not available)"))
@@ -211,7 +240,7 @@ def write_draft(session: Session, llm, score: JobScore, a: JobAssessment, job: J
     rules = get_config().outreach.drafts
     req_ids = sibling_req_ids(session, score.cluster_id)
     scenario = scenario_for(session, score.cluster_id, req_ids)
-    system = _system(t)
+    system = _system(t, style_examples(session))
     user = _user(session, t, score, a, job, company, scenario, req_ids)
     subject_ref = ("job_cluster", str(score.cluster_id))
     cost = 0.0

@@ -31,6 +31,8 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
         "m2-refresh-rates": {"task": "m2.refresh_rates", "schedule": crontab(minute="0", hour="4", day_of_month="20", month_of_year="1")},
         "m3-contacts": {"task": "m3.contacts", "schedule": cfg.watch.tick_minutes * 60.0},
         "m3-sweep": {"task": "m3.sweep", "schedule": crontab(minute="0", hour="5", day_of_week="sun")},
+        "m3-send": {"task": "m3.send", "schedule": 300.0},
+        "m3-mail-check": {"task": "m3.mail_check", "schedule": 900.0},
     }
     for name in SCOUT_NAMES:
         scout = getattr(cfg.scouts, name)

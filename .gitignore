@@ -9,3 +9,7 @@ node_modules/
 *.bundle
 config/resume.pdf
 config/resume*.pdf
+
+# Drafts exported for editing (private)
+review/*
+!review/README.md

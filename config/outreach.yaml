@@ -69,3 +69,17 @@ drafts:
   drafts_per_tick: 3
   template_file: email_template.md
   max_rewrites: 1        # truth check: claims your resume can't back up get one rewrite, then are cut
+
+# Part 3c: sending from your Gmail. NOTHING sends without your per-email approval (cli review).
+# Quiet hours come from app.yaml and apply in the recipient's local time (best effort).
+sending:
+  global_per_day: 12
+  per_company_per_day: 2
+  stagger_minutes: [30, 60]     # random gap between any two sends
+  wave_sizes: [2, 2]            # day 0: first two people; day 1: next two; day 2: the rest — each only if nobody replied
+  breaker_bounces: 2            # bounce breaker: 2+ bounces, or >5% once 30+ have been sent → sending freezes
+  breaker_rate: 0.05
+  breaker_min_sends: 30
+  breaker_cooldown_hours: 6
+  delivered_after_hours: 48
+  edit_examples: 5              # your latest edits, shown to the AI as examples of your style
