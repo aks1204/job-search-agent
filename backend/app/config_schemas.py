@@ -537,6 +537,28 @@ class OutreachConfig(Strict):
     replies: ReplyRules = Field(default_factory=ReplyRules)
 
 
+# --- apply.yaml (Module 4) ------------------------------------------------------
+
+class ApplyConfig(Strict):
+    # Roles that go on your apply list (with reminders): these bands, plus roles you marked `act`.
+    # Applying to ANY role the agent knows is still noticed and tracked.
+    apply_bands: list[Literal["fast_lane", "inbox", "maybe"]] = Field(default_factory=lambda: ["fast_lane"])
+    full_card_days: int = Field(3, ge=0)            # after this, a pending link folds into "still pending (N)"
+    link_check_hours: int = Field(24, ge=1)         # re-check apply links this often (live-checked before shown)
+    inbox_scan: bool = True                         # read hiring-system emails to mark Applied + track status
+    lookback_days: int = Field(60, ge=1, le=365)
+    scan_per_run: int = Field(40, ge=1, le=500)
+    silent_after_days: int = Field(21, ge=1)        # applied and nothing heard this long = silent
+    # Where hiring-system emails come from (sender domains). Mail from the companies you're tracking is read too.
+    ats_senders: list[str] = Field(default_factory=lambda: [
+        "myworkday.com", "myworkdayjobs.com", "greenhouse.io", "greenhouse-mail.io", "lever.co", "hire.lever.co",
+        "ashbyhq.com", "smartrecruiters.com", "workablemail.com", "workable.com", "icims.com", "taleo.net",
+        "oraclecloud.com", "successfactors.com", "successfactors.eu", "eightfold.ai", "jobvite.com",
+        "phenompeople.com", "avature.net", "darwinbox.in", "keka.com", "zohorecruit.com", "zohorecruit.in",
+        "freshteam.com", "bamboohr.com", "teamtailor.com", "recruitee.com", "breezy.hr",
+    ])
+
+
 # --- llm.yaml ---------------------------------------------------------------
 
 class LLMTier(Strict):

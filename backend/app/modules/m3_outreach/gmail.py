@@ -185,3 +185,29 @@ def message_text(session: Session, message_id: str) -> str:
 
 def thread_link(thread_id: str) -> str:
     return f"https://mail.google.com/mail/#all/{thread_id}"
+
+
+def search(session: Session, query: str, limit: int) -> list[dict]:
+    """Message ids matching a Gmail search (Module 4 uses a narrow one: hiring-system senders only)."""
+    out: list[dict] = []
+    token = None
+    while len(out) < limit:
+        params = {"q": query, "maxResults": min(100, limit - len(out))}
+        if token:
+            params["pageToken"] = token
+        data = _api(session, "GET", "/messages", params=params)
+        out += [{"id": m["id"], "thread_id": m["threadId"]} for m in data.get("messages", [])]
+        token = data.get("nextPageToken")
+        if not token:
+            break
+    return out[:limit]
+
+
+def message_meta(session: Session, message_id: str) -> dict:
+    """From / Subject / Date / snippet of one message (no body)."""
+    data = _api(session, "GET", f"/messages/{message_id}",
+                params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]})
+    headers = {h["name"].lower(): h["value"] for h in (data.get("payload") or {}).get("headers", [])}
+    return {"id": data["id"], "thread_id": data.get("threadId"), "from": headers.get("from", ""),
+            "subject": headers.get("subject", ""), "date": headers.get("date", ""),
+            "snippet": data.get("snippet", ""), "internal_ms": int(data.get("internalDate") or 0)}

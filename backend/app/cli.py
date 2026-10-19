@@ -37,6 +37,12 @@
     python -m app.cli outreach status|pause|unpause|reset-breaker | hold|release|stop <domain>
     python -m app.cli replies [--last N]                         # Module 3: replies and how they were sorted
     python -m app.cli pings [--all] [--read]                     # what the agent wants you to know
+    python -m app.cli apply                                      # Module 4: your apply list
+    python -m app.cli applied <cluster_id> ["note"]              # Module 4: mark a role applied
+    python -m app.cli apply-skip <cluster_id> "<reason>"
+    python -m app.cli applications [--status S]                  # Module 4: where each application stands
+    python -m app.cli story <cluster_id>                         # one role's whole story
+    python -m app.cli track                                      # Module 4: run the tracker now
 """
 
 import argparse
@@ -1076,6 +1082,107 @@ def pings_cmd(all_: bool, mark_read: bool) -> int:
     return 0
 
 
+# --- Module 4: apply tracker ------------------------------------------------------------------
+
+def apply_cmd() -> int:
+    from app.config_loader import get_config
+    from app.db import session_scope
+    from app.modules.m4_apply.tracker import apply_list
+
+    with session_scope() as s:
+        full, folded = apply_list(s)
+        if not full and not folded:
+            print("Nothing on your apply list. (Fast-lane roles and roles you mark `act` land here.)")
+        for app, cluster, company in full:
+            print(f"[{cluster.id}] {company.name}: {cluster.title}  (on your list since {app.queued_at:%d %b})")
+            for link in app.links or []:
+                state = {True: "live", False: f"BROKEN — {link.get('why')}", None: "not checked yet"}.get(link.get("ok"))
+                print(f"     {link.get('req_id') or ''} {link['url']}  [{state}]" + (" (job-site lead)" if link.get("lead") else ""))
+            if not app.links:
+                print("     no apply link found yet")
+        if folded:
+            print(f"…and still pending: {folded} older role(s) (over {get_config().apply.full_card_days} days).")
+        print("After applying: python -m app.cli applied <role id>   ·   not interested: apply-skip <role id> \"<reason>\"")
+    return 0
+
+
+def applied_cmd(cluster_id: int, note: str | None) -> int:
+    from app.db import session_scope
+    from app.modules.m4_apply.tracker import mark_applied
+
+    with session_scope() as s:
+        try:
+            app = mark_applied(s, cluster_id, note)
+        except ValueError as e:
+            print(e)
+            return 1
+        print(f"Role {cluster_id} marked applied ({app.applied_at:%d %b %H:%M}). Status emails will be tracked from here.")
+    return 0
+
+
+def apply_skip_cmd(cluster_id: int, reason: str) -> int:
+    from app.db import session_scope
+    from app.modules.m4_apply.tracker import skip
+
+    with session_scope() as s:
+        try:
+            skip(s, cluster_id, reason)
+        except ValueError as e:
+            print(e)
+            return 1
+        print(f"Role {cluster_id} taken off your apply list.")
+    return 0
+
+
+def applications_cmd(status: str | None) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Application, Company, JobCluster
+
+    with session_scope() as s:
+        q = select(Application, JobCluster, Company).join(JobCluster, JobCluster.id == Application.cluster_id) \
+            .join(Company, Company.id == Application.company_id).order_by(Application.status_at.desc())
+        if status:
+            q = q.where(Application.status == status)
+        rows = s.execute(q.limit(100)).all()
+        if not rows:
+            print("No applications tracked yet.")
+        for app, cluster, company in rows:
+            extra = f" · applied {app.applied_at:%d %b} ({app.applied_how})" if app.applied_at else ""
+            print(f"[{cluster.id}] {app.status.upper():<12} {company.name}: {cluster.title}{extra}")
+            if app.receipt_link:
+                print(f"     receipt: {app.receipt_link}")
+    return 0
+
+
+def story_cmd(cluster_id: int) -> int:
+    from app.db import session_scope
+    from app.models import Company, JobCluster
+    from app.modules.m4_apply.tracker import story
+
+    with session_scope() as s:
+        cluster = s.get(JobCluster, cluster_id)
+        if cluster is None:
+            print(f"No role {cluster_id}")
+            return 1
+        print(f"{s.get(Company, cluster.company_id).name}: {cluster.title}")
+        events = story(s, cluster_id)
+        if not events:
+            print("  nothing yet")
+        for at, kind, text in events:
+            print(f"  {at:%d %b %H:%M}  {'✉' if kind == 'outreach' else '•'} {text}")
+    return 0
+
+
+def track_cmd() -> int:
+    from app.modules.m4_apply.tracker import run_tracking
+
+    print("Updating your apply list, checking links, reading hiring-system emails…")
+    _print_counts(run_tracking())
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1179,6 +1286,19 @@ def main() -> None:
     p_pg = sub.add_parser("pings", help="what the agent wants you to know (unread first)")
     p_pg.add_argument("--all", action="store_true", help="include ones already read")
     p_pg.add_argument("--read", action="store_true", help="mark the shown ones as read")
+    sub.add_parser("apply", help="Module 4: your apply list (links to apply to, live-checked)")
+    p_ad = sub.add_parser("applied", help="Module 4: mark a role as applied (for systems that send no confirmation)")
+    p_ad.add_argument("cluster_id", type=int)
+    p_ad.add_argument("note", nargs="?")
+    p_as = sub.add_parser("apply-skip", help="Module 4: take a role off your apply list")
+    p_as.add_argument("cluster_id", type=int)
+    p_as.add_argument("reason")
+    p_ap = sub.add_parser("applications", help="Module 4: where each application stands")
+    p_ap.add_argument("--status", choices=["queued", "applied", "confirmed", "in_review", "interviewing", "offer",
+                                         "rejected", "silent", "skipped", "closed"])
+    p_st = sub.add_parser("story", help="one role's whole story: outreach + application")
+    p_st.add_argument("cluster_id", type=int)
+    sub.add_parser("track", help="Module 4: update the apply list, links and hiring-system emails now")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -1261,6 +1381,18 @@ def main() -> None:
         sys.exit(replies_cmd(args.last))
     if args.command == "pings":
         sys.exit(pings_cmd(args.all, args.read))
+    if args.command == "apply":
+        sys.exit(apply_cmd())
+    if args.command == "applied":
+        sys.exit(applied_cmd(args.cluster_id, args.note))
+    if args.command == "apply-skip":
+        sys.exit(apply_skip_cmd(args.cluster_id, args.reason))
+    if args.command == "applications":
+        sys.exit(applications_cmd(args.status))
+    if args.command == "story":
+        sys.exit(story_cmd(args.cluster_id))
+    if args.command == "track":
+        sys.exit(track_cmd())
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

@@ -391,6 +391,35 @@ API: `GET /api/gmail/connect` · `GET /api/gmail/status` · `GET /api/campaigns`
 `POST /api/campaigns/{id}/emails/{email_id}` (`{"action": "approve"|"skip", "allow_low": false}`) ·
 `PUT /api/campaigns/{id}/text` (your edit) · `GET/PUT /api/outreach/sending` · `GET /api/notifications` · `POST /api/notifications/{id}/read`.
 
+## Apply tracker (Module 4)
+
+**The agent never fills in application forms.** You apply; it gives you the links and keeps track.
+
+**1. Apply list.** Fast-lane roles, and roles you mark `act`, go on your apply list:
+- **Links:** the company's own apply link for every opening of that role (several job IDs means several links). Each link is checked to still work before it's shown, then once a day.
+- **Reminders:** a pending link is a full card for 3 days, then folds into "still pending (N)".
+- **Leaving the list:** a role leaves when you apply, skip it, or the posting closes.
+- **Other roles:** every other role still shows its link in `shortlist`. Which roles go on the list is set by `apply_bands` in `config/apply.yaml`.
+
+**2. Spotting that you applied.** The agent reads **only** emails from hiring systems (Workday, Greenhouse, Lever, Ashby, SmartRecruiters, Oracle, iCIMS, Taleo…) and from companies you're tracking, from the last 60 days. Each email is read once.
+- **Applied automatically:** a "we received your application" email marks the role **Applied**, with a link to that email. This works for **any** role the agent knows, even one that wasn't on your list.
+- **No confirmation email:** for the 10–20% of hiring systems that don't send one, run `applied <role>`.
+- **Unclear emails:** if an email doesn't clearly match one role, you're asked instead of the agent guessing.
+- **What's kept:** only facts (role, status, date, link), never email content. See `PRIVACY.md`.
+
+**3. Following each application:** applied → confirmed → in review → interviewing → offer / rejected / silent (no news for 21 days). Interviews, offers and rejections are added to your summary. `story <role>` shows a role's outreach and application together.
+
+```bash
+docker compose exec api python -m app.cli apply                      # your apply list, links live-checked
+docker compose exec api python -m app.cli applied <role id> "note"   # mark applied (no confirmation email)
+docker compose exec api python -m app.cli apply-skip <role id> "not for me"
+docker compose exec api python -m app.cli applications               # where each one stands
+docker compose exec api python -m app.cli story <role id>            # outreach + application, one timeline
+docker compose exec api python -m app.cli track                      # run the tracker now (it runs every 30 min)
+```
+
+API: `GET /api/apply-list` · `GET /api/applications` · `POST /api/applications/{role}/applied` · `POST /api/applications/{role}/skip` · `GET /api/roles/{role}/story`.
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

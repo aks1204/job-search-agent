@@ -1,4 +1,5 @@
 # Import every model here so Alembic sees the full metadata.
+from app.models.application import Application, ApplicationEvent, InboxMessage
 from app.models.assessment import ExchangeFactor, JobAssessment
 from app.models.audit import AuditLog
 from app.models.company import Company, CompanySighting, ContactLead
@@ -15,7 +16,7 @@ from app.models.scout import ScoutRun, ScoutState
 from app.models.verdict import CompanyFact, CompanyVerdict
 
 __all__ = [
-    "AuditLog", "Bench", "BenchMember", "Company", "CompanyFact", "CompanyFeed", "CompanySighting", "CompanyVerdict", "Contact", "ContactEmail",
+    "Application", "ApplicationEvent", "AuditLog", "Bench", "BenchMember", "Company", "CompanyFact", "CompanyFeed", "CompanySighting", "CompanyVerdict", "Contact", "ContactEmail",
     "ContactLead", "DraftEdit", "EnrichmentLookup", "MailAccount", "OutreachCampaign", "OutreachEmail", "SendBreaker", "MailDomain", "OutreachDraft", "RoleChannel",
-    "ExchangeFactor", "JobAssessment", "JobCluster", "JobFeedback", "JobPosting", "JobScore", "LLMCall", "MemoryEntry", "Notification", "RawPosting", "ScoutRun", "ScoutState",
+    "ExchangeFactor", "InboxMessage", "JobAssessment", "JobCluster", "JobFeedback", "JobPosting", "JobScore", "LLMCall", "MemoryEntry", "Notification", "RawPosting", "ScoutRun", "ScoutState",
 ]

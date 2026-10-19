@@ -1,0 +1,21 @@
+# Module 4: apply tracker. Read-only in the dashboard: edit this file, then `docker compose restart`.
+# The agent never fills in application forms: you apply; it gives you the links and keeps track.
+
+# Roles that go on your apply list (a reminder until you apply / skip / the posting closes):
+# these bands, plus any role you mark `act`. Applying to ANY other role is still noticed and tracked.
+apply_bands: ["fast_lane"]
+full_card_days: 3          # a pending link shows as a full card for 3 days, then folds into "still pending (N)"
+link_check_hours: 24       # each apply link is checked to still work at least this often
+
+# Owner decision (2026-10-19): the agent may read hiring-system emails to mark roles Applied and follow
+# their status. Only mail FROM these senders, or from companies you're tracking, in the last N days.
+inbox_scan: true
+lookback_days: 60
+scan_per_run: 40
+silent_after_days: 21      # applied and nothing heard for this long → "silent"
+ats_senders: ["myworkday.com", "myworkdayjobs.com", "greenhouse.io", "greenhouse-mail.io", "lever.co",
+              "hire.lever.co", "ashbyhq.com", "smartrecruiters.com", "workablemail.com", "workable.com",
+              "icims.com", "taleo.net", "oraclecloud.com", "successfactors.com", "successfactors.eu",
+              "eightfold.ai", "jobvite.com", "phenompeople.com", "avature.net", "darwinbox.in", "keka.com",
+              "zohorecruit.com", "zohorecruit.in", "freshteam.com", "bamboohr.com", "teamtailor.com",
+              "recruitee.com", "breezy.hr"]
