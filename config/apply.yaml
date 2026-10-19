@@ -13,6 +13,11 @@ inbox_scan: true
 lookback_days: 60
 scan_per_run: 40
 silent_after_days: 21      # applied and nothing heard for this long → "silent"
+
+# Owner decision (2026-10-19): applications to jobs NOT on the agent's list are tracked too ("outside
+# applications"), but only from this date. Emails before it are old applications and are ignored.
+# A company you apply to that the agent doesn't know is handed to Module 1 and judged by the usual rules.
+track_outside_since: "2026-10-20"
 ats_senders: ["myworkday.com", "myworkdayjobs.com", "greenhouse.io", "greenhouse-mail.io", "lever.co",
               "hire.lever.co", "ashbyhq.com", "smartrecruiters.com", "workablemail.com", "workable.com",
               "icims.com", "taleo.net", "oraclecloud.com", "successfactors.com", "successfactors.eu",

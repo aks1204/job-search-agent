@@ -43,6 +43,7 @@
     python -m app.cli applications [--status S]                  # Module 4: where each application stands
     python -m app.cli story <cluster_id>                         # one role's whole story
     python -m app.cli track                                      # Module 4: run the tracker now
+    python -m app.cli assign <no> [<role id> | --other "Job title" | --ignore]   # Module 4: which role an email is about
 """
 
 import argparse
@@ -1150,7 +1151,8 @@ def applications_cmd(status: str | None) -> int:
             print("No applications tracked yet.")
         for app, cluster, company in rows:
             extra = f" · applied {app.applied_at:%d %b} ({app.applied_how})" if app.applied_at else ""
-            print(f"[{cluster.id}] {app.status.upper():<12} {company.name}: {cluster.title}{extra}")
+            tag = " (outside application)" if app.outside else ""
+            print(f"[{cluster.id}] {app.status.upper():<12} {company.name}: {cluster.title}{tag}{extra}")
             if app.receipt_link:
                 print(f"     receipt: {app.receipt_link}")
     return 0
@@ -1180,6 +1182,21 @@ def track_cmd() -> int:
 
     print("Updating your apply list, checking links, reading hiring-system emails…")
     _print_counts(run_tracking())
+    return 0
+
+
+def assign_cmd(no: int, cluster_id: int | None, other: str | None, ignore: bool) -> int:
+    from app.db import session_scope
+    from app.modules.m4_apply.inbox import AssignError, assign
+
+    with session_scope() as s:
+        try:
+            outcome = assign(s, no, cluster_id=cluster_id, other_title=other, ignore=ignore)
+        except AssignError as e:
+            print(e)
+            return 1
+        print("Ignored." if outcome == "ignored" else
+              f"Done: the email's news was recorded on {'role ' + str(cluster_id) if cluster_id else repr(other)}.")
     return 0
 
 
@@ -1299,6 +1316,11 @@ def main() -> None:
     p_st = sub.add_parser("story", help="one role's whole story: outreach + application")
     p_st.add_argument("cluster_id", type=int)
     sub.add_parser("track", help="Module 4: update the apply list, links and hiring-system emails now")
+    p_sg = sub.add_parser("assign", help="Module 4: answer 'which role is this email about?' (number from `pings`)")
+    p_sg.add_argument("no", type=int, help="the email's number, shown in the question")
+    p_sg.add_argument("cluster_id", type=int, nargs="?", help="the role it's about")
+    p_sg.add_argument("--other", help="a job not in the list (tracked as an outside application)")
+    p_sg.add_argument("--ignore", action="store_true", help="not about any of your applications")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -1393,6 +1415,8 @@ def main() -> None:
         sys.exit(story_cmd(args.cluster_id))
     if args.command == "track":
         sys.exit(track_cmd())
+    if args.command == "assign":
+        sys.exit(assign_cmd(args.no, args.cluster_id, args.other, args.ignore))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

@@ -549,6 +549,8 @@ class ApplyConfig(Strict):
     lookback_days: int = Field(60, ge=1, le=365)
     scan_per_run: int = Field(40, ge=1, le=500)
     silent_after_days: int = Field(21, ge=1)        # applied and nothing heard this long = silent
+    # Applications you make outside the agent's list are tracked from this date on (older ones are ignored).
+    track_outside_since: date | None = None
     # Where hiring-system emails come from (sender domains). Mail from the companies you're tracking is read too.
     ats_senders: list[str] = Field(default_factory=lambda: [
         "myworkday.com", "myworkdayjobs.com", "greenhouse.io", "greenhouse-mail.io", "lever.co", "hire.lever.co",

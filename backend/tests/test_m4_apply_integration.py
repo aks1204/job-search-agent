@@ -18,6 +18,23 @@ pytestmark = pytest.mark.integration
 DOMAIN = "m4apply-test.io"
 
 
+@pytest.fixture(autouse=True)
+def outside_since(monkeypatch):
+    """By default every test email counts as a PAST application (the start date is tomorrow); tests about
+    outside applications move the start date into the past."""
+    from app.config_loader import get_config
+
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=2)).date()  # safely after "now" in any time zone
+    monkeypatch.setattr(get_config().apply, "track_outside_since", tomorrow)
+    return monkeypatch
+
+
+def _from_yesterday(monkeypatch):
+    from app.config_loader import get_config
+
+    monkeypatch.setattr(get_config().apply, "track_outside_since", (datetime.now(timezone.utc) - timedelta(days=1)).date())
+
+
 @pytest.fixture
 def roles(db_session):
     """Two roles at one company: a Data Analyst (two openings, fast lane) and a Product Analyst (not pursued)."""
@@ -55,10 +72,11 @@ def _mine(db_session, cluster_id):
     return db_session.scalars(select(Application).where(Application.cluster_id == cluster_id)).one_or_none()
 
 
-def _mail(mid, subject, kind, *, job_id="", title="", sender="Apply Co <noreply@myworkday.com>", days_ago=0):
+def _mail(mid, subject, kind, *, job_id="", title="", sender="Apply Co <noreply@myworkday.com>", days_ago=0,
+          company="Apply Co"):
     m = {"id": mid, "thread_id": f"t-{mid}", "from": sender, "subject": subject, "snippet": subject,
          "internal_ms": int((datetime.now(timezone.utc) - timedelta(days=days_ago)).timestamp() * 1000)}
-    read = I.AtsRead(about_application=True, kind=kind, company="Apply Co", job_title=title, job_id=job_id,
+    read = I.AtsRead(about_application=True, kind=kind, company=company, job_title=title, job_id=job_id,
                      summary=subject, confidence=0.95)
     return m, read
 
@@ -155,3 +173,87 @@ def test_a_job_the_agent_doesnt_know_is_recorded_quietly_not_asked(db_session, r
     assert _mine(db_session, data).status == "applied"                       # not pinned on the one it knows
     assert not db_session.scalars(select(Notification).where(Notification.title.like(f"{company.name}: which role%"))).all()
     assert db_session.get(InboxMessage, "m6").outcome == "not_tracked"
+
+
+# --- outside applications (from the start date on) ----------------------------------------------------
+
+def test_a_new_application_to_a_job_the_agent_doesnt_know_becomes_an_outside_application(db_session, roles, monkeypatch):
+    company, _, _ = roles
+    _from_yesterday(monkeypatch)
+    m, read = _mail("o1", "Thanks for applying: Marketing Analyst", "received", title="Marketing Analyst")
+    assert I.handle(db_session, m, read) == "matched"
+    app = db_session.get(Application, db_session.get(InboxMessage, "o1").application_id)
+    assert app.outside and app.status == "confirmed" and app.company_id == company.id
+    # its later news follows it, matched by title
+    m, read = _mail("o2", "Interview: Marketing Analyst", "interview", title="Marketing Analyst")
+    I.handle(db_session, m, read)
+    assert app.status == "interviewing"
+
+
+def test_a_company_the_agent_doesnt_know_goes_to_module_1_and_is_tracked(db_session, monkeypatch):
+    from app.models import CompanySighting
+
+    _from_yesterday(monkeypatch)
+    m, read = _mail("o3", "Application received", "received", title="Data Scientist", company="Brandnew Quanta Labs",
+                    sender="Brandnew Quanta Labs <no-reply@brandnew-quanta-test.io>")
+    assert I.handle(db_session, m, read) == "matched"
+    sighting = db_session.scalars(select(CompanySighting).where(CompanySighting.scout == "applied",
+                                                                CompanySighting.external_id == "brandnew-quanta-test.io")).one()
+    company = db_session.get(Company, sighting.company_id)
+    assert company.domain == "brandnew-quanta-test.io" and company.status == "candidate"   # judged like any other
+    app = db_session.scalars(select(Application).where(Application.company_id == company.id)).one()
+    assert app.outside and app.status == "confirmed"
+
+
+def test_an_unmatched_interview_is_put_to_you_and_your_answer_tracks_it(db_session, roles, monkeypatch):
+    company, _, _ = roles
+    _from_yesterday(monkeypatch)
+    m, read = _mail("o4", "Let's schedule your interview", "interview")          # no title, nothing live there
+    assert I.handle(db_session, m, read) == "ambiguous"
+    row = db_session.get(InboxMessage, "o4")
+    ask = db_session.scalars(select(Notification).where(Notification.subject_type == "inbox",
+                                                        Notification.subject_id == str(row.no))).one()
+    assert "--other" in ask.detail and "--ignore" in ask.detail
+    assert I.assign(db_session, row.no, other_title="Strategy Analyst") == "assigned"
+    app = db_session.get(Application, row.application_id)
+    assert app.outside and app.status == "interviewing" and ask.read_at is not None
+
+
+def test_your_pick_among_several_roles_gets_the_emails_news(db_session, roles):
+    _, data, product = roles
+    T.mark_applied(db_session, data)
+    T.mark_applied(db_session, product)
+    m, read = _mail("o5", "Update on your application", "rejection")
+    assert I.handle(db_session, m, read) == "ambiguous"
+    row = db_session.get(InboxMessage, "o5")
+    assert sorted(row.candidates) == sorted([data, product])
+    I.assign(db_session, row.no, cluster_id=product)
+    assert _mine(db_session, product).status == "rejected" and _mine(db_session, data).status == "applied"
+    with pytest.raises(I.AssignError):
+        I.assign(db_session, row.no, ignore=True)                                  # already answered
+
+
+def test_an_unmatched_rejection_from_the_start_date_on_is_still_quiet(db_session, roles, monkeypatch):
+    company, _, _ = roles
+    _from_yesterday(monkeypatch)
+    m, read = _mail("o6", "Unfortunately we won't be moving forward", "rejection")
+    assert I.handle(db_session, m, read) == "not_tracked"
+    assert not db_session.scalars(select(Notification).where(Notification.subject_type == "inbox")).all() or \
+        all(n.subject_id != str(db_session.get(InboxMessage, "o6").no)
+            for n in db_session.scalars(select(Notification).where(Notification.subject_type == "inbox")).all())
+
+
+def test_a_role_not_named_gets_its_name_later_instead_of_a_duplicate(db_session, roles, monkeypatch):
+    company, _, _ = roles
+    _from_yesterday(monkeypatch)
+    m, read = _mail("o7", "We received your application", "received")                  # no job named
+    I.handle(db_session, m, read)
+    first = db_session.get(Application, db_session.get(InboxMessage, "o7").application_id)
+    assert first.outside and first.status == "confirmed"
+    m, read = _mail("o8", "Interview: Marketing Analyst", "interview", title="Marketing Analyst")
+    I.handle(db_session, m, read)
+    outside = db_session.scalars(select(Application).where(Application.company_id == company.id,
+                                                           Application.outside.is_(True))).all()
+    assert len(outside) == 1 and outside[0].status == "interviewing"                # one application, now named
+    from app.models import JobCluster
+    assert db_session.get(JobCluster, outside[0].cluster_id).title == "Marketing Analyst"

@@ -407,6 +407,14 @@ API: `GET /api/gmail/connect` · `GET /api/gmail/status` · `GET /api/campaigns`
 - **Unclear emails:** if an email doesn't clearly match one role, you're asked instead of the agent guessing.
 - **What's kept:** only facts (role, status, date, link), never email content. See `PRIVACY.md`.
 
+**Outside applications.** From the date set in `track_outside_since` (in `config/apply.yaml`), applying to a job the agent doesn't know is tracked too. The company and job title are taken from the email, and the entry is labelled "outside application". Emails from before that date are past applications and are ignored.
+- **A company the agent doesn't know** is handed to Module 1 ("you applied here") and judged by the usual rules. If it passes, its job board is watched and its matching roles reach your shortlist.
+- **An email that doesn't name the job:**
+  - **a receipt** is recorded as "role not named";
+  - **an interview or offer** that matches nothing is put to you;
+  - **other news** (rejection, in review) that matches nothing is recorded quietly.
+- **Answering "which role?":** use `assign <no> <role>`, `assign <no> --other "Job title"` or `assign <no> --ignore`. In the dashboard these will be buttons.
+
 **3. Following each application:** applied → confirmed → in review → interviewing → offer / rejected / silent (no news for 21 days). Interviews, offers and rejections are added to your summary. `story <role>` shows a role's outreach and application together.
 
 ```bash

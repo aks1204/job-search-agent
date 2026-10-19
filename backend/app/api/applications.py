@@ -14,7 +14,7 @@ router = APIRouter()
 
 def _app_out(app: Application, cluster: JobCluster, company: Company) -> dict:
     return {"cluster_id": cluster.id, "company": company.name, "title": cluster.title, "status": app.status,
-            "on_list": app.on_list, "links": app.links, "links_checked_at": app.links_checked_at,
+            "on_list": app.on_list, "outside": app.outside, "links": app.links, "links_checked_at": app.links_checked_at,
             "queued_at": app.queued_at, "applied_at": app.applied_at, "applied_how": app.applied_how,
             "receipt_link": app.receipt_link, "status_at": app.status_at, "note": app.note}
 
@@ -60,3 +60,21 @@ def skip(cluster_id: int, body: NoteIn | None = None, session: Session = Depends
 @router.get("/roles/{cluster_id}/story")
 def role_story(cluster_id: int, session: Session = Depends(get_session)) -> list[dict]:
     return [{"at": at, "kind": kind, "text": text} for at, kind, text in T.story(session, cluster_id)]
+
+
+class AssignIn(BaseModel):
+    cluster_id: int | None = None
+    other_title: str | None = None
+    ignore: bool = False
+
+
+@router.post("/inbox/{no}/assign")
+def assign_email(no: int, body: AssignIn, session: Session = Depends(get_session)) -> dict:
+    """The dashboard's buttons for "which role is this email about?": a role, Another role…, or Ignore."""
+    from app.modules.m4_apply.inbox import AssignError, assign
+
+    try:
+        outcome = assign(session, no, cluster_id=body.cluster_id, other_title=body.other_title, ignore=body.ignore)
+    except AssignError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"no": no, "outcome": outcome}
