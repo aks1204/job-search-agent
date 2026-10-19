@@ -165,3 +165,23 @@ def thread(session: Session, thread_id: str) -> list[dict]:
                     "date": headers.get("date", ""), "snippet": m.get("snippet", ""),
                     "sent_by_me": "SENT" in (m.get("labelIds") or [])})
     return out
+
+
+def _walk_text(part: dict) -> str:
+    if part.get("mimeType") == "text/plain" and (part.get("body") or {}).get("data"):
+        data = part["body"]["data"]
+        return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode("utf-8", "replace")
+    for sub in part.get("parts") or []:
+        if text := _walk_text(sub):
+            return text
+    return ""
+
+
+def message_text(session: Session, message_id: str) -> str:
+    """Plain text of one message in a thread the app started (for sorting a reply)."""
+    data = _api(session, "GET", f"/messages/{message_id}", params={"format": "full"})
+    return _walk_text(data.get("payload") or {})
+
+
+def thread_link(thread_id: str) -> str:
+    return f"https://mail.google.com/mail/#all/{thread_id}"

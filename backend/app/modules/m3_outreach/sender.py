@@ -28,12 +28,11 @@ from app.core import audit
 from app.core.http import PoliteClient
 from app.core.redis_client import get_redis
 from app.db import session_scope
-from app.models.company import Company
 from app.models.contact import Contact, ContactEmail, MailDomain, RoleChannel
 from app.models.outreach import OutreachCampaign, OutreachEmail, SendBreaker
 from app.modules.m2_jobs.profile_text import resume_path
 from app.modules.m3_outreach import gmail
-from app.modules.m3_outreach.campaigns import SENDABLE_CONFIDENCE, emails, render_email, stop_company
+from app.modules.m3_outreach.campaigns import SENDABLE_CONFIDENCE, emails, render_email
 from app.modules.m3_outreach.template import load_template
 from app.modules.m3_outreach.verify import verify_candidates
 
@@ -208,6 +207,11 @@ def send_tick(*, now: datetime | None = None, sender=gmail.send) -> dict:
             if _sent_since(s, day, c.company_id) >= rules.per_company_per_day:
                 continue
             contact = s.get(Contact, e.contact_id) if e.contact_id else None
+            if contact is not None and contact.away_until and contact.away_until > now:
+                continue  # out of office: their email waits until they're back
+            if contact is not None and contact.status != "active":
+                e.status, e.status_reason = "cancelled", f"contact is {contact.status}"
+                continue
             if in_quiet_hours(now, recipient_tz(contact)):
                 continue
             if e.wave > 0 and not _company_silent(s, c):
@@ -229,37 +233,27 @@ def send_tick(*, now: datetime | None = None, sender=gmail.send) -> dict:
 
 # --- replies, bounces, delivery ---------------------------------------------------------------------
 
-def check_thread(session: Session, e: OutreachEmail, *, reader=gmail.thread) -> str | None:
-    """Look at one thread the app started. Returns 'bounce' / 'reply' when something new happened."""
+def check_thread(session: Session, e: OutreachEmail, *, reader=gmail.thread, classifier=None) -> str | None:
+    """Look at one thread the app started; act on every message not seen before (Part 3d sorts replies).
+    Returns 'bounce' / 'reply' when something new happened."""
+    from app.modules.m3_outreach import replies
+
+    classifier = classifier or replies.default_classifier
     msgs = reader(session, e.gmail_thread_id)
     e.last_checked_at = _now()
+    outcome = None
     for m in msgs:
-        if m["sent_by_me"] or m["id"] == e.gmail_message_id:
+        if m["sent_by_me"] or m["id"] == e.gmail_message_id or m["id"] in (e.handled_ids or []):
             continue
+        e.handled_ids = [*(e.handled_ids or []), m["id"]]
         if BOUNCE_FROM.search(m["from"]) or BOUNCE_SUBJECT.search(m["subject"]):
             if e.bounced_at is None:
                 handle_bounce(session, e, m)
-                return "bounce"
+                outcome = outcome or "bounce"
             continue
-        if e.replied_at is None:
-            handle_reply(session, e, m)
-            return "reply"
-    return None
-
-
-def handle_reply(session: Session, e: OutreachEmail, m: dict) -> None:
-    e.replied_at = _now()
-    if e.address_id and (row := session.get(ContactEmail, e.address_id)):
-        row.replied_count += 1
-        row.confidence = "proven"
-    c = session.get(OutreachCampaign, e.campaign_id)
-    company = session.get(Company, c.company_id)
-    held = stop_company(session, c.company_id, f"{m['from']} replied: read it in Gmail, then resume or stop",
-                        pause=True)
-    audit.record(session, "m3", "reply_received",
-                 f"{company.name}: a reply from {m['from']} (“{m['snippet'][:120]}”). {held} unsent email(s) held.",
-                 subject_type="campaign", subject_id=str(c.id), is_judgment=False,
-                 detail={"from": m["from"], "subject": m["subject"], "thread_id": e.gmail_thread_id})
+        replies.handle_reply(session, e, m, classifier(session, e, m))
+        outcome = outcome or "reply"
+    return outcome
 
 
 def handle_bounce(session: Session, e: OutreachEmail, m: dict) -> None:
@@ -359,4 +353,7 @@ def mail_check(*, limit: int = 120, reader=gmail.thread) -> dict:
                     row.delivered_count += 1
                     row.confidence = "proven"
                 counts["delivered"] += 1
+        from app.modules.m3_outreach.replies import stamp_silence
+
+        counts["silent"] = stamp_silence(s, now)
     return counts

@@ -42,6 +42,10 @@ class OutreachCampaign(Base):
     status_reason: Mapped[str | None] = mapped_column(Text)
     armed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Part 3d: how it ended, for the reopening matrix and pipeline: interested | question | rejected |
+    # redirected | silent | stopped
+    outcome: Mapped[str | None] = mapped_column(String(12))
+    outcome_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -71,6 +75,12 @@ class OutreachEmail(Base):
     sent_subject: Mapped[str | None] = mapped_column(Text)
     sent_body: Mapped[str | None] = mapped_column(Text)               # audit: exactly what went out
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Part 3d: what the reply was (interested | question | rejection | ooo | redirect | auto_other | unsure)
+    reply_category: Mapped[str | None] = mapped_column(String(12))
+    reply_summary: Mapped[str | None] = mapped_column(Text)
+    reply_from: Mapped[str | None] = mapped_column(String(320))
+    auto_reply_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # out-of-office etc.
+    handled_ids: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))  # Gmail message ids seen
     bounced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     delivered_counted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

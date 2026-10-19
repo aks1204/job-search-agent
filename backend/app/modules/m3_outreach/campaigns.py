@@ -127,8 +127,11 @@ def _editable(campaign: OutreachCampaign) -> None:
 
 def decide(session: Session, campaign: OutreachCampaign, email: OutreachEmail, action: str, *,
            allow_low: bool = False) -> None:
-    """Approve or skip one email. Low-confidence addresses need allow_low (your explicit go-ahead)."""
-    _editable(campaign)
+    """Approve or skip one email. Low-confidence addresses need allow_low (your explicit go-ahead).
+    In a campaign already under way, only newly added emails (e.g. the person a redirect named) can be decided."""
+    late = campaign.status in ("scheduled", "running") and email.decision == "pending"
+    if not late:
+        _editable(campaign)
     if action == "approve":
         if email.confidence == "invalid":
             raise ReviewError(f"the mail server says {email.to_email} doesn't exist; it can't be approved")
@@ -143,7 +146,8 @@ def decide(session: Session, campaign: OutreachCampaign, email: OutreachEmail, a
         raise ReviewError("action must be approve or skip")
     audit.record(session, "m3", f"email_{action}", f"You chose {action} for {email.to_email} (campaign {campaign.id})",
                  subject_type="campaign", subject_id=str(campaign.id))
-    _maybe_arm(session, campaign)
+    if not late:  # a late addition just joins its wave; the campaign's schedule stays as it is
+        _maybe_arm(session, campaign)
 
 
 def _maybe_arm(session: Session, campaign: OutreachCampaign) -> None:
@@ -202,7 +206,8 @@ def import_text(text: str) -> tuple[str, str]:
     return subject, body
 
 
-def stop_company(session: Session, company_id: int, reason: str, *, pause: bool = False) -> int:
+def stop_company(session: Session, company_id: int, reason: str, *, pause: bool = False,
+                 outcome: str | None = None) -> int:
     """Kill-switch: cancel (or, with pause, hold) every unsent email to this company, even approved ones."""
     n = 0
     for c in session.scalars(select(OutreachCampaign).where(OutreachCampaign.company_id == company_id,
@@ -216,6 +221,8 @@ def stop_company(session: Session, company_id: int, reason: str, *, pause: bool 
                 e.status, e.status_reason = "cancelled", reason
                 n += 1
         c.status, c.status_reason, c.ended_at = "cancelled", reason, _now()
+        if outcome and not c.outcome:
+            c.outcome, c.outcome_at = outcome, _now()
     return n
 
 

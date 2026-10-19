@@ -15,6 +15,7 @@ from app.modules.m1_companies.candidate import Candidate
 from app.modules.m1_companies.identity import intake as company_intake
 from app.modules.m2_jobs.pipeline import intake
 from app.modules.m3_outreach import campaigns as C
+from app.modules.m3_outreach import replies as R
 from app.modules.m3_outreach import sender as S
 from app.modules.m3_outreach.drafting import style_examples
 
@@ -119,7 +120,9 @@ def test_waves_send_day_zero_first_and_a_reply_holds_the_company(db_session, cam
 
     reply = [{"id": "r1", "from": f"Asha Rao <asha.rao@{DOMAIN}>", "subject": "Re: Application",
               "date": "", "snippet": "Thanks, let's talk", "sent_by_me": False}]
-    assert S.check_thread(db_session, e, reader=lambda s, t: reply) == "reply"
+    unsure = R.ReplyRead(category="unsure", confidence=0.3, summary="Thanks, let's talk", back_on="",
+                         referred_name="", referred_email="", referred_title="")
+    assert S.check_thread(db_session, e, reader=lambda s, t: reply, classifier=lambda s, x, m: unsure) == "reply"
     assert c.status == "paused" and S.next_candidates(db_session, NOON_IST) == []   # nothing more goes out
     assert db_session.get(ContactEmail, e.address_id).confidence == "proven"
     C.resume_company(db_session, c.company_id)
@@ -148,3 +151,81 @@ def test_bounces_trip_the_breaker_and_distrust_the_guessed_pattern(db_session, c
     assert S.check_thread(db_session, es[1], reader=lambda s, t: bounce) == "bounce"
     assert b.state == "tripped" and db_session.get(MailDomain, DOMAIN).pattern_distrusted
     assert db_session.get(ContactEmail, es[0].address_id).confidence == "invalid"
+
+
+# --- Part 3d: replies ------------------------------------------------------------------------------
+
+def _read(category, **kw):
+    base = dict(confidence=0.95, summary="s", back_on="", referred_name="", referred_email="", referred_title="")
+    return R.ReplyRead(category=category, **{**base, **kw})
+
+
+def _sent_first(db_session, campaign):
+    _approve_all(db_session, campaign)
+    campaign.armed_at = NOON_IST
+    e, c = S.next_candidates(db_session, NOON_IST)[0]
+    S.send_one(db_session, e, c, sender=FakeGmail())
+    return e, c
+
+
+def _msg(mid="r1", sender="Asha Rao <asha.rao@m3send-test.io>"):
+    return [{"id": mid, "from": sender, "subject": "Re: Application", "date": "", "snippet": "…", "sent_by_me": False}]
+
+
+def test_interested_reply_cancels_the_rest_and_pings_you(db_session, campaign):
+    from app.models import Notification
+
+    e, c = _sent_first(db_session, campaign)
+    S.check_thread(db_session, e, reader=lambda s, t: _msg(), classifier=lambda s, x, m: _read("interested"))
+    assert c.status == "cancelled" and c.outcome == "interested"
+    assert all(x.status != "queued" for x in C.emails(db_session, c))       # even approved ones
+    ping = db_session.scalars(select(Notification).where(Notification.subject_id == str(c.id))).one()
+    assert ping.kind == "ping" and ping.link.endswith(e.gmail_thread_id)
+    # the same message is never acted on twice
+    assert S.check_thread(db_session, e, reader=lambda s, t: _msg(), classifier=lambda s, x, m: pytest.fail()) is None
+
+
+def test_out_of_office_doesnt_cancel_and_waits_for_their_return(db_session, campaign):
+    e, c = _sent_first(db_session, campaign)
+    S.check_thread(db_session, e, reader=lambda s, t: _msg(), classifier=lambda s, x, m: _read("ooo", back_on="2026-10-26"))
+    assert c.status == "running" and e.reply_category == "ooo" and e.replied_at is None
+    assert db_session.get(Contact, e.contact_id).away_until.date().isoformat() == "2026-10-27"
+
+
+def test_redirect_doesnt_cancel_and_queues_the_named_person_for_your_approval(db_session, campaign, monkeypatch):
+    monkeypatch.setattr(R, "verify_candidates", lambda session, http, rows, **k: setattr(rows[0], "confidence", "verified"))
+    e, c = _sent_first(db_session, campaign)
+    read = _read("redirect", referred_name="Meena Joshi", referred_email=f"meena.joshi@{DOMAIN}", referred_title="TA Lead")
+    S.check_thread(db_session, e, reader=lambda s, t: _msg(), classifier=lambda s, x, m: read)
+    assert c.status == "running" and db_session.get(Contact, e.contact_id).status == "wrong_person"
+    new = [x for x in C.emails(db_session, c) if x.to_email == f"meena.joshi@{DOMAIN}"][0]
+    assert new.decision == "pending" and new.wave in (1, 2)                  # the next wave, not one already sent
+    C.decide(db_session, c, new, "approve")                                  # you approve it; schedule unchanged
+    assert new.decision == "approved" and c.status == "running" and c.armed_at == NOON_IST
+
+
+def test_silence_is_stamped_once_the_waves_are_over(db_session, campaign):
+    from app.models import Notification
+
+    e, c = _sent_first(db_session, campaign)
+    for x in C.emails(db_session, c):
+        if x.status == "queued":
+            x.status = "cancelled"
+    c.status = "done"
+    assert R.stamp_silence(db_session, now=e.sent_at + timedelta(days=8)) == 1
+    assert c.outcome == "silent"
+    n = db_session.scalars(select(Notification).where(Notification.subject_id == str(c.id))).one()
+    assert "follow up yourself" in n.detail
+
+
+def test_out_of_office_stand_in_is_suggested_for_your_approval_not_benched(db_session, campaign, monkeypatch):
+    monkeypatch.setattr(R, "verify_candidates", lambda session, http, rows, **k: setattr(rows[0], "confidence", "verified"))
+    e, c = _sent_first(db_session, campaign)
+    read = _read("ooo", back_on="2026-10-26", referred_name="Ravi Menon", referred_email=f"ravi.menon@{DOMAIN}")
+    S.check_thread(db_session, e, reader=lambda s, t: _msg(), classifier=lambda s, x, m: read)
+    assert c.status == "running" and db_session.get(Contact, e.contact_id).status == "active"   # just away
+    new = [x for x in C.emails(db_session, c) if x.to_email == f"ravi.menon@{DOMAIN}"][0]
+    assert new.decision == "pending"
+    stand_in = db_session.get(Contact, new.contact_id)
+    assert stand_in.kind == "other"                                          # never used for future benches
+    assert not db_session.scalars(select(BenchMember).where(BenchMember.contact_id == stand_in.id)).all()

@@ -40,6 +40,7 @@ class Contact(Base):
     status_reason: Mapped[str | None] = mapped_column(Text)
     snippet: Mapped[str | None] = mapped_column(Text)            # the public search snippet we judged from
     person_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    away_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # out-of-office: wait till back
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -525,10 +525,16 @@ class SendingRules(Strict):
     edit_examples: int = Field(5, ge=0, le=20)    # your recent edits shown to the AI as style examples
 
 
+class ReplyRules(Strict):
+    min_confidence: float = Field(0.75, ge=0, le=1)   # below this a reply counts as "unsure": shown to you raw
+    silent_after_days: int = Field(7, ge=1)          # waves done + no human reply this long = silent
+
+
 class OutreachConfig(Strict):
     contacts: ContactRules = Field(default_factory=ContactRules)
     drafts: DraftRules = Field(default_factory=DraftRules)
     sending: SendingRules = Field(default_factory=SendingRules)
+    replies: ReplyRules = Field(default_factory=ReplyRules)
 
 
 # --- llm.yaml ---------------------------------------------------------------

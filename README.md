@@ -364,9 +364,30 @@ docker compose exec api python -m app.cli outreach pause                  # stop
 docker compose exec api python -m app.cli outreach hold|release|stop <domain>
 ```
 
+#### Part 3d: replies
+
+The agent reads only the threads it started, and **never writes a reply or a follow-up**. Every 15 minutes, each new message is sorted by a cheap AI read (once per message). A read that's less than 75% sure counts as *unsure*.
+
+| Reply | What happens |
+|---|---|
+| Interested / forwarded / question / rejection | Every unsent email to that company is cancelled, even approved ones. You get an instant alert with the Gmail link. The conversation is yours. |
+| Out-of-office | Nothing is cancelled. That person's emails wait until they're back. If the reply names a stand-in ("contact X in my absence"), an email to X is suggested for your approval. |
+| "Not the right person" | Nothing is cancelled. That person is marked wrong-target. The person they name joins the bench at the front and gets an email in the next wave, after you approve it. |
+| Other automatic messages | Logged only. |
+| Unsure | The company is paused, and you see the raw email with no suggested action. Then run `outreach release` or `outreach stop`. |
+
+When the waves end and nobody has answered for 7 days, the campaign is marked **silent** and you're told once: "follow up yourself if you'd like".
+
+Campaign outcomes (interested, forwarded, question, rejected, silent, stopped) feed Module 4 and the pipeline. Alerts are kept for Module 6 (instant alerts plus the summary mail); until then, see them with:
+
+```bash
+docker compose exec api python -m app.cli pings            # what the agent wants you to know (--read marks them read)
+docker compose exec api python -m app.cli replies          # replies and how each was sorted
+```
+
 API: `GET /api/gmail/connect` · `GET /api/gmail/status` · `GET /api/campaigns` · `GET /api/campaigns/{id}` ·
 `POST /api/campaigns/{id}/emails/{email_id}` (`{"action": "approve"|"skip", "allow_low": false}`) ·
-`PUT /api/campaigns/{id}/text` (your edit).
+`PUT /api/campaigns/{id}/text` (your edit) · `GET/PUT /api/outreach/sending` · `GET /api/notifications` · `POST /api/notifications/{id}/read`.
 
 ## Configuration
 

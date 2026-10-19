@@ -131,3 +131,30 @@ def set_sending(body: SendingIn, session: Session = Depends(get_session)) -> dic
     S.set_paused(not body.on)
     audit.record(session, "m3", "sending_switch", f"You turned sending {'on' if body.on else 'off'}")
     return sending_state(session)
+
+
+@router.get("/notifications")
+def list_notifications(unread: bool = True, limit: int = Query(50, le=500),
+                       session: Session = Depends(get_session)) -> list[dict]:
+    """What the agent wants you to know (Module 6 turns these into pings and summary-mail cards)."""
+    from app.models import Notification
+
+    q = select(Notification).order_by(Notification.id.desc())
+    if unread:
+        q = q.where(Notification.read_at.is_(None))
+    return [{"id": n.id, "kind": n.kind, "section": n.section, "title": n.title, "detail": n.detail,
+             "link": n.link, "subject_type": n.subject_type, "subject_id": n.subject_id,
+             "created_at": n.created_at, "read_at": n.read_at} for n in session.scalars(q.limit(limit)).all()]
+
+
+@router.post("/notifications/{notification_id}/read")
+def read_notification(notification_id: int, session: Session = Depends(get_session)) -> dict:
+    from datetime import datetime, timezone
+
+    from app.models import Notification
+
+    n = session.get(Notification, notification_id)
+    if n is None:
+        raise HTTPException(404, "no such notification")
+    n.read_at = n.read_at or datetime.now(timezone.utc)
+    return {"id": n.id, "read_at": n.read_at}

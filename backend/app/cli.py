@@ -35,6 +35,8 @@
     python -m app.cli gmail connect|status|test                  # Module 3: your Gmail (Google sign-in)
     python -m app.cli review [show|approve|skip|export|import <campaign>] [--email N|--all] [--allow-low]
     python -m app.cli outreach status|pause|unpause|reset-breaker | hold|release|stop <domain>
+    python -m app.cli replies [--last N]                         # Module 3: replies and how they were sorted
+    python -m app.cli pings [--all] [--read]                     # what the agent wants you to know
 """
 
 import argparse
@@ -1019,8 +1021,59 @@ def outreach_cmd(action: str, domain: str | None) -> int:
         elif action == "release":
             print(f"{company.name}: {C.resume_company(s, company.id)} campaign(s) released.")
         elif action == "stop":
-            print(f"{company.name}: {C.stop_company(s, company.id, 'stopped by you')} unsent email(s) cancelled.")
+            print(f"{company.name}: {C.stop_company(s, company.id, 'stopped by you', outcome='stopped')} unsent email(s) cancelled.")
         return 0
+
+
+# --- Module 3 Part 3d: replies and notifications ------------------------------------------------
+
+def replies_cmd(last: int) -> int:
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company, OutreachCampaign, OutreachEmail
+    from app.modules.m3_outreach.gmail import thread_link
+
+    with session_scope() as s:
+        rows = s.execute(select(OutreachEmail, OutreachCampaign).join(
+            OutreachCampaign, OutreachCampaign.id == OutreachEmail.campaign_id)
+            .where(OutreachEmail.reply_category.is_not(None)).order_by(OutreachEmail.id.desc()).limit(last)).all()
+        if not rows:
+            print("No replies yet.")
+        for e, c in rows:
+            print(f"[{c.id}] {s.get(Company, c.company_id).name}: {e.reply_category.upper()} from {e.reply_from}")
+            print(f"     {e.reply_summary}")
+            print(f"     {thread_link(e.gmail_thread_id)}")
+    return 0
+
+
+def pings_cmd(all_: bool, mark_read: bool) -> int:
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Notification
+
+    with session_scope() as s:
+        q = select(Notification).order_by(Notification.id.desc()).limit(50)
+        if not all_:
+            q = q.where(Notification.read_at.is_(None))
+        rows = s.scalars(q).all()
+        if not rows:
+            print("Nothing new.")
+        for n in rows:
+            tag = {"ping": "PING", "needs_you": "NEEDS YOU", "update": "update"}.get(n.kind, n.kind)
+            print(f"{n.created_at:%d %b %H:%M} [{tag}] {n.title}")
+            if n.detail:
+                print(f"     {n.detail}")
+            if n.link:
+                print(f"     {n.link}")
+            if mark_read and n.read_at is None:
+                n.read_at = datetime.now(timezone.utc)
+        if mark_read and rows:
+            print(f"({len(rows)} marked as read)")
+    return 0
 
 
 def main() -> None:
@@ -1121,6 +1174,11 @@ def main() -> None:
     p_ou = sub.add_parser("outreach", help="Module 3: sending status; pause / unpause; hold / release / stop a company")
     p_ou.add_argument("action", choices=["status", "pause", "unpause", "hold", "release", "stop", "reset-breaker"])
     p_ou.add_argument("domain", nargs="?")
+    p_rp = sub.add_parser("replies", help="Module 3: replies to your outreach and how each was sorted")
+    p_rp.add_argument("--last", type=int, default=20)
+    p_pg = sub.add_parser("pings", help="what the agent wants you to know (unread first)")
+    p_pg.add_argument("--all", action="store_true", help="include ones already read")
+    p_pg.add_argument("--read", action="store_true", help="mark the shown ones as read")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -1199,6 +1257,10 @@ def main() -> None:
         sys.exit(review_cmd(args.action, args.campaign, args.email, args.all, args.allow_low))
     if args.command == "outreach":
         sys.exit(outreach_cmd(args.action, args.domain))
+    if args.command == "replies":
+        sys.exit(replies_cmd(args.last))
+    if args.command == "pings":
+        sys.exit(pings_cmd(args.all, args.read))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

@@ -83,3 +83,8 @@ sending:
   breaker_cooldown_hours: 6
   delivered_after_hours: 48
   edit_examples: 5              # your latest edits, shown to the AI as examples of your style
+
+# Part 3d: replies (only threads the agent started). The agent never answers or follows up.
+replies:
+  min_confidence: 0.75    # an AI read less sure than this is "unsure": the company is paused and you see the raw email
+  silent_after_days: 7    # waves finished and nobody answered for this long → "no responses — follow up yourself if you'd like"
