@@ -133,7 +133,7 @@ def test_an_old_rejected_application_doesnt_swallow_a_new_unclear_email(db_sessi
     T.mark_applied(db_session, data)
     T.set_status(db_session, _mine(db_session, data), "rejected", source="email")
     m, read = _mail("m5", "Update on your application", "in_review")   # no title, no job id
-    assert I.handle(db_session, m, read) == "ambiguous"                # you're asked; not pinned on the old one
+    assert I.handle(db_session, m, read) == "not_tracked"              # not pinned on the old one
     assert _mine(db_session, data).status == "rejected"
 
 
@@ -144,3 +144,14 @@ def test_emails_from_a_companys_other_mail_domain_are_searched(db_session, roles
     monkeypatch.setitem(get_config().outreach.contacts.mail_domains, DOMAIN, "mail-m4apply-test.io")
     q = I.build_query(db_session)
     assert "from:mail-m4apply-test.io" in q and "from:myworkday.com" in q
+
+
+def test_a_job_the_agent_doesnt_know_is_recorded_quietly_not_asked(db_session, roles):
+    company, data, _ = roles
+    T.mark_applied(db_session, data)
+    m, read = _mail("m6", "Senior Analyst I - Trial Analytics at Apply Co", "received",
+                    title="Senior Analyst I - Trial Analytics, Insights & Planning")
+    assert I.handle(db_session, m, read) == "not_tracked"
+    assert _mine(db_session, data).status == "applied"                       # not pinned on the one it knows
+    assert not db_session.scalars(select(Notification).where(Notification.title.like(f"{company.name}: which role%"))).all()
+    assert db_session.get(InboxMessage, "m6").outcome == "not_tracked"

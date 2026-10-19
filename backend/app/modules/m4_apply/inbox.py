@@ -96,7 +96,11 @@ def _company_for(session: Session, read: AtsRead, sender_domain: str | None) -> 
 
 
 def match_role(session: Session, read: AtsRead, sender_domain: str | None) -> tuple[str, int | None, Company | None]:
-    """('matched', cluster_id, company) | ('ambiguous', None, company) | ('unmatched', None, None)."""
+    """('matched', cluster_id, company) — one role it fits;
+    ('ambiguous', None, company)       — two or more of the roles the agent knows could fit: ask you;
+    ('not_tracked', None, company)     — the company is known but not this role (e.g. you applied before the
+                                         agent existed, or to a role its filters skipped): recorded quietly;
+    ('unmatched', None, None)          — not a company the agent knows."""
     company = _company_for(session, read, sender_domain)
     if company is None:
         return "unmatched", None, None
@@ -114,14 +118,22 @@ def match_role(session: Session, read: AtsRead, sender_domain: str | None) -> tu
             have = _tokens(j.title)
             if want and have:
                 scored[j.cluster_id] = max(scored.get(j.cluster_id, 0), len(want & have) / len(want))
-        ranked = sorted(scored.items(), key=lambda x: -x[1])
-        if ranked and ranked[0][1] >= 0.6 and (len(ranked) == 1 or ranked[0][1] > ranked[1][1]):
-            return "matched", ranked[0][0], company
-    open_apps = session.scalars(select(Application).where(Application.company_id == company.id,
-                                                          Application.status.not_in(("skipped", "closed", "rejected", "offer")))).all()
+        good = sorted((s, cid) for cid, s in scored.items() if s >= 0.6)
+        if not good:
+            return "not_tracked", None, company       # it names a job the agent doesn't know
+        if len(good) == 1 or good[-1][0] > good[-2][0]:
+            return "matched", good[-1][1], company
+        return "ambiguous", None, company
+    # No title or ID in the email: it can only be one of your live applications at that company.
+    open_apps = session.scalars(select(Application).where(
+        Application.company_id == company.id,
+        Application.status.not_in(("queued", "skipped", "closed", "rejected", "offer")))).all()
+    if not open_apps:
+        open_apps = session.scalars(select(Application).where(Application.company_id == company.id,
+                                                              Application.status == "queued")).all()
     if len(open_apps) == 1:
         return "matched", open_apps[0].cluster_id, company
-    return "ambiguous", None, company
+    return ("ambiguous" if open_apps else "not_tracked"), None, company
 
 
 def classify(session: Session, llm, m: dict, text: str) -> AtsRead:
