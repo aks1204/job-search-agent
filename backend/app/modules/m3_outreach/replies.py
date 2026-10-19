@@ -254,7 +254,7 @@ def _add_referred(session: Session, c: OutreachCampaign, read: ReplyRead, *,
                 m.rank += 1
             session.add(BenchMember(bench_id=bench.id, contact_id=contact.id, slot_kind="recruiting", rank=1,
                                     co_suspects=[]))
-    wave = min(((_now() - c.armed_at).days if c.armed_at else 0) + 1, 2)
+    wave = min(max(0, (_now() - c.armed_at).days if c.armed_at else 0) + 1, 2)
     # Front of the next wave: take the first queued slot at or after that wave; everyone after moves down one.
     later = [x for x in emails(session, c) if x.status == "queued" and x.wave >= wave]
     position = min((x.position for x in later), default=None)

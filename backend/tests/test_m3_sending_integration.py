@@ -21,7 +21,7 @@ from app.modules.m3_outreach.drafting import style_examples
 
 pytestmark = pytest.mark.integration
 DOMAIN = "m3send-test.io"
-NOON_IST = datetime(2026, 10, 19, 6, 30, tzinfo=timezone.utc)
+NOON_IST = datetime(2026, 1, 5, 6, 30, tzinfo=timezone.utc)  # a fixed day safely in the past: 12:00 in India
 
 
 @pytest.fixture
@@ -67,6 +67,12 @@ def campaign(db_session):
     return db_session.scalars(select(C.OutreachCampaign).where(C.OutreachCampaign.cluster_id == job.cluster_id)).one()
 
 
+
+def due_here(db_session, campaign, now):
+    """next_candidates, limited to this test's campaign (the database may also hold your real ones)."""
+    return [(e, c) for e, c in S.next_candidates(db_session, now) if c.id == campaign.id]
+
+
 class FakeGmail:
     def __init__(self):
         self.sent = []
@@ -110,7 +116,7 @@ def _approve_all(db_session, campaign):
 def test_waves_send_day_zero_first_and_a_reply_holds_the_company(db_session, campaign):
     _approve_all(db_session, campaign)
     campaign.armed_at = NOON_IST
-    due = S.next_candidates(db_session, NOON_IST)
+    due = due_here(db_session, campaign, NOON_IST)
     assert [e.to_name for e, _ in due] == ["Asha Rao", "Bala Iyer"]       # day 1 waits for tomorrow
     fake = FakeGmail()
     e, c = due[0]
@@ -123,7 +129,7 @@ def test_waves_send_day_zero_first_and_a_reply_holds_the_company(db_session, cam
     unsure = R.ReplyRead(category="unsure", confidence=0.3, summary="Thanks, let's talk", back_on="",
                          referred_name="", referred_email="", referred_title="")
     assert S.check_thread(db_session, e, reader=lambda s, t: reply, classifier=lambda s, x, m: unsure) == "reply"
-    assert c.status == "paused" and S.next_candidates(db_session, NOON_IST) == []   # nothing more goes out
+    assert c.status == "paused" and due_here(db_session, c, NOON_IST) == []   # nothing more goes out
     assert db_session.get(ContactEmail, e.address_id).confidence == "proven"
     C.resume_company(db_session, c.company_id)
     assert c.status == "running"
@@ -163,7 +169,7 @@ def _read(category, **kw):
 def _sent_first(db_session, campaign):
     _approve_all(db_session, campaign)
     campaign.armed_at = NOON_IST
-    e, c = S.next_candidates(db_session, NOON_IST)[0]
+    e, c = due_here(db_session, campaign, NOON_IST)[0]
     S.send_one(db_session, e, c, sender=FakeGmail())
     return e, c
 
@@ -212,7 +218,7 @@ def test_silence_is_stamped_once_the_waves_are_over(db_session, campaign):
         if x.status == "queued":
             x.status = "cancelled"
     c.status = "done"
-    assert R.stamp_silence(db_session, now=e.sent_at + timedelta(days=8)) == 1
+    assert R.stamp_silence(db_session, now=e.sent_at + timedelta(days=8)) >= 1
     assert c.outcome == "silent"
     n = db_session.scalars(select(Notification).where(Notification.subject_id == str(c.id))).one()
     assert "follow up yourself" in n.detail
