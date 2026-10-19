@@ -31,6 +31,8 @@ from app.models.company import Company
 from app.models.contact import Bench, BenchMember, Contact, ContactEmail, RoleChannel
 from app.models.outreach import OutreachCampaign, OutreachEmail
 from app.modules.m3_outreach import gmail
+from app.modules.m3_outreach.addresses import best_address, find_address
+from app.modules.m3_outreach.bench import company_class
 from app.modules.m3_outreach.campaigns import emails, stop_company
 from app.modules.m3_outreach.names import name_key, split_name
 from app.modules.m3_outreach.verify import verify_candidates
@@ -144,24 +146,25 @@ def handle_reply(session: Session, e: OutreachEmail, m: dict, read: ReplyRead) -
         if read.referred_name or read.referred_email:
             # "Contact X in my absence": X is suggested for this campaign only (often an assistant or a
             # colleague covering urgent matters), never auto-sent and not added to the bench.
-            added = _add_referred(session, c, read, to_bench=False)
+            added, how = _add_referred(session, c, read, to_bench=False)
             stand_in = read.referred_name or read.referred_email
-            detail = f"{who} is away until {back:%d %b} and named {stand_in} to contact meanwhile"
-            detail += (f"; an email to {added.to_email} is waiting for your approval (review {c.id}) — "
+            detail = f"{who} is away until {back:%d %b} and named {stand_in} to contact meanwhile. "
+            detail += (f"An email to them is waiting for your approval (review {c.id}; {how}) — "
                        "skip it if they're not involved in hiring." if added is not None
-                       else " (no usable address — add one with `add-contact` if you want to write to them).")
+                       else f"No email prepared: {how}. Add an address with `add-contact` if you want to write to them.")
             notify(session, "needs_you", "needs_you", f"{company.name}: out-of-office names a stand-in",
                    detail=detail, link=link, subject=("campaign", str(c.id)))
     elif cat == "redirect":
         e.replied_at = e.replied_at or now
         if contact is not None:
             contact.status, contact.status_reason = "wrong_person", f"said not the right person: {read.summary[:200]}"
-        added = _add_referred(session, c, read)
-        detail = read.summary + (f" They named {read.referred_name}" if read.referred_name else "")
+        added, how = (_add_referred(session, c, read) if (read.referred_name or read.referred_email)
+                      else (None, ""))
+        detail = read.summary + (f" They named {read.referred_name or read.referred_email}." if how else "")
         if added is not None:
-            detail += f"; an email to {added.to_email} is waiting for your approval (review {c.id})."
-        elif read.referred_name:
-            detail += " (no address given — add one with `add-contact` if you have it)."
+            detail += f" An email to them is waiting for your approval (review {c.id}; {how})."
+        elif how:
+            detail += f" No email prepared: {how}. Add an address with `add-contact` if you have one."
         notify(session, "ping", "needs_you" if added is not None else "happened",
                f"{company.name}: {who} says they're not the right person", detail=detail, link=link,
                subject=("campaign", str(c.id)))
@@ -186,33 +189,62 @@ def _parse_date(s: str) -> date | None:
         return None
 
 
-def _add_referred(session: Session, c: OutreachCampaign, read: ReplyRead, *, to_bench: bool = True) -> OutreachEmail | None:
+HOW_FOUND = {"published": "given in the reply", "manual": "added by you", "hunter": "found via Hunter",
+             "apollo": "found via Apollo", "constructed": "built from the company's address pattern"}
+
+
+def _new_contact(session: Session, c: OutreachCampaign, read: ReplyRead, parts, to_bench: bool) -> Contact:
+    contact = Contact(company_id=c.company_id, full_name=read.referred_name, name_key=name_key(read.referred_name),
+                      first_name=parts[0], last_name=parts[1], title=read.referred_title or None,
+                      kind="recruiting" if to_bench else "other", source="referral")  # stand-ins: not for benches
+    session.add(contact)
+    session.flush()
+    return contact
+
+
+def _add_referred(session: Session, c: OutreachCampaign, read: ReplyRead, *,
+                  to_bench: bool = True) -> tuple[OutreachEmail | None, str]:
     """The named person gets a pending email in the next wave (your approval needed); a redirect's right
-    person also joins the bench at the front."""
+    person also joins the bench at the front. With only a name, the address is looked up like any contact's
+    (Hunter → the company's pattern, checked with the mail server). Returns (email or None, how/why note)."""
     email = (read.referred_email or "").strip().lower()
     parts = split_name(read.referred_name) if read.referred_name else None
-    if not email or "@" not in email:
-        return None
-    existing = session.scalar(select(ContactEmail).where(ContactEmail.company_id == c.company_id,
-                                                         ContactEmail.email == email))
-    contact = session.get(Contact, existing.contact_id) if existing and existing.contact_id else None
-    if contact is None and parts:
-        contact = Contact(company_id=c.company_id, full_name=read.referred_name, name_key=name_key(read.referred_name),
-                          first_name=parts[0], last_name=parts[1], title=read.referred_title or None,
-                          kind="recruiting" if to_bench else "other", source="referral")  # stand-ins: not for benches
-        session.add(contact)
-        session.flush()
-    if existing is None:
-        existing = ContactEmail(company_id=c.company_id, contact_id=contact.id if contact else None, email=email,
-                                source="published", checks={"referred": True})
-        session.add(existing)
-        session.flush()
-        with PoliteClient() as http:
-            verify_candidates(session, http, [existing])
+    company = session.get(Company, c.company_id)
+    contact, existing = None, None
+    if email and "@" in email:
+        existing = session.scalar(select(ContactEmail).where(ContactEmail.company_id == c.company_id,
+                                                             ContactEmail.email == email))
+        contact = session.get(Contact, existing.contact_id) if existing and existing.contact_id else None
+        if contact is None and parts:
+            contact = _new_contact(session, c, read, parts, to_bench)
+        if existing is None:
+            existing = ContactEmail(company_id=c.company_id, contact_id=contact.id if contact else None, email=email,
+                                    source="published", checks={"referred": True})
+            session.add(existing)
+            session.flush()
+            with PoliteClient() as http:
+                verify_candidates(session, http, [existing])
+    elif parts:
+        same = session.scalars(select(Contact).where(Contact.company_id == c.company_id,
+                                                     Contact.name_key == name_key(read.referred_name),
+                                                     Contact.status != "departed")).all()
+        if len(same) > 1:  # can't tell which one they meant: never guess (spec: identity is never the name alone)
+            return None, f"there are {len(same)} people called {read.referred_name} at {company.name}, so no address was guessed"
+        contact = same[0] if same else _new_contact(session, c, read, parts, to_bench)
+        existing = best_address(session, contact)
+        if existing is None or existing.confidence == "invalid":
+            with PoliteClient() as http:
+                existing = find_address(session, http, contact, company, allow_enrich=True,
+                                        startup=company_class(session, company) == "startup")
+        if existing is None or existing.confidence == "invalid":
+            return None, f"no working address could be found for {read.referred_name}"
+        email = existing.email
+    else:
+        return None, "no name or address was given"
     if existing.confidence == "invalid":
-        return None
+        return None, f"the mail server says {email} doesn't exist"
     if any(x.to_email == email for x in emails(session, c)):
-        return None
+        return None, f"{email} is already in this campaign"
     channel = session.get(RoleChannel, c.cluster_id)
     if to_bench and contact is not None and channel is not None and channel.bench_id:
         bench = session.get(Bench, channel.bench_id)
@@ -239,7 +271,10 @@ def _add_referred(session: Session, c: OutreachCampaign, read: ReplyRead, *, to_
     if c.status == "done":  # the waves had finished: reopen so the new email can go once approved
         c.status, c.ended_at = "running", None
     session.flush()
-    return new
+    how = HOW_FOUND.get(existing.source, existing.source)
+    sure = {"proven": "proven", "verified": "confirmed by the mail server"}.get(existing.confidence,
+                                                                            "NOT confirmed (needs --allow-low)")
+    return new, f"address {email}: {how}, {sure}"
 
 
 def stamp_silence(session: Session, now: datetime | None = None) -> int:

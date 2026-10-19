@@ -371,10 +371,12 @@ The agent reads only the threads it started, and **never writes a reply or a fol
 | Reply | What happens |
 |---|---|
 | Interested / forwarded / question / rejection | Every unsent email to that company is cancelled, even approved ones. You get an instant alert with the Gmail link. The conversation is yours. |
-| Out-of-office | Nothing is cancelled. That person's emails wait until they're back. If the reply names a stand-in ("contact X in my absence"), an email to X is suggested for your approval. |
+| Out-of-office | Nothing is cancelled. That person's emails wait until they're back. If the reply names a stand-in ("contact X in my absence"), an email to X is prepared for your approval. |
 | "Not the right person" | Nothing is cancelled. That person is marked wrong-target. The person they name joins the bench at the front and gets an email in the next wave, after you approve it. |
 | Other automatic messages | Logged only. |
 | Unsure | The company is paused, and you see the raw email with no suggested action. Then run `outreach release` or `outreach stop`. |
+
+If a reply names someone without an address, the agent looks the address up the same way as for its own contacts: Hunter, then the company's pattern, checked with the mail server. The approval note says how the address was found and whether it was confirmed. If two people at the company share that name, it doesn't guess.
 
 When the waves end and nobody has answered for 7 days, the campaign is marked **silent** and you're told once: "follow up yourself if you'd like".
 

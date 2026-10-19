@@ -229,3 +229,40 @@ def test_out_of_office_stand_in_is_suggested_for_your_approval_not_benched(db_se
     stand_in = db_session.get(Contact, new.contact_id)
     assert stand_in.kind == "other"                                          # never used for future benches
     assert not db_session.scalars(select(BenchMember).where(BenchMember.contact_id == stand_in.id)).all()
+
+
+def test_named_person_without_an_address_is_looked_up(db_session, campaign, monkeypatch):
+    from app.models import Notification
+
+    def fake_find(session, http, contact, company, **kw):  # stands in for Hunter → pattern → mail-server check
+        row = ContactEmail(company_id=company.id, contact_id=contact.id, email=f"meena.joshi@{DOMAIN}",
+                           source="constructed", confidence="verified")
+        session.add(row)
+        session.flush()
+        return row
+
+    monkeypatch.setattr(R, "find_address", fake_find)
+    e, c = _sent_first(db_session, campaign)
+    read = _read("redirect", referred_name="Meena Joshi")
+    S.check_thread(db_session, e, reader=lambda s, t: _msg(), classifier=lambda s, x, m: read)
+    new = [x for x in C.emails(db_session, c) if x.to_email == f"meena.joshi@{DOMAIN}"][0]
+    assert new.decision == "pending" and new.confidence == "verified"
+    note = db_session.scalars(select(Notification).where(Notification.subject_id == str(c.id))).one()
+    assert "built from the company's address pattern" in note.detail and "confirmed by the mail server" in note.detail
+
+
+def test_two_people_with_the_named_name_means_no_guess(db_session, campaign, monkeypatch):
+    from app.models import Notification
+
+    monkeypatch.setattr(R, "find_address", lambda *a, **k: pytest.fail("must not guess between namesakes"))
+    company_id = campaign.company_id
+    for slug in ("1", "2"):
+        db_session.add(Contact(company_id=company_id, full_name="Meena Joshi", name_key="meena joshi",
+                               first_name="meena", last_name="joshi", kind="recruiting", source="search",
+                               linkedin_url=f"https://www.linkedin.com/in/meena-joshi-{slug}-test"))
+    db_session.flush()
+    e, c = _sent_first(db_session, campaign)
+    S.check_thread(db_session, e, reader=lambda s, t: _msg(), classifier=lambda s, x, m: _read("redirect", referred_name="Meena Joshi"))
+    assert not [x for x in C.emails(db_session, c) if "meena" in x.to_email]
+    note = db_session.scalars(select(Notification).where(Notification.subject_id == str(c.id))).one()
+    assert "2 people called Meena Joshi" in note.detail
