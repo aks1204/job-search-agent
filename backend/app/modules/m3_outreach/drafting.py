@@ -33,7 +33,7 @@ from app.models.score import JobScore
 from app.modules.m1_companies.facts import fact_card, value
 from app.modules.m1_companies.queue import start_of_today_utc
 from app.modules.m2_jobs.profile_text import resume_path, resume_text
-from app.modules.m2_jobs.reader import candidate_brief
+from app.modules.m2_jobs.reader import profile_brief
 from app.modules.m3_outreach.template import Template, fill, fit_subject, load_template
 
 log = logging.getLogger(__name__)
@@ -128,7 +128,7 @@ def _values(owner, company: Company, role_name: str, req_ids: list[str]) -> dict
 
 def inputs_version(t: Template, job: JobPosting, scenario: str, req_ids: list[str]) -> str:
     owner = get_config().owner
-    blob = json.dumps([job.content_hash, hashlib.sha256(resume_text().encode()).hexdigest(), candidate_brief(owner),
+    blob = json.dumps([job.content_hash, hashlib.sha256(resume_text().encode()).hexdigest(), profile_brief(owner),
                        owner.name, owner.mobile, owner.linkedin_url, owner.total_experience_years,
                        t.version, scenario, req_ids], default=str)
     return hashlib.sha256(blob.encode()).hexdigest()[:32]
@@ -168,7 +168,7 @@ def _system(t: Template, examples: str = "") -> str:
     return (DRAFT_SYSTEM + "\n\n## The template's instructions\n" + sections
             + f"\n\nWrite between {t.settings.points_min} and {t.settings.points_max} points."
             + examples
-            + "\n\n## The candidate\n" + candidate_brief(owner)
+            + "\n\n## The candidate\n" + profile_brief(owner)
             + f"\nTotal experience: {_years(owner) or 'not given'} years"
             + "\n\n--- resume ---\n" + (resume_text()[:12000] or "(resume not available)"))
 
@@ -198,7 +198,7 @@ def _as_text(d: DraftOut) -> str:
 
 def _verify(session: Session, llm, d: DraftOut, cluster_id: int) -> TruthCheck:
     owner = get_config().owner
-    system = (VERIFY_SYSTEM + "\n\n## Candidate profile\n" + candidate_brief(owner)
+    system = (VERIFY_SYSTEM + "\n\n## Candidate profile\n" + profile_brief(owner)
               + f"\nTotal experience: {_years(owner) or 'not given'} years"
               + f"\nCurrent role: {owner.current_role.title} at {owner.current_role.company} since {owner.current_role.started}"
               + "\n\n--- resume ---\n" + (resume_text()[:12000] or "(resume not available)"))

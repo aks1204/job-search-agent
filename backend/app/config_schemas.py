@@ -100,6 +100,9 @@ class OwnerStub(Strict):
     total_experience_years: float | None = None
     track: Literal["individual_contributor", "people_manager"] = "individual_contributor"
     open_to_management_track: bool = False
+    # Part 5b: how open you are to sideways moves — low: never; medium: only at a step-up brand; high: anywhere
+    # that isn't a step down.
+    lateral_appetite: Literal["low", "medium", "high"] = "medium"
     role_families: RoleFamilies = Field(default_factory=RoleFamilies)
     skills: Skills = Field(default_factory=Skills)
     work_authorization: WorkAuthorization = Field(default_factory=WorkAuthorization)
@@ -508,6 +511,8 @@ class DraftRules(Strict):
     drafts_per_tick: int = Field(3, ge=0)
     template_file: str = "email_template.md"     # in the config folder
     max_rewrites: int = Field(1, ge=0, le=3)     # truth check: rewrite rounds before unsupported claims are cut
+    # Owner decision (2026-10-21): after a resume/profile change, drafts YOU edited are kept unless this is on.
+    redraft_edited_drafts: bool = False
 
 
 class SendingRules(Strict):

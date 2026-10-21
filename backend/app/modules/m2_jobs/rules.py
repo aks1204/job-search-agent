@@ -58,9 +58,15 @@ def _family_and_track(read: dict, owner: OwnerStub, ctx: Context, gap: int | Non
     elif match == "other":
         a.reasons.append(f"family: {family} is outside your role families")
     elif match == "lateral":
-        # Laterals require a step-up brand AND senior level within the family.
-        if ctx.brand_level != "up":
+        # Laterals depend on your appetite (Part 5b): low = never; medium = step-up brands only; high = any
+        # brand that isn't a step down. Always at least your level within the family.
+        appetite = getattr(owner, "lateral_appetite", "medium")
+        if appetite == "low":
+            a.reasons.append(f"lateral ({family}): you're not open to sideways moves")
+        elif appetite == "medium" and ctx.brand_level != "up":
             a.reasons.append(f"lateral ({family}) at a company that isn't a step up for you")
+        elif appetite == "high" and ctx.brand_level == "down":
+            a.reasons.append(f"lateral ({family}) at a company that's a step down for you")
         elif gap is not None and gap < 0:
             a.reasons.append(f"lateral ({family}) below your level")
         else:

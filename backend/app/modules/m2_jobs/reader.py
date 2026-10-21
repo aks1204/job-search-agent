@@ -119,3 +119,13 @@ def job_brief(company: str, job, description_limit: int = 12_000) -> str:
         "--- description ---",
         body[:description_limit] if body else "(no description available)",
     ])
+
+
+def profile_brief(owner: OwnerStub) -> str:
+    """The candidate without their career direction (families, track) — for drafts, which don't need it, so
+    a direction change alone never re-writes (and re-pays for) an email."""
+    track = f", {owner.track.replace('_', ' ')})"
+    lines = [line.replace(track, ")") if line.startswith("Current level") else line
+             for line in candidate_brief(owner).split("\n")
+             if not line.startswith(("Progression families", "Lateral families", "Excluded families"))]
+    return "\n".join(lines)

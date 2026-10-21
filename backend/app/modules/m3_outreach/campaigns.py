@@ -79,8 +79,9 @@ def prepare_campaigns(session: Session, cluster_ids: list[int] | None = None) ->
                                     .order_by(OutreachCampaign.id.desc())).all()
         current = campaigns[0] if campaigns else None
         if current and current.status == "pending_review" and draft.version > current.draft_version \
-                and not current.edited:
+                and (not current.edited or get_config().outreach.drafts.redraft_edited_drafts):
             _load_draft(current, draft)
+            current.edited = False
             for e in session.scalars(select(OutreachEmail).where(OutreachEmail.campaign_id == current.id)).all():
                 e.decision, e.allow_low = "pending", False   # you approved the old text, not this one
             counts["refreshed"] += 1
@@ -238,3 +239,24 @@ def resume_company(session: Session, company_id: int) -> int:
         n += 1
     return n
 
+
+
+def redraft(session: Session, campaign: OutreachCampaign, llm) -> OutreachCampaign:
+    """Your Redraft button: a fresh draft from your current resume and profile replaces the campaign's text —
+    including your edits (they stay saved as style examples). Approvals are reset."""
+    from app.modules.m3_outreach.drafting import write_draft
+    from app.modules.m3_outreach.pipeline import pursued_roles
+
+    _editable(campaign)
+    row = next(iter(pursued_roles(session, [campaign.cluster_id])), None)
+    if row is None:
+        raise ReviewError("this role isn't open any more")
+    draft = write_draft(session, llm, *row)
+    _load_draft(campaign, draft)
+    campaign.edited = False
+    for e in emails(session, campaign):
+        if e.decision == "approved":
+            e.decision = "pending"
+    audit.record(session, "m3", "campaign_redrafted", f"You asked for a fresh draft for campaign {campaign.id}",
+                 subject_type="campaign", subject_id=str(campaign.id))
+    return campaign

@@ -69,6 +69,7 @@ drafts:
   drafts_per_tick: 3
   template_file: email_template.md
   max_rewrites: 1        # truth check: claims your resume can't back up get one rewrite, then are cut
+  redraft_edited_drafts: false   # after a resume/profile change, keep drafts you edited (true = rewrite them too)
 
 # Part 3c: sending from your Gmail. NOTHING sends without your per-email approval (cli review).
 # Quiet hours come from app.yaml and apply in the recipient's local time (best effort).

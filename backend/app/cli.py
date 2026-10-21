@@ -33,7 +33,7 @@
     python -m app.cli drafts [--cluster N] [--force]              # Module 3: write outreach drafts now
     python -m app.cli draft <cluster_id>                         # Module 3: show a draft as recipients get it
     python -m app.cli gmail connect|status|test                  # Module 3: your Gmail (Google sign-in)
-    python -m app.cli review [show|approve|skip|export|import <campaign>] [--email N|--all] [--allow-low]
+    python -m app.cli review [show|approve|skip|export|import|redraft <campaign>] [--email N|--all] [--allow-low]
     python -m app.cli outreach status|pause|unpause|reset-breaker | hold|release|stop <domain>
     python -m app.cli replies [--last N]                         # Module 3: replies and how they were sorted
     python -m app.cli pings [--all] [--read]                     # what the agent wants you to know
@@ -45,6 +45,7 @@
     python -m app.cli track                                      # Module 4: run the tracker now
     python -m app.cli assign <no> [<role id> | --other "Job title" | --ignore]   # Module 4: which role an email is about
     python -m app.cli profile read|export|confirm|show|edit     # Module 5: your profile from your resume
+    python -m app.cli direction [refresh | yes <id> | no <id> | edit | confirm]   # Module 5: career direction
 """
 
 import argparse
@@ -958,6 +959,20 @@ def review_cmd(action: str, campaign_id: int | None, email_pos: int | None, all_
             print(f"Campaign {c.id}: {c.status}" + (" — the waves start now (within sending hours and limits)"
                                                    if c.status == "scheduled" else ""))
             return 0
+        if action == "redraft":
+            from app.core.llm import LLM
+
+            if not LLM.available():
+                print("Needs ANTHROPIC_API_KEY in .env")
+                return 1
+            try:
+                C.redraft(s, c, LLM())
+            except C.ReviewError as err:
+                print(f"Not redrafted: {err}")
+                return 1
+            print(f"Campaign {c.id}: a fresh draft replaced the text (your edits stay saved as style examples). "
+                  "Approvals were reset: review show again.")
+            return 0
         if action == "export":
             path = Path("/review") / f"campaign-{c.id}.txt"
             path.write_text(C.export_text(c), encoding="utf-8")
@@ -1295,6 +1310,78 @@ def profile_cmd(action: str) -> int:
     return 1
 
 
+def direction_cmd(action: str, suggestion_id: int | None) -> int:
+    from app.core.llm import LLM
+    from app.db import session_scope
+    from app.modules.m5_profile import direction as D
+    from app.modules.m5_profile import store
+
+    with session_scope() as s:
+        if action == "refresh":
+            if not LLM.available():
+                print("Needs ANTHROPIC_API_KEY in .env")
+                return 1
+            print(D.refresh(s, LLM()))
+        elif action in ("yes", "no"):
+            if suggestion_id is None:
+                print("Say which suggestion: direction yes <id>")
+                return 1
+            try:
+                sug = D.answer(s, suggestion_id, action == "yes")
+            except D.DirectionError as e:
+                print(e)
+                return 1
+            print(("Done: " if action == "yes" else "Noted, not changed: ") + D.describe(sug))
+        elif action == "edit":
+            try:
+                D.export(s)
+            except D.DirectionError as e:
+                print(e)
+                return 1
+            print("Your lists are in review/direction.yaml. Edit, save, then: direction confirm")
+            return 0
+        elif action == "confirm":
+            if not D.REVIEW_FILE.is_file():
+                print("No review/direction.yaml yet — run: direction edit")
+                return 1
+            try:
+                D.confirm_edit(s, D.REVIEW_FILE.read_text(encoding="utf-8"))
+            except D.DirectionError as e:
+                print(f"Not saved: {e}")
+                return 1
+            print("Saved. The agent looks for jobs with your new lists from the next round.")
+    if action in ("show", "refresh", "yes", "no", "confirm"):
+        store.invalidate()
+        with session_scope() as s:
+            info = D.explained(s)
+        if not info:
+            print("No confirmed profile yet — run: profile read, then profile confirm")
+            return 1
+        if action != "show":
+            return 0
+        if info.get("position"):
+            print(f"Where you are: {info['position']}")
+            print(f"Heading: {info['trajectory']}")
+        else:
+            print("The agent hasn't worked out its view yet — run: direction refresh (about 3 cents)")
+        for lst, label in (("progression", "Step up"), ("lateral", "Sideways"), ("excluded", "Excluded")):
+            print(f"{label}:")
+            for f in info[lst] or [{"family": "—", "why": "", "condition": ""}]:
+                extra = f" [{f['condition']}]" if f.get("condition") else ""
+                print(f"  - {f['family']}{extra}" + (f" — {f['why']}" if f["why"] else ""))
+        print("Target roles (searched on job sites):")
+        for t in info["target_roles"] or [{"title": "—", "why": ""}]:
+            print(f"  - {t['title']}" + (f" — {t['why']}" if t["why"] else ""))
+        print(f"Sideways appetite: {info['lateral_appetite']} · track: {info['track']}"
+              + (" (open to managing)" if info["open_to_management_track"] else ""))
+        if info["suggestions"]:
+            print("Waiting for your yes / no:")
+            for sug in info["suggestions"]:
+                print(f"  [{sug['id']}] {sug['text']}")
+            print("Answer: direction yes <id>  ·  direction no <id>")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1385,7 +1472,7 @@ def main() -> None:
     p_gm = sub.add_parser("gmail", help="Module 3: connect your Gmail (Google sign-in), check it, send yourself a test")
     p_gm.add_argument("action", choices=["connect", "status", "test"])
     p_rv = sub.add_parser("review", help="Module 3: review outreach emails: approve / edit / skip each one")
-    p_rv.add_argument("action", nargs="?", default="list", choices=["list", "show", "approve", "skip", "export", "import"])
+    p_rv.add_argument("action", nargs="?", default="list", choices=["list", "show", "approve", "skip", "export", "import", "redraft"])
     p_rv.add_argument("campaign", nargs="?", type=int)
     p_rv.add_argument("--email", type=int, help="which email in the campaign (1, 2, ...)")
     p_rv.add_argument("--all", action="store_true", help="every email still waiting in the campaign")
@@ -1418,6 +1505,9 @@ def main() -> None:
     p_sg.add_argument("--ignore", action="store_true", help="not about any of your applications")
     p_pf = sub.add_parser("profile", help="Module 5: your profile, read from your resume and confirmed by you")
     p_pf.add_argument("action", choices=["read", "export", "confirm", "show", "edit"])
+    p_dir = sub.add_parser("direction", help="Module 5: your career direction — families, target roles, suggestions")
+    p_dir.add_argument("action", nargs="?", default="show", choices=["show", "refresh", "yes", "no", "edit", "confirm"])
+    p_dir.add_argument("suggestion_id", nargs="?", type=int)
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -1492,7 +1582,7 @@ def main() -> None:
         sys.exit(gmail_cmd(args.action))
     if args.command == "review":
         if args.action != "list" and args.campaign is None:
-            parser.error("review show|approve|skip|export|import needs a campaign number")
+            parser.error("review show|approve|skip|export|import|redraft needs a campaign number")
         sys.exit(review_cmd(args.action, args.campaign, args.email, args.all, args.allow_low))
     if args.command == "outreach":
         sys.exit(outreach_cmd(args.action, args.domain))
@@ -1516,6 +1606,8 @@ def main() -> None:
         sys.exit(assign_cmd(args.no, args.cluster_id, args.other, args.ignore))
     if args.command == "profile":
         sys.exit(profile_cmd(args.action))
+    if args.command == "direction":
+        sys.exit(direction_cmd(args.action, args.suggestion_id))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

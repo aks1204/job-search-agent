@@ -458,6 +458,39 @@ docker compose exec api python -m app.cli profile edit      # change an answer l
 
 API: `GET /api/profile` · `POST /api/profile/read` · `POST /api/profile/confirm`.
 
+### Part 5b: career direction
+
+The agent works out its view of your career from your resume and profile (one AI read, about 3¢). It runs again by itself after your profile changes. The view covers:
+- **where you are** and **where you're heading**;
+- which role families are **step up**, **sideways** (and when) or **excluded**;
+- which **job titles** are worth searching;
+- your **appetite for sideways moves**: low = never, medium = only at step-up brands (the default), high = anywhere that isn't a step down;
+- your **track** (individual contributor or manager).
+
+Each point has a one-line reason.
+
+**Nothing is added to or removed from what the agent looks for without your yes** (owner decision). Your actual lists stay yours, and any difference becomes a question:
+- add a family or title;
+- drop one;
+- start including one you'd excluded;
+- change your appetite or track.
+
+Answer each with yes or no. A "no" is remembered, and asked again only if a later resume makes a strong case. Reasons and summaries refresh automatically.
+
+```bash
+docker compose exec api python -m app.cli direction              # your lists with reasons + questions waiting
+docker compose exec api python -m app.cli direction refresh      # re-work the agent's view now
+docker compose exec api python -m app.cli direction yes 12       # or: direction no 12
+docker compose exec api python -m app.cli direction edit         # change the lists yourself (review/direction.yaml) …
+docker compose exec api python -m app.cli direction confirm      # … then save
+```
+
+**Drafts and your direction.** Drafts are rewritten when your resume or profile changes, but not when only your direction changes, since the email doesn't depend on it.
+- **Drafts you edited** are kept as you left them, unless `drafts.redraft_edited_drafts: true` is set in `config/outreach.yaml`.
+- **For a fresh draft any time,** run `review redraft <campaign>`. Your edits stay saved as style examples.
+
+API: `GET /api/direction` · `POST /api/direction/suggestions/{id}` (`{"yes": true}`).
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

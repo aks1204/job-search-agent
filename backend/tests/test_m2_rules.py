@@ -165,3 +165,15 @@ def test_to_inr():
     assert to_inr(1000, "INR", basis="ppp", table=TABLE) == 1000
     assert round(to_inr(1, "USD", basis="nominal", table=TABLE)) == round(BUILTIN["INR"][1])
     assert round(to_inr(1, "USD", basis="ppp", table=TABLE), 1) == BUILTIN["INR"][0]
+
+
+@pytest.mark.parametrize("appetite, brand, outcome", [
+    ("low", "up", "rejected"),          # never sideways
+    ("medium", "unknown", "rejected"),  # only at a step-up brand (the default, as before)
+    ("medium", "up", "passed"),
+    ("high", "unknown", "passed"),      # anywhere that isn't a step down
+    ("high", "down", "rejected"),
+])
+def test_sideways_appetite_decides_laterals(appetite, brand, outcome):
+    r = read(family_match="lateral", role_family="product analytics")
+    assert assess(r, owner(lateral_appetite=appetite), RULES, ctx(brand_level=brand), TABLE).outcome == outcome

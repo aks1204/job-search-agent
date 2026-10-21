@@ -46,3 +46,27 @@ def confirm_profile(body: ConfirmIn, session: Session = Depends(get_session)) ->
         return _out(P.confirm(session, body.data))
     except Exception as e:  # validation problems → shown on the Profile screen
         raise HTTPException(422, str(e)) from e
+
+
+@router.get("/direction")
+def get_direction(session: Session = Depends(get_session)) -> dict:
+    """Your lists with the agent's reasons, its view of where you are / heading, and open suggestions."""
+    from app.modules.m5_profile import direction as D
+
+    return D.explained(session)
+
+
+class AnswerIn(BaseModel):
+    yes: bool
+
+
+@router.post("/direction/suggestions/{suggestion_id}")
+def answer_suggestion(suggestion_id: int, body: AnswerIn, session: Session = Depends(get_session)) -> dict:
+    """The [Yes] / [No] buttons on a direction suggestion."""
+    from app.modules.m5_profile import direction as D
+
+    try:
+        s = D.answer(session, suggestion_id, body.yes)
+    except D.DirectionError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"id": s.id, "status": s.status}
