@@ -64,7 +64,8 @@ def test_your_yes_changes_the_lists_and_your_no_is_remembered(db_session, confir
     assert "applied data science" in owner.role_families.progression
     assert owner.role_families.excluded == ["risk analytics"]                     # your no: still excluded
     D.refresh(db_session, FakeLLM(_view()))                                       # same resume: not asked again
-    again = db_session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.status == "open")).all()
+    again = db_session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.status == "open",
+                                                                 DirectionSuggestion.kind != "memory")).all()
     assert not again
 
 

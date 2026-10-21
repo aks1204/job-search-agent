@@ -506,6 +506,8 @@ The agent remembers what you tell it and what you decide, and uses it so it neve
 - patterns that stop repeating fade;
 - anything unused for a year is **archived** (moved aside, not deleted) unless you **pin** it.
 
+**When you say yes to including a kind of role you used to pass on** (e.g. ML), any "you usually pass on it" pattern is set aside at once. A new one can form only from what you do afterwards. If you'd skipped such roles before, you're asked once whether to stop using those skips as examples.
+
 **After a resume update,** memories that clearly clash with your new profile (for example "skipped: too senior" after a promotion) are shown to you to **keep** or **forget**. The agent never changes or deletes a memory itself.
 
 **Privacy:** your pay and notice period stay on your machine, and are never sent to the AI service, even for the summary.

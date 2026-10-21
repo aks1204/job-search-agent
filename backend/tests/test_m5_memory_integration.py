@@ -158,3 +158,37 @@ def test_a_forgotten_pattern_stays_forgotten(db_session, monkeypatch):
     assert signal.status == "archived"
     assert len(db_session.scalars(select(MemoryEntry).where(MemoryEntry.kind == "taste_signal",
                                                             MemoryEntry.content["family"].astext == FAMILY)).all()) == 1
+
+
+def test_saying_yes_to_a_family_sets_aside_old_dislikes_and_asks_about_old_skips(db_session, monkeypatch):
+    from app.modules.m5_profile import direction as D
+
+    monkeypatch.setattr(P, "resume_text", lambda: "")
+    row = P.confirm(db_session, {**STUB, "role_families": {"progression": [], "lateral": [], "excluded": [FAMILY]}})
+    direction = CareerDirection(status="current", view={}, profile_id=row.id)
+    db_session.add(direction)
+    db_session.flush()
+    cluster = _role(db_session, FAMILY)
+    for _ in range(4):
+        db_session.add(JobFeedback(cluster_id=cluster, action="skip", reason="not my field"))
+    M.record_role_feedback(db_session, company="Mem Co", title="Sales Analyst", family=FAMILY, level="Analyst",
+                           action="skip", reason="not my field", cluster_id=cluster)
+    db_session.flush()
+    M.update_taste(db_session)
+    pattern = db_session.scalars(select(MemoryEntry).where(MemoryEntry.kind == "taste_signal",
+                                                           MemoryEntry.content["family"].astext == FAMILY,
+                                                           MemoryEntry.status == "active")).one()
+    yes = DirectionSuggestion(direction_id=direction.id, kind="include", target="progression", item=FAMILY,
+                              why="w", strength="strong", status="open")
+    db_session.add(yes)
+    db_session.flush()
+    D.answer(db_session, yes.id, yes=True)                                         # you now include it
+    assert pattern.status == "archived"                                            # the old dislike is set aside
+    M.update_taste(db_session)
+    assert pattern.status == "archived"                                            # old skips don't revive it
+    ask = db_session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.kind == "memory",
+                                                               DirectionSuggestion.item == FAMILY)).one()
+    skip_memory = M.old_skips_of(db_session, FAMILY)[0]
+    D.answer(db_session, ask.id, yes=True)                                         # stop using old skips
+    assert skip_memory.status == "archived"
+    assert skip_memory not in M.listing(db_session)                                # no longer shown or used

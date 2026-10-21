@@ -204,6 +204,8 @@ def describe(s: DirectionSuggestion) -> str:
         return f"Start including '{s.item}' (you'd excluded it) as {where}? ({s.why})"
     if s.kind == "appetite":
         return f"Change your openness to sideways moves to '{s.item}'? ({s.why})"
+    if s.kind == "memory":
+        return f"You now include '{s.item}' roles. Stop using your earlier skips of them as examples? ({s.why})"
     return f"Change your track to {s.item}? ({s.why})"
 
 
@@ -233,6 +235,16 @@ def answer(session: Session, suggestion_id: int, yes: bool) -> DirectionSuggesti
     row = store.load_confirmed(session)
     if row is None:
         raise DirectionError("no confirmed profile")  # checked before anything is marked
+    if s.kind == "memory":  # yes: set aside your earlier skips of these roles (archived, not deleted)
+        from app.modules.m5_profile.memory import set_aside_examples
+
+        with session.begin_nested():
+            n = set_aside_examples(session, s.item)
+        audit.record(session, "m5", "direction_memory_set_aside",
+                     f"You said yes: {describe(s)} ({n} earlier skip(s) set aside)", subject_type="profile")
+        s.status, s.answered_at = "accepted", datetime.now(timezone.utc)
+        _remember(session, s, "yes")
+        return s
     data = dict(row.data)
     fam = {k: list(v) for k, v in (data.get("role_families") or {}).items()}
     for lst in LISTS:
@@ -261,6 +273,14 @@ def answer(session: Session, suggestion_id: int, yes: bool) -> DirectionSuggesti
     _save_lists(session, row, data, f"You said yes: {describe(s)}")
     s.status, s.answered_at = "accepted", datetime.now(timezone.utc)  # only once the change is saved
     _remember(session, s, "yes")
+    if s.kind in ("add", "include") and s.target in ("progression", "lateral"):
+        try:  # your old dislike of these roles mustn't quietly work against your new yes
+            from app.modules.m5_profile.memory import after_family_included
+
+            with session.begin_nested():
+                after_family_included(session, item, s.direction_id, row.resume_hash)
+        except Exception as e:
+            log.warning("couldn't review memories for %s: %r", item, e)
     return s
 
 

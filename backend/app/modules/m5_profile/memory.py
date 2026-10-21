@@ -130,17 +130,23 @@ def update_taste(session: Session, now: datetime | None = None) -> dict:
 
     now = now or _now()
     since = now - timedelta(days=TASTE_WINDOW_DAYS)
+    resets = _reset_dates(session)
     rows = session.execute(
-        select(JobFeedback.action, JobAssessment.read)
+        select(JobFeedback.action, JobAssessment.read, JobFeedback.created_at)
         .join(JobScore, JobScore.cluster_id == JobFeedback.cluster_id)
         .join(JobAssessment, JobAssessment.id == JobScore.assessment_id)
         .where(JobFeedback.created_at >= since)
     ).all()
     neg, pos = Counter(), Counter()
-    for action, read in rows:
+    for action, read, created in rows:
         family = ((read or {}).get("role_family") or "").strip().lower()
         if not family:
             continue
+        reset = max((ts for name, ts in resets.items()
+                     if _words(name) and (_words(name) <= _words(family) or _words(family) <= _words(name))),
+                    default=None)
+        if reset is not None and created < reset and action in ("skip", "thumbs_down"):
+            continue  # an old dislike from before your yes on this family: doesn't count any more
         if action in ("skip", "thumbs_down"):
             neg[family] += 1
         elif action in ("act", "thumbs_up", "maybe_rescue"):
@@ -158,7 +164,8 @@ def update_taste(session: Session, now: datetime | None = None) -> dict:
             continue
         # One signal per family (by its exact family, never by similar wording); one you forgot stays forgotten.
         latest = session.scalar(select(MemoryEntry).where(
-            MemoryEntry.kind == "taste_signal", MemoryEntry.content["family"].astext == family)
+            MemoryEntry.kind == "taste_signal", MemoryEntry.content["family"].astext == family,
+            MemoryEntry.content["kind"].astext.is_distinct_from("reset"))  # reset markers keep their dates
             .order_by(MemoryEntry.id.desc()))
         if latest is not None and (latest.content or {}).get("forgotten_by_owner"):
             continue
@@ -368,3 +375,81 @@ def search_text(session: Session, query: str, k: int = 10) -> list[tuple[MemoryE
     for kind in ("answer", "precedent", "taste_signal"):
         out += search(session, kind, query, k=k)
     return sorted(out, key=lambda x: -x[1])[:k]
+
+
+# --- after you say yes to a family you used to pass on ---------------------------------------------------
+
+def _words(s: str | None) -> set[str]:
+    import re
+
+    return {w for w in re.findall(r"[a-z]+", (s or "").lower()) if len(w) >= 2 and w not in ("and", "the", "of", "roles")}
+
+
+def _about_family(entry: MemoryEntry, family: str) -> bool:
+    """Is this remembered skip about that family? By its recorded family name (word overlap), e.g.
+    'data science' ~ 'applied data science', 'machine learning' ~ 'machine learning engineering'."""
+    name = (entry.content or {}).get("family") or ""
+    if " ".join(family.lower().split()) == " ".join(name.lower().split()):
+        return True
+    want, have = _words(family), _words(name)
+    return bool(want and have) and (want <= have or have <= want)
+
+
+def old_skips_of(session: Session, family: str) -> list[MemoryEntry]:
+    rows = session.scalars(select(MemoryEntry).where(
+        MemoryEntry.kind == "precedent", MemoryEntry.status == "active",
+        MemoryEntry.context["module"].astext == "m2",
+        MemoryEntry.content["action"].astext.in_(("skip", "thumbs_down")))).all()
+    return [e for e in rows if _about_family(e, family)]
+
+
+def after_family_included(session: Session, family: str, direction_id: int, resume_hash: str | None) -> dict:
+    """You said yes to including `family`: (1) a 'you usually pass on it' pattern is set aside at once and a
+    new one may form only from what you do from now on; (2) if you had skipped such roles, you're asked once
+    whether to stop using those skips as examples."""
+    from app.models.direction import DirectionSuggestion
+
+    out = {"patterns_set_aside": 0, "asked": False}
+    for e in session.scalars(select(MemoryEntry).where(MemoryEntry.kind == "taste_signal")).all():
+        if _words(family) and _about_family(e, family) and (e.content or {}).get("kind") == "dislike":
+            e.status = "archived"
+            e.content = {**(e.content or {}), "reset_at": _now().isoformat(), "set_aside_by": "your direction change"}
+            out["patterns_set_aside"] += 1
+    # Remember the date of your yes even if no pattern existed yet, so old skips never count again.
+    remember(session, "taste_signal", f"Reset: you started including {family} roles.",
+             {"family": family, "kind": "reset", "reset_at": _now().isoformat()}, context={"module": "m2"},
+             provenance={"source": "direction_change"}, dedupe=False).status = "archived"
+    skips = old_skips_of(session, family)
+    already = session.scalar(select(DirectionSuggestion.id).where(
+        DirectionSuggestion.kind == "memory", DirectionSuggestion.status == "open",
+        func.lower(DirectionSuggestion.item) == family.lower()).limit(1))
+    if skips and not already:
+        session.add(DirectionSuggestion(
+            direction_id=direction_id, kind="memory", target="memory", item=family, strength="taste", status="open",
+            resume_hash=resume_hash, why=f"{len(skips)} earlier skip(s) of these roles might no longer reflect what you want"))
+        notify(session, "needs_you", "needs_you", f"You now include {family} roles",
+               detail=f"{len(skips)} earlier skip(s) of such roles might no longer reflect what you want. "
+                      "Stop using them as examples? (see: direction)", subject=("direction", "memory"))
+        out["asked"] = True
+    return out
+
+
+def set_aside_examples(session: Session, family: str) -> int:
+    """Your yes: earlier skips of this family stop being shown to the AI as examples (archived, not deleted)."""
+    skips = old_skips_of(session, family)
+    for e in skips:
+        e.status = "archived"
+        e.content = {**(e.content or {}), "set_aside_by": "you, after including these roles"}
+    return len(skips)
+
+
+def _reset_dates(session: Session) -> dict[str, datetime]:
+    """Families whose patterns were reset by a direction change: only reactions after that date count."""
+    out: dict[str, datetime] = {}
+    for e in session.scalars(select(MemoryEntry).where(MemoryEntry.kind == "taste_signal")).all():
+        when = (e.content or {}).get("reset_at")
+        family = (e.content or {}).get("family")
+        if when and family:
+            ts = datetime.fromisoformat(when)
+            out[family] = max(out.get(family, ts), ts)
+    return out
