@@ -72,6 +72,7 @@ def shortlist(
 class FeedbackIn(BaseModel):
     action: str  # act | skip | thumbs_up | thumbs_down | maybe_rescue
     reason: str | None = None
+    chips: list[str] = []  # one-tap reasons: too_junior | too_senior | not_my_field | location | company | pay | hours_travel | other
 
 
 @router.post("/jobs/{cluster_id}/feedback")
@@ -83,7 +84,7 @@ def job_feedback(cluster_id: int, body: FeedbackIn, session: Session = Depends(g
     if row is None:
         raise HTTPException(404, "no scored role with that cluster id")
     try:
-        record_feedback(session, row, body.action, body.reason)
+        record_feedback(session, row, body.action, body.reason, chips=body.chips)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     return {"cluster_id": cluster_id, "score": row.score, "band": row.band}

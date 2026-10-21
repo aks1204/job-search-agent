@@ -41,6 +41,9 @@ class JobFeedback(Base):
     cluster_id: Mapped[int] = mapped_column(ForeignKey("job_clusters.id", ondelete="CASCADE"))
     action: Mapped[str] = mapped_column(String(12))  # act | skip | thumbs_up | thumbs_down | maybe_rescue
     reason: Mapped[str | None] = mapped_column(Text)
+    # Part 5c: the reasons you tapped (chips), and the agent's "probably" reasons worked out from the role
+    chips: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    inferred: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
     score_at_time: Mapped[int | None] = mapped_column(Integer)
     band_at_time: Mapped[str | None] = mapped_column(String(10))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

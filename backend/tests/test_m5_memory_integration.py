@@ -50,7 +50,7 @@ def test_your_decisions_become_examples_for_similar_roles(db_session):
     assert any("too junior and risk-heavy" in e for e in examples)
 
 
-def _role(db_session, family):
+def _role(db_session, family, location="Pune, India"):
     domain = "m5mem-test.io"
     company_intake(db_session, Candidate(scout="seeds", external_id=domain, name="Mem Co", domain=domain,
                                          type_hint="established"))
@@ -61,7 +61,7 @@ def _role(db_session, family):
     db_session.flush()
     now = datetime.now(timezone.utc)
     db_session.add(RawPosting(feed_id=feed.id, company_id=company.id, external_id="1", title="Sales Analyst",
-                              location="Pune, India", posted_at=now.isoformat(), payload={}, description="x " * 200,
+                              location=location, posted_at=now.isoformat(), payload={}, description="x " * 200,
                               content_hash="m5", first_seen_at=now, last_seen_at=now))
     db_session.flush()
     intake(db_session, company_ids=[company.id])
@@ -86,7 +86,7 @@ def test_a_repeated_pattern_becomes_a_suggestion_never_a_change(db_session, monk
         db_session.add(JobFeedback(cluster_id=cluster, action="skip", reason="not for me"))
     db_session.flush()
     out = M.update_taste(db_session)
-    assert out["signals"] >= 1 and out["suggested"] == 1
+    assert out["signals"] >= 1 and out["suggested"] >= 1
     s = db_session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.item == FAMILY,
                                                              DirectionSuggestion.kind == "remove",
                                                              DirectionSuggestion.status == "open")).one()
@@ -160,7 +160,7 @@ def test_a_forgotten_pattern_stays_forgotten(db_session, monkeypatch):
                                                             MemoryEntry.content["family"].astext == FAMILY)).all()) == 1
 
 
-def test_saying_yes_to_a_family_sets_aside_old_dislikes_and_asks_about_old_skips(db_session, monkeypatch):
+def test_saying_yes_to_a_family_sorts_old_skips_by_their_reason(db_session, monkeypatch):
     from app.modules.m5_profile import direction as D
 
     monkeypatch.setattr(P, "resume_text", lambda: "")
@@ -170,25 +170,66 @@ def test_saying_yes_to_a_family_sets_aside_old_dislikes_and_asks_about_old_skips
     db_session.flush()
     cluster = _role(db_session, FAMILY)
     for _ in range(4):
-        db_session.add(JobFeedback(cluster_id=cluster, action="skip", reason="not my field"))
-    M.record_role_feedback(db_session, company="Mem Co", title="Sales Analyst", family=FAMILY, level="Analyst",
-                           action="skip", reason="not my field", cluster_id=cluster)
+        db_session.add(JobFeedback(cluster_id=cluster, action="skip", reason="not my field", chips=["not_my_field"]))
+    field = M.record_role_feedback(db_session, company="Fractal", title="Data Scientist", family=FAMILY, level="Analyst",
+                                   action="skip", reason="not my field", cluster_id=cluster, chips=["not_my_field"])
+    junior = M.record_role_feedback(db_session, company="Mu Sigma", title="Data Scientist", family=FAMILY,
+                                    level="Analyst", action="skip", reason=None, cluster_id=cluster + 100000,
+                                    chips=["too_junior"])
+    unclear = M.record_role_feedback(db_session, company="Acme", title="Data Scientist", family=FAMILY, level="Analyst",
+                                     action="skip", reason=None, cluster_id=cluster + 200000, chips=[], inferred=[])
     db_session.flush()
     M.update_taste(db_session)
     pattern = db_session.scalars(select(MemoryEntry).where(MemoryEntry.kind == "taste_signal",
-                                                           MemoryEntry.content["family"].astext == FAMILY,
-                                                           MemoryEntry.status == "active")).one()
+                                                           MemoryEntry.content["key"].astext == f"family:{FAMILY}")).one()
     yes = DirectionSuggestion(direction_id=direction.id, kind="include", target="progression", item=FAMILY,
                               why="w", strength="strong", status="open")
     db_session.add(yes)
     db_session.flush()
     D.answer(db_session, yes.id, yes=True)                                         # you now include it
     assert pattern.status == "archived"                                            # the old dislike is set aside
-    M.update_taste(db_session)
-    assert pattern.status == "archived"                                            # old skips don't revive it
+    assert field.status == "archived"                                              # "not my field": set aside itself
+    assert junior.status == "active"                                               # "too junior": still true, kept
+    note = db_session.scalars(select(Notification).where(Notification.title == f"You now include {FAMILY} roles",
+                                                         Notification.kind == "update")).one()
+    assert "Undo: memory undo" in note.detail
     ask = db_session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.kind == "memory",
                                                                DirectionSuggestion.item == FAMILY)).one()
-    skip_memory = M.old_skips_of(db_session, FAMILY)[0]
-    D.answer(db_session, ask.id, yes=True)                                         # stop using old skips
-    assert skip_memory.status == "archived"
-    assert skip_memory not in M.listing(db_session)                                # no longer shown or used
+    D.answer(db_session, ask.id, yes=True)                                         # only the unclear one is asked
+    assert unclear.status == "archived" and junior.status == "active"
+    batch = field.content["set_aside_batch"]
+    assert M.undo_set_aside(db_session, batch) == 1 and field.status == "active"   # your Undo
+    M.update_taste(db_session)
+    assert pattern.status == "archived"                                            # old skips don't revive it
+
+
+def test_a_skip_without_a_reason_gets_a_probable_one_from_the_roles_facts(db_session, monkeypatch):
+    from app.models import JobScore
+    from app.modules.m2_jobs.scoring import record_feedback
+
+    monkeypatch.setattr(P, "resume_text", lambda: "")
+    P.confirm(db_session, {**STUB, "preferred_locations_india": ["Bengaluru"]})
+    cluster = _role(db_session, FAMILY, location="Hyderabad, India")
+    row = db_session.scalars(select(JobScore).where(JobScore.cluster_id == cluster)).one()
+    fb = record_feedback(db_session, row, "skip", None)
+    assert fb.chips == [] and {"chip": "location", "detail": "Hyderabad"} in fb.inferred
+    fb2 = record_feedback(db_session, row, "skip", "salary too low")             # your reason wins
+    assert fb2.chips == ["pay"]
+
+
+def test_a_location_pattern_becomes_a_question_about_your_preferred_cities(db_session, monkeypatch):
+    monkeypatch.setattr(P, "resume_text", lambda: "")
+    row = P.confirm(db_session, {**STUB, "preferred_locations_india": ["Bengaluru", "Zzcity"]})
+    db_session.add(CareerDirection(status="current", view={}, profile_id=row.id))
+    cluster = _role(db_session, FAMILY, location="Zzcity, India")  # made up: your real roles can't interfere
+    for _ in range(4):
+        db_session.add(JobFeedback(cluster_id=cluster, action="skip", chips=["location"]))
+    db_session.flush()
+    out = M.update_taste(db_session)
+    s = db_session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.kind == "location",
+                                                             DirectionSuggestion.item == "Zzcity")).one()
+    assert s.status == "open" and out["suggested"] >= 1
+    assert "Zzcity" in store.as_owner(store.load_confirmed(db_session)).preferred_locations_india   # untouched
+    # these skips were about the location, so they don't count against the role family
+    assert not db_session.scalars(select(MemoryEntry).where(MemoryEntry.content["key"].astext == f"family:{FAMILY}",
+                                                            MemoryEntry.status == "active")).all()

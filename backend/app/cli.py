@@ -587,20 +587,29 @@ def shortlist_cmd(band: str | None, limit: int) -> int:
     return 0
 
 
-def feedback_cmd(cluster_id: int, action: str, reason: str | None) -> int:
+def feedback_cmd(cluster_id: int, action: str, reason: str | None, why: list[str] | None = None) -> int:
     from sqlalchemy import select
 
     from app.db import session_scope
     from app.models import JobScore
     from app.modules.m2_jobs.scoring import record_feedback
+    from app.modules.m5_profile.reasons import explain
 
     with session_scope() as s:
         row = s.scalar(select(JobScore).where(JobScore.cluster_id == cluster_id))
         if row is None:
             print(f"No scored role with cluster id {cluster_id} (see `shortlist`)")
             return 1
-        record_feedback(s, row, action, reason)
+        try:
+            fb = record_feedback(s, row, action, reason, chips=why)
+        except ValueError as e:
+            print(e)
+            return 1
         print(f"Recorded '{action}'. Role now: {row.score} → {row.band}")
+        if action in ("skip", "thumbs_down"):
+            print(f"  Reason — {explain(fb.chips, fb.inferred)}")
+            if not fb.chips:
+                print("  Not right? Run it again with --why too_junior|too_senior|not_my_field|location|company|pay|hours_travel")
     return 0
 
 
@@ -1419,6 +1428,13 @@ def memory_cmd(action: str, arg: str | None, kind: str | None, include_archived:
             for e, sim in M.search_text(s, arg):
                 print(f"[{e.id}] ({e.kind}, {sim:.0%} similar) {e.meaning}")
             return 0
+        if action == "undo":
+            if not arg:
+                print("Which one? The code is in the note, e.g. memory undo a1b2c3")
+                return 1
+            n = M.undo_set_aside(s, arg.strip())
+            print(f"Undone: {n} earlier skip(s) are used as examples again." if n else "Nothing to undo with that code.")
+            return 0
         if not arg or not arg.isdigit():
             print(f"Which memory? e.g. memory {action} 12")
             return 1
@@ -1493,6 +1509,9 @@ def main() -> None:
     p_fb.add_argument("cluster_id", type=int)
     p_fb.add_argument("action", choices=["act", "skip", "thumbs_up", "thumbs_down", "maybe_rescue"])
     p_fb.add_argument("reason", nargs="?")
+    p_fb.add_argument("--why", action="append", choices=["too_junior", "too_senior", "not_my_field", "location", "company",
+                                                         "pay", "hours_travel", "other"],
+                      help="one-tap reason(s) for a skip; repeat for several")
     p_rates = sub.add_parser("rates", help="Module 2: pay-conversion factors (PPP + exchange rates)")
     p_rates.add_argument("--refresh", action="store_true", help="fetch the latest from the World Bank")
     p_ct = sub.add_parser("contacts", help="Module 3: find contacts for pursued roles now (sends nothing)")
@@ -1560,7 +1579,7 @@ def main() -> None:
     p_dir.add_argument("suggestion_id", nargs="?", type=int)
     p_mem = sub.add_parser("memory", help="Module 5: what the agent remembers about you — and your control over it")
     p_mem.add_argument("action", nargs="?", default="believes",
-                       choices=["believes", "list", "search", "pin", "unpin", "forget", "restore", "keep"])
+                       choices=["believes", "list", "search", "pin", "unpin", "forget", "restore", "keep", "undo"])
     p_mem.add_argument("arg", nargs="*", help="a memory number, or words to search for")
     p_mem.add_argument("--kind", choices=["answer", "precedent", "taste_signal"])
     p_mem.add_argument("--all", action="store_true", help="include archived memories")
@@ -1615,7 +1634,7 @@ def main() -> None:
     if args.command == "shortlist":
         sys.exit(shortlist_cmd(args.band, args.limit))
     if args.command == "feedback":
-        sys.exit(feedback_cmd(args.cluster_id, args.action, args.reason))
+        sys.exit(feedback_cmd(args.cluster_id, args.action, args.reason, args.why))
     if args.command == "contacts":
         sys.exit(contacts_cmd(args.cluster, args.limit))
     if args.command == "channel":

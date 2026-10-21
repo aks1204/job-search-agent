@@ -165,15 +165,31 @@ def _rebanding(row: JobScore, assessment: JobAssessment) -> None:
 FEEDBACK_ACTIONS = ("act", "skip", "thumbs_up", "thumbs_down", "maybe_rescue")
 
 
-def record_feedback(session: Session, row: JobScore, action: str, reason: str | None) -> None:
-    """Store the owner's reaction (the signal for future weight tuning) and apply it to this role now."""
+def record_feedback(session: Session, row: JobScore, action: str, reason: str | None,
+                    chips: list[str] | None = None) -> "JobFeedback":
+    """Store the owner's reaction (the signal for future weight tuning) and apply it to this role now.
+    `chips`: the one-tap reasons (Part 5c); a typed reason is matched to chips too. For a skip without a
+    reason, the agent's probable reasons are worked out from the role's facts (free) and kept as guesses."""
     from app.core import audit
     from app.models.score import JobFeedback
+    from app.modules.m5_profile.reasons import CHIPS, chips_from_text, infer
 
     if action not in FEEDBACK_ACTIONS:
         raise ValueError(f"action must be one of {FEEDBACK_ACTIONS}")
-    session.add(JobFeedback(cluster_id=row.cluster_id, action=action, reason=reason,
-                            score_at_time=row.score, band_at_time=row.band))
+    unknown = [c for c in chips or [] if c not in CHIPS]
+    if unknown:
+        raise ValueError(f"unknown reason(s) {unknown}; use {list(CHIPS)}")
+    typed = chips_from_text(reason)
+    if chips:  # you tapped reasons: typed text only adds real matches, not "other"
+        typed = [c for c in typed if c != "other"]
+    given = list(dict.fromkeys([*(chips or []), *typed]))
+    from app.modules.m5_profile import store
+
+    owner = store.as_owner(store.load_confirmed(session)) or get_config().owner  # this session's view of you
+    guessed = infer(session, row.cluster_id, owner) if action in ("skip", "thumbs_down") else []
+    feedback = JobFeedback(cluster_id=row.cluster_id, action=action, reason=reason, chips=given, inferred=guessed,
+                           score_at_time=row.score, band_at_time=row.band)
+    session.add(feedback)
     row.owner_action = action
     assessment = session.get(JobAssessment, row.assessment_id)
     _rebanding(row, assessment)
@@ -185,12 +201,13 @@ def record_feedback(session: Session, row: JobScore, action: str, reason: str | 
         with session.begin_nested():  # a memory problem rolls back only this, never your feedback
             record_role_feedback(session, company=session.get(Company, job.company_id).name, title=job.title,
                                  family=read.get("role_family"), level=read.get("level"), action=action,
-                                 reason=reason, cluster_id=row.cluster_id)
+                                 reason=reason, cluster_id=row.cluster_id, chips=given, inferred=guessed)
     except Exception as e:  # memory is a help, never a reason to lose your feedback
         log.warning("couldn't remember feedback: %r", e)
     audit.record(session, "m2", "job_feedback", f"You marked a role '{action}'" + (f": {reason}" if reason else ""),
                  subject_type="job_cluster", subject_id=str(row.cluster_id),
-                 detail={"action": action, "reason": reason, "score": row.score})
+                 detail={"action": action, "reason": reason, "chips": given, "probably": guessed, "score": row.score})
+    return feedback
 
 
 def update_similarities(session: Session, limit: int = 400) -> Counter:

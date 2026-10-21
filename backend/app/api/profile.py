@@ -103,7 +103,7 @@ def memory_beliefs(session: Session = Depends(get_session)) -> dict:
     return M.beliefs(session, LLM()).model_dump()
 
 
-@router.post("/memory/{entry_id}/{action}")
+@router.post("/memory/{entry_id:int}/{action}")
 def memory_action(entry_id: int, action: str, session: Session = Depends(get_session)) -> dict:
     """pin | unpin | forget | restore | keep (the Memory screen's buttons)."""
     from app.modules.m5_profile import memory as M
@@ -112,3 +112,11 @@ def memory_action(entry_id: int, action: str, session: Session = Depends(get_ses
         return _mem_out(M.act(session, entry_id, action))
     except M.MemoryError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@router.post("/memory/undo/{batch}")
+def memory_undo(batch: str, session: Session = Depends(get_session)) -> dict:
+    """The [Undo] on 'set aside N earlier skips' after a direction change."""
+    from app.modules.m5_profile import memory as M
+
+    return {"restored": M.undo_set_aside(session, batch)}

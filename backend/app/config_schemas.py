@@ -103,6 +103,8 @@ class OwnerStub(Strict):
     # Part 5b: how open you are to sideways moves — low: never; medium: only at a step-up brand; high: anywhere
     # that isn't a step down.
     lateral_appetite: Literal["low", "medium", "high"] = "medium"
+    # Part 5c: the lowest yearly pay (INR) you'd consider, if higher than "more than my current pay".
+    pay_floor_annual: int | None = Field(None, ge=0)
     role_families: RoleFamilies = Field(default_factory=RoleFamilies)
     skills: Skills = Field(default_factory=Skills)
     work_authorization: WorkAuthorization = Field(default_factory=WorkAuthorization)

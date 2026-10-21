@@ -24,8 +24,12 @@ def check_profile_task() -> dict:
                 result["direction"] = direction.refresh(s, llm)
         with session_scope() as s:
             result["memory_clashes"] = memory.check_clashes(s, llm)
-    with session_scope() as s:
-        result["taste"] = memory.update_taste(s)
-        result["memory_age"] = memory.age(s)
+    for name, step in (("taste", memory.update_taste), ("memory_age", memory.age)):
+        try:  # each on its own: one failing never undoes the other
+            with session_scope() as s:
+                result[name] = step(s)
+        except Exception as e:
+            log.warning("m5 %s failed: %r", name, e)
+            result[name] = {"error": str(e)[:200]}
     log.info("m5.check_profile: %s", result)
     return result

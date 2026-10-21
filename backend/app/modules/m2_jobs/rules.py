@@ -152,6 +152,14 @@ def _comp(read: dict, owner: OwnerStub, rules: JobRules, ctx: Context, table: di
     a.comp = {"source": source, "currency": currency, "range_local": [low * mult, high * mult],
               "mid_inr": round(mid_inr), "basis": basis, "ratio": round(ratio, 2),
               "current_inr": current.annual_ctc}
+    floor = getattr(owner, "pay_floor_annual", None)
+    if floor and mid_inr < floor:  # your own floor (Part 5c), on top of "more than my current pay"
+        a.comp["below_floor"] = True
+        if source == "stated" or read.get("pay_estimate_confidence") == "high":  # same bar as the pay rule
+            a.comp["verdict"] = "below"
+            a.reasons.append(f"pay: below the floor you set (about {mid_inr / 1e5:.0f} vs {floor / 1e5:.0f} LPA)")
+            return
+        a.flags.append("comp: may be below your floor")
 
     if source == "stated":
         if ratio < 1 - band:

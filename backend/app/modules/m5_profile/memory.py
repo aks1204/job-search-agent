@@ -46,7 +46,7 @@ def _now() -> datetime:
 
 def _shareable(e: MemoryEntry) -> bool:
     """Your pay and notice period never go to the AI service (the pay rules run on your machine)."""
-    return (e.context or {}).get("module") != "m5.profile"
+    return (e.context or {}).get("module") not in ("m5.profile", "m2.pay")
 
 
 # --- answers: asked at most once -------------------------------------------------------------------
@@ -89,13 +89,18 @@ def already_answered(session: Session, question: str) -> MemoryEntry | None:
 # --- precedents from your feedback on roles -----------------------------------------------------------
 
 def record_role_feedback(session: Session, *, company: str, title: str, family: str | None, level: str | None,
-                         action: str, reason: str | None, cluster_id: int) -> MemoryEntry:
+                         action: str, reason: str | None, cluster_id: int, chips: list[str] | None = None,
+                         inferred: list[dict] | None = None) -> MemoryEntry:
+    from app.modules.m5_profile.reasons import explain
+
     what = {"act": "pursue it", "skip": "skip it", "thumbs_up": "liked it", "thumbs_down": "disliked it",
             "maybe_rescue": "rescue it from Maybe"}.get(action, action)
-    meaning = (f"{title} at {company} ({family or 'role'}, {level or 'level unclear'}). "
-               f"You chose to {what}" + (f": {reason}" if reason else "."))
+    why = f": {reason}" if reason else (f" ({explain(chips or [], inferred or [], private=True)})"
+                                       if action in ("skip", "thumbs_down") else ".")
+    meaning = f"{title} at {company} ({family or 'role'}, {level or 'level unclear'}). You chose to {what}{why}"
     entry = remember(session, "precedent", meaning, {"action": action, "reason": reason, "title": title,
-                                                     "company": company, "family": family},
+                                                     "company": company, "family": family,
+                                                     "chips": chips or [], "inferred": inferred or []},
                      context={"module": "m2", "cluster_id": cluster_id}, provenance={"source": "owner_feedback"},
                      evergreen=True, dedupe=False)
     # Your newer decision on THIS role replaces the older one (kept as history); other roles are untouched.
@@ -116,79 +121,163 @@ def examples_for_job(session: Session, text: str, k: int = 3) -> list[str]:
         e.last_used_at = _now()
     out = [e.meaning for e in used]
     out += [e.meaning for e in session.scalars(select(MemoryEntry).where(
-        MemoryEntry.kind == "taste_signal", MemoryEntry.status == "active").limit(5)).all()]
+        MemoryEntry.kind == "taste_signal", MemoryEntry.status == "active").limit(8)).all()
+            if _shareable(e)][:5]  # pay patterns stay on your machine
     return out
 
 
 # --- patterns (taste signals) ----------------------------------------------------------------------
 
 def update_taste(session: Session, now: datetime | None = None) -> dict:
-    """Count your reactions by role family over the last TASTE_WINDOW_DAYS: a repeated pattern becomes a
-    taste signal; a strong 'you keep skipping X' on a step-up family becomes a direction suggestion."""
+    """Patterns in your reactions over the last TASTE_WINDOW_DAYS — not just by role family but by the reason
+    (yours, or the agent's 'probably'): location, pay, company, level, hours. A repeated pattern becomes a
+    signal; a strong one becomes the matching yes/no suggestion (exclude a family / drop a city / set a pay
+    floor). Skips explained by something else (pay, location…) don't count against the role family."""
     from app.models.assessment import JobAssessment
+    from app.models.job import JobPosting
     from app.models.score import JobFeedback, JobScore
+    from app.modules.m5_profile.reasons import _city, effective
 
     now = now or _now()
     since = now - timedelta(days=TASTE_WINDOW_DAYS)
     resets = _reset_dates(session)
     rows = session.execute(
-        select(JobFeedback.action, JobAssessment.read, JobFeedback.created_at)
+        select(JobFeedback.action, JobFeedback.chips, JobFeedback.inferred, JobFeedback.created_at,
+               JobAssessment.read, JobAssessment.comp, JobPosting.location)
         .join(JobScore, JobScore.cluster_id == JobFeedback.cluster_id)
         .join(JobAssessment, JobAssessment.id == JobScore.assessment_id)
+        .join(JobPosting, JobPosting.id == JobAssessment.job_id)
         .where(JobFeedback.created_at >= since)
     ).all()
-    neg, pos = Counter(), Counter()
-    for action, read, created in rows:
+    neg, pos = Counter(), Counter()     # keys: ("family", x) | ("location", city) | ("company"|"level"|"hours", "")
+    skipped_pay: list[int] = []
+    pursued_pay: list[int] = []
+    for action, chips, inferred, created, read, comp, location in rows:
         family = ((read or {}).get("role_family") or "").strip().lower()
-        if not family:
-            continue
-        reset = max((ts for name, ts in resets.items()
-                     if _words(name) and (_words(name) <= _words(family) or _words(family) <= _words(name))),
-                    default=None)
-        if reset is not None and created < reset and action in ("skip", "thumbs_down"):
-            continue  # an old dislike from before your yes on this family: doesn't count any more
-        if action in ("skip", "thumbs_down"):
-            neg[family] += 1
-        elif action in ("act", "thumbs_up", "maybe_rescue"):
-            pos[family] += 1
+        disliked = action in ("skip", "thumbs_down")
+        liked = action in ("act", "thumbs_up", "maybe_rescue")
+        reasons = effective(chips or [], inferred or []) if disliked else []
+        mid = (comp or {}).get("mid_inr")
+        if liked and mid:
+            pursued_pay.append(mid)
+        if disliked and family:
+            reset = max((ts for name, ts in resets.items()
+                         if _words(name) and (_words(name) <= _words(family) or _words(family) <= _words(name))),
+                        default=None)
+            old = reset is not None and created < reset
+            if not old and (not reasons or "not_my_field" in reasons):   # only skips about the role itself
+                neg[("family", family)] += 1
+        elif liked and family:
+            pos[("family", family)] += 1
+        if disliked:
+            if "location" in reasons and _city(location):
+                neg[("location", _city(location))] += 1
+            if "pay" in reasons and mid:
+                skipped_pay.append(mid)
+            for chip, dim in (("company", "company"), ("too_junior", "junior"), ("too_senior", "senior"),
+                              ("hours_travel", "hours")):
+                if chip in reasons:
+                    neg[(dim, "")] += 1
+        elif liked and _city(location):
+            pos[("location", _city(location))] += 1
+
     seen, out = set(), {"signals": 0, "suggested": 0, "faded": 0}
-    for family in set(neg) | set(pos):
-        n, p = neg[family], pos[family]
-        if n >= TASTE_MIN_EVENTS and n >= 3 * max(p, 1):
-            meaning = f"You usually pass on {family} roles ({n} skipped vs {p} pursued in the last 6 months)."
-            kind = "dislike"
-        elif p >= TASTE_MIN_EVENTS and p >= 3 * max(n, 1):
-            meaning = f"You usually go for {family} roles ({p} pursued vs {n} skipped in the last 6 months)."
-            kind = "like"
-        else:
-            continue
-        # One signal per family (by its exact family, never by similar wording); one you forgot stays forgotten.
-        latest = session.scalar(select(MemoryEntry).where(
-            MemoryEntry.kind == "taste_signal", MemoryEntry.content["family"].astext == family,
-            MemoryEntry.content["kind"].astext.is_distinct_from("reset"))  # reset markers keep their dates
-            .order_by(MemoryEntry.id.desc()))
+
+    def signal(key: str, meaning: str, content: dict, module: str = "m2") -> MemoryEntry | None:
+        # One signal per pattern (by its exact key, never by similar wording); one you forgot stays forgotten.
+        cond = MemoryEntry.content["key"].astext == key
+        if content.get("family"):  # patterns saved before keys existed were keyed by family only
+            cond = cond | (MemoryEntry.content["key"].astext.is_(None)
+                           & (MemoryEntry.content["family"].astext == content["family"])
+                           & MemoryEntry.content["kind"].astext.is_distinct_from("reset"))
+        latest = session.scalar(select(MemoryEntry).where(MemoryEntry.kind == "taste_signal", cond)
+                                .order_by(MemoryEntry.id.desc()))
         if latest is not None and (latest.content or {}).get("forgotten_by_owner"):
-            continue
-        content = {"family": family, "kind": kind, "skipped": n, "pursued": p}
-        if latest is not None and latest.status in ("active", "archived"):
+            return None
+        content = {**content, "key": key}
+        if latest is not None and latest.status in ("active", "archived") and (latest.content or {}).get("kind") != "reset":
             from app.core.embeddings import embed_one
 
             latest.meaning, latest.embedding, latest.content, latest.status = meaning, embed_one(meaning), content, "active"
             entry = latest
         else:
-            entry = remember(session, "taste_signal", meaning, content, context={"module": "m2"},
+            entry = remember(session, "taste_signal", meaning, content, context={"module": module},
                              provenance={"source": "feedback_pattern"}, dedupe=False)
         entry.last_used_at = now
         seen.add(entry.id)
         out["signals"] += 1
-        if kind == "dislike" and _suggest_exclusion(session, family, meaning):
-            out["suggested"] += 1
+        return entry
+
+    def strong(n: int, p: int) -> bool:
+        return n >= TASTE_MIN_EVENTS and n >= 3 * max(p, 1)
+
+    for (dim, value), n in list(neg.items()) + [(k, 0) for k in pos if k not in neg]:
+        p = pos[(dim, value)]
+        if dim == "family":
+            if strong(n, p):
+                meaning = f"You usually pass on {value} roles ({n} skipped vs {p} pursued in the last 6 months)."
+                if signal(f"family:{value}", meaning, {"dim": "family", "family": value, "kind": "dislike",
+                                                       "skipped": n, "pursued": p}) \
+                        and _suggest_exclusion(session, value, meaning):
+                    out["suggested"] += 1
+            elif strong(p, n):
+                signal(f"family:{value}", f"You usually go for {value} roles ({p} pursued vs {n} skipped in the last 6 months).",
+                       {"dim": "family", "family": value, "kind": "like", "skipped": n, "pursued": p})
+        elif dim == "location" and strong(n, p):
+            meaning = f"You usually skip roles in {value.title()} ({n} skipped vs {p} pursued in the last 6 months)."
+            if signal(f"location:{value}", meaning, {"dim": "location", "city": value, "kind": "dislike",
+                                                     "skipped": n, "pursued": p}) \
+                    and _suggest_other(session, "location", "locations", value.title(), meaning):
+                out["suggested"] += 1
+        elif dim in ("company", "junior", "senior", "hours") and strong(n, 0):
+            text = {"company": "the company (brand or services-heavy firms)", "junior": "being below your level",
+                    "senior": "being well above your level / years", "hours": "hours, shifts or travel"}[dim]
+            signal(f"{dim}:", f"You often skip roles because of {text} ({n} in the last 6 months).",
+                   {"dim": dim, "kind": "dislike", "skipped": n})
+    if len(skipped_pay) >= TASTE_MIN_EVENTS:
+        floor = -(-max(skipped_pay) // 100_000) * 100_000          # round up to a whole lakh
+        if not any(x < floor for x in pursued_pay):                 # you never went for anything below it
+            meaning = f"You usually skip roles paying below ~{floor / 1e5:.0f} LPA ({len(skipped_pay)} skipped)."
+            if signal("pay:floor", meaning, {"dim": "pay", "kind": "dislike", "floor": floor, "skipped": len(skipped_pay)},
+                      module="m2.pay") and _suggest_other(session, "pay_floor", "pay_floor", str(floor), meaning):
+                out["suggested"] += 1
     for entry in session.scalars(select(MemoryEntry).where(MemoryEntry.kind == "taste_signal",
                                                            MemoryEntry.status == "active")).all():
         if entry.id not in seen and not entry.pinned:
             entry.status = "archived"          # the pattern stopped repeating: it fades
             out["faded"] += 1
     return out
+
+
+def _suggest_other(session: Session, kind: str, target: str, item: str, why: str) -> bool:
+    """A strong location / pay pattern → one yes/no (drop the city from your preferred list / set a pay floor)."""
+    from app.models.direction import DirectionSuggestion
+    from app.modules.m5_profile import direction as D
+    from app.modules.m5_profile import store
+
+    row = store.load_confirmed(session)
+    owner = store.as_owner(row)
+    current = D.current_view(session)
+    if owner is None or current is None:
+        return False
+    if kind == "location" and item.lower() not in {c.strip().lower() for c in owner.preferred_locations_india}:
+        return False                     # not on your list anyway: nothing to change
+    if kind == "pay_floor":
+        current_pay = owner.current_compensation.annual_ctc if owner.current_compensation else 0
+        if int(item) <= current_pay or (owner.pay_floor_annual and owner.pay_floor_annual >= int(item)):
+            return False                 # "more than your current pay" or your floor already covers it
+    if already_answered(session, D.question_of(kind, target, item)):
+        return False
+    exists = session.scalar(select(DirectionSuggestion.id).where(
+        DirectionSuggestion.status.in_(("open", "declined", "accepted")), DirectionSuggestion.kind == kind,
+        func.lower(DirectionSuggestion.item) == item.lower()).limit(1))
+    if exists:
+        return False
+    session.add(DirectionSuggestion(direction_id=current.id, kind=kind, target=target, item=item, why=why,
+                                    strength="taste", status="open", resume_hash=row.resume_hash))
+    notify(session, "needs_you", "needs_you", "A pattern in your choices",
+           detail=f"{why} (see: direction)", subject=("direction", "taste"))
+    return True
 
 
 def _suggest_exclusion(session: Session, family: str, why: str) -> bool:
@@ -419,28 +508,96 @@ def after_family_included(session: Session, family: str, direction_id: int, resu
     remember(session, "taste_signal", f"Reset: you started including {family} roles.",
              {"family": family, "kind": "reset", "reset_at": _now().isoformat()}, context={"module": "m2"},
              provenance={"source": "direction_change"}, dedupe=False).status = "archived"
-    skips = old_skips_of(session, family)
+    # Each old skip on its own merits: about the field → set aside; about something else → kept; unclear → asked.
+    field, other, unclear = sort_skips(old_skips_of(session, family))
+    import secrets
+
+    batch = secrets.token_hex(3)
+    for e in field:
+        e.status = "archived"
+        e.content = {**(e.content or {}), "set_aside_by": "your yes to including these roles", "set_aside_batch": batch}
+    out.update(set_aside=len(field), kept=len(other))
+    if field or other:
+        lines = []
+        if field:
+            lines.append(f"Set aside {len(field)} earlier skip(s) that were about the field ("
+                         + "; ".join(_short(e) for e in field[:3]) + ").")
+        if other:
+            lines.append(f"Kept {len(other)} that were about other things ("
+                         + "; ".join(_short(e) for e in other[:3]) + ").")
+        notify(session, "update", "happened", f"You now include {family} roles",
+               detail=" ".join(lines) + (f" Undo: memory undo {batch}" if field else ""),
+               subject=("memory", f"undo:{batch}"))
     already = session.scalar(select(DirectionSuggestion.id).where(
         DirectionSuggestion.kind == "memory", DirectionSuggestion.status == "open",
         func.lower(DirectionSuggestion.item) == family.lower()).limit(1))
-    if skips and not already:
+    if unclear and not already:
         session.add(DirectionSuggestion(
             direction_id=direction_id, kind="memory", target="memory", item=family, strength="taste", status="open",
-            resume_hash=resume_hash, why=f"{len(skips)} earlier skip(s) of these roles might no longer reflect what you want"))
+            resume_hash=resume_hash,
+            why=f"{len(unclear)} earlier skip(s) without a reason I can work out: " + "; ".join(_short(e) for e in unclear[:3])))
         notify(session, "needs_you", "needs_you", f"You now include {family} roles",
-               detail=f"{len(skips)} earlier skip(s) of such roles might no longer reflect what you want. "
+               detail=f"I can't tell why you skipped {len(unclear)} earlier role(s) like this. "
                       "Stop using them as examples? (see: direction)", subject=("direction", "memory"))
         out["asked"] = True
     return out
 
 
-def set_aside_examples(session: Session, family: str) -> int:
-    """Your yes: earlier skips of this family stop being shown to the AI as examples (archived, not deleted)."""
-    skips = old_skips_of(session, family)
+def _reasons_of(e: MemoryEntry) -> list[str]:
+    """Why a remembered skip happened: your chips / typed reason first, else the agent's probable reasons."""
+    from app.modules.m5_profile.reasons import chips_from_text
+
+    c = e.content or {}
+    given = list(c.get("chips") or []) or chips_from_text(c.get("reason"))
+    return given or [i.get("chip") for i in c.get("inferred") or []]
+
+
+def sort_skips(skips: list[MemoryEntry]) -> tuple[list, list, list]:
+    field, other, unclear = [], [], []
     for e in skips:
+        reasons = [r for r in _reasons_of(e) if r != "other"] or _reasons_of(e)
+        if "not_my_field" in reasons:
+            field.append(e)
+        elif reasons:
+            other.append(e)
+        else:
+            unclear.append(e)
+    return field, other, unclear
+
+
+def _short(e: MemoryEntry) -> str:
+    c = e.content or {}
+    reasons = ", ".join(r.replace("_", " ") for r in _reasons_of(e)) or "no reason"
+    return f"{c.get('title', 'a role')} at {c.get('company', '?')}: {reasons}"
+
+
+def set_aside_examples(session: Session, family: str) -> int:
+    """Your yes to the question: the earlier skips whose reason couldn't be worked out stop being shown to the
+    AI as examples (archived, not deleted). Skips with a clear reason were already handled."""
+    _, _, unclear = sort_skips(old_skips_of(session, family))
+    for e in unclear:
         e.status = "archived"
         e.content = {**(e.content or {}), "set_aside_by": "you, after including these roles"}
-    return len(skips)
+    return len(unclear)
+
+
+def undo_set_aside(session: Session, batch: str) -> int:
+    """The [Undo] on 'set aside N earlier skips': they're used as examples again."""
+    n = 0
+    for e in session.scalars(select(MemoryEntry).where(MemoryEntry.content["set_aside_batch"].astext == batch)).all():
+        cluster = (e.context or {}).get("cluster_id")
+        newer = session.scalar(select(MemoryEntry.id).where(
+            MemoryEntry.kind == "precedent", MemoryEntry.status == "active", MemoryEntry.id != e.id,
+            MemoryEntry.context["cluster_id"].astext == str(cluster)).limit(1)) if cluster is not None else None
+        if newer:  # you gave newer feedback on that role meanwhile: that one stands
+            e.status, e.superseded_by_id = "superseded", newer
+            continue
+        e.status = "active"
+        e.content = {k: v for k, v in (e.content or {}).items() if k not in ("set_aside_by", "set_aside_batch")}
+        n += 1
+    if n:
+        audit.record(session, "m5", "memory_undo", f"You undid setting aside {n} earlier skip(s)", subject_type="memory")
+    return n
 
 
 def _reset_dates(session: Session) -> dict[str, datetime]:

@@ -205,7 +205,11 @@ def describe(s: DirectionSuggestion) -> str:
     if s.kind == "appetite":
         return f"Change your openness to sideways moves to '{s.item}'? ({s.why})"
     if s.kind == "memory":
-        return f"You now include '{s.item}' roles. Stop using your earlier skips of them as examples? ({s.why})"
+        return f"You now include '{s.item}' roles. Stop using the earlier skips I can't explain as examples? ({s.why})"
+    if s.kind == "location":
+        return f"Remove {s.item} from your preferred locations? ({s.why})"
+    if s.kind == "pay_floor":
+        return f"Only consider roles paying at least ~{int(s.item) / 1e5:.0f} LPA? ({s.why})"
     return f"Change your track to {s.item}? ({s.why})"
 
 
@@ -260,6 +264,10 @@ def answer(session: Session, suggestion_id: int, yes: bool) -> DirectionSuggesti
         data["target_roles"] = roles + [item] if s.kind == "add" else roles
     elif s.kind == "appetite":
         data["lateral_appetite"] = item
+    elif s.kind == "location":
+        data["preferred_locations_india"] = [c for c in data.get("preferred_locations_india") or [] if _norm(c) != _norm(item)]
+    elif s.kind == "pay_floor":
+        data["pay_floor_annual"] = int(item)
     elif s.kind == "track":
         data["track"] = item.split(" ")[0]
         data["open_to_management_track"] = "open to managing" in item
@@ -289,7 +297,8 @@ def _remember(session: Session, s: DirectionSuggestion, answer_text: str) -> Non
         from app.modules.m5_profile.memory import record_answer
 
         with session.begin_nested():
-            record_answer(session, question_of(s.kind, s.target, s.item), answer_text, module="m5.direction",
+            module = "m5.profile" if s.kind == "pay_floor" else "m5.direction"  # pay stays private
+            record_answer(session, question_of(s.kind, s.target, s.item), answer_text, module=module,
                           extra={"resume_hash": s.resume_hash})
     except Exception as e:
         log.warning("couldn't remember the answer: %r", e)
