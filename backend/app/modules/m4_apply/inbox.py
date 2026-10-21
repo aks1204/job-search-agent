@@ -359,6 +359,15 @@ def assign(session: Session, no: int, *, cluster_id: int | None = None, other_ti
         _apply_to(session, row, target, row.kind or "received", outside=cluster_id is None, summary="you said which role",
                   company=company)
         row.outcome = "assigned"
+        try:  # Part 5c: remembered (and visible in "what the agent believes")
+            from app.modules.m5_profile.memory import record_answer
+
+            title = session.get(JobCluster, target).title
+            with session.begin_nested():
+                record_answer(session, f"Which {company.name} role was email {no} about ({row.kind})?", title,
+                              module="m4.assign", extra={"message_no": no})
+        except Exception as e:
+            log.warning("couldn't remember the answer: %r", e)
     from app.models.notification import Notification
 
     for n in session.scalars(select(Notification).where(Notification.subject_type == "inbox",

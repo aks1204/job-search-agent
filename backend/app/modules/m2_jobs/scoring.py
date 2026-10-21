@@ -175,7 +175,19 @@ def record_feedback(session: Session, row: JobScore, action: str, reason: str | 
     session.add(JobFeedback(cluster_id=row.cluster_id, action=action, reason=reason,
                             score_at_time=row.score, band_at_time=row.band))
     row.owner_action = action
-    _rebanding(row, session.get(JobAssessment, row.assessment_id))
+    assessment = session.get(JobAssessment, row.assessment_id)
+    _rebanding(row, assessment)
+    try:  # Part 5c: your decision, with its reason, is remembered and shown to future grades as an example
+        from app.modules.m5_profile.memory import record_role_feedback
+
+        job = session.get(JobPosting, assessment.job_id)
+        read = assessment.read or {}
+        with session.begin_nested():  # a memory problem rolls back only this, never your feedback
+            record_role_feedback(session, company=session.get(Company, job.company_id).name, title=job.title,
+                                 family=read.get("role_family"), level=read.get("level"), action=action,
+                                 reason=reason, cluster_id=row.cluster_id)
+    except Exception as e:  # memory is a help, never a reason to lose your feedback
+        log.warning("couldn't remember feedback: %r", e)
     audit.record(session, "m2", "job_feedback", f"You marked a role '{action}'" + (f": {reason}" if reason else ""),
                  subject_type="job_cluster", subject_id=str(row.cluster_id),
                  detail={"action": action, "reason": reason, "score": row.score})
@@ -255,6 +267,17 @@ def grade_one(session: Session, llm, row: JobScore) -> JobScore:
         f"Rule flags: {', '.join(assessment.flags or []) or 'none'}",
         "", "--- description ---", (job.description or "(no description)")[:10000],
     ])
+    try:  # Part 5c: the candidate's own past decisions on similar roles, as examples (never as rules)
+        from app.modules.m5_profile.memory import examples_for_job
+
+        with session.begin_nested():
+            past = examples_for_job(session, f"{job.title} at {company.name}. {read.get('one_liner') or ''}")
+    except Exception as e:
+        log.info("no memory examples: %r", e)
+        past = []
+    if past:
+        user += ("\n\n--- the candidate's past decisions on similar roles (examples of their taste; the resume and "
+                 "the description still decide) ---\n" + "\n".join(f"- {p}" for p in past))
     result = llm.structured("judge", system=system, user=user, schema=Grade, purpose="m2.grade_job",
                             session=session, subject=("job", str(job.id)))
     row.grade = result.parsed.model_dump(mode="json")

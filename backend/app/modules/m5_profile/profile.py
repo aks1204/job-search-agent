@@ -237,6 +237,7 @@ def confirm(session: Session, data: dict, *, row: OwnerProfile | None = None) ->
     for n in session.scalars(select(Notification).where(Notification.subject_type == "profile",
                                                         Notification.read_at.is_(None))).all():
         n.read_at = datetime.now(timezone.utc)
+    _remember_time_sensitive(session, data)
     session.flush()
     store.invalidate()
     audit.record(session, "m5", "profile_confirmed", "You confirmed your profile; every module now uses it",
@@ -330,3 +331,24 @@ def draft_id_in(text: str) -> int | None:
         value = first.split(":", 1)[1].strip()
         return int(value) if value.isdigit() else None
     return None
+
+
+def _remember_time_sensitive(session: Session, data: dict) -> None:
+    """Part 5c: your pay and notice period are remembered as answers that go stale after ~6 months."""
+    nested = None
+    try:
+        from app.modules.m5_profile.memory import record_answer
+
+        nested = session.begin_nested()  # a memory problem rolls back only this, never your confirm
+        pay = data.get("current_compensation") or {}
+        if pay.get("annual_ctc"):
+            record_answer(session, "What is your current pay?", f"{pay['annual_ctc']} {pay.get('currency', 'INR')} a year",
+                          module="m5.profile", expires_days=RECONFIRM_AFTER_DAYS)
+        if data.get("notice_period_days") is not None:
+            record_answer(session, "What is your notice period?", f"{data['notice_period_days']} days",
+                          module="m5.profile", expires_days=RECONFIRM_AFTER_DAYS)
+        nested.commit()
+    except Exception as e:
+        if nested is not None and nested.is_active:
+            nested.rollback()
+        log.warning("couldn't remember pay / notice: %r", e)

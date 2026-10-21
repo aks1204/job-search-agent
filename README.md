@@ -491,6 +491,34 @@ docker compose exec api python -m app.cli direction confirm      # … then save
 
 API: `GET /api/direction` · `POST /api/direction/suggestions/{id}` (`{"yes": true}`).
 
+### Part 5c: memory
+
+The agent remembers what you tell it and what you decide, and uses it so it never asks twice:
+
+| What | Examples | Used for |
+|---|---|---|
+| **Answers** | Your yes/no to direction questions, "which role?" answers, pay and notice period | **Asked at most once**: before any question, memory is checked |
+| **Decisions** | Company keep/reject, brand calls, act/skip/👍/👎 on roles **with your reason** | Job grading sees your most similar past decisions as examples |
+| **Patterns** | "You usually pass on sales analytics roles (5 skipped vs 0 pursued)", formed only once it repeats | A strong pattern becomes a **yes/no suggestion** to edit your direction, never a change by itself |
+
+**Ageing:**
+- pay and notice-period answers need re-confirming after about 6 months;
+- patterns that stop repeating fade;
+- anything unused for a year is **archived** (moved aside, not deleted) unless you **pin** it.
+
+**After a resume update,** memories that clearly clash with your new profile (for example "skipped: too senior" after a promotion) are shown to you to **keep** or **forget**. The agent never changes or deletes a memory itself.
+
+**Privacy:** your pay and notice period stay on your machine, and are never sent to the AI service, even for the summary.
+
+```bash
+docker compose exec api python -m app.cli memory                  # what the agent believes about you
+docker compose exec api python -m app.cli memory list             # every memory (--kind answer|precedent|taste_signal, --all)
+docker compose exec api python -m app.cli memory search "travel"
+docker compose exec api python -m app.cli memory pin 12           # unpin | forget | restore | keep
+```
+
+API: `GET /api/memory` · `GET /api/memory/search?q=` · `GET /api/memory/beliefs` · `POST /api/memory/{id}/{pin|unpin|forget|restore|keep}`.
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

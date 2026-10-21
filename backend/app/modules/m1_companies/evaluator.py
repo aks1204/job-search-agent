@@ -74,7 +74,7 @@ def _card_text(company: Company, card: dict) -> str:
 
 def _precedents(session: Session, company: Company, card: dict, profile: str) -> list:
     query = f"{company.name}: {value(card, 'what_they_build')}"
-    hits = memory_search(session, "precedent", query, k=PRECEDENTS_K * 3)
+    hits = memory_search(session, "precedent", query, k=PRECEDENTS_K * 3, module="m1")
     same_profile = [
         (e, sim) for e, sim in hits
         if (e.context or {}).get("module") == "m1" and (e.context or {}).get("profile") == profile

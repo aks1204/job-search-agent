@@ -158,7 +158,7 @@ def refresh(session: Session, llm) -> dict:
     keys = {_key(p) for p in proposed}
     open_now = session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.status == "open")).all()
     for s in open_now:
-        if _key(s) not in keys:
+        if _key(s) not in keys and s.strength != "taste":  # pattern-based ones come from you, not this view
             s.status = "stale"           # no longer suggested
     open_keys = {_key(s) for s in open_now if s.status == "open"}
     declined = session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.status == "declined")).all()
@@ -183,6 +183,12 @@ def refresh(session: Session, llm) -> dict:
     audit.record(session, "m5", "direction_refreshed", f"Re-worked your career direction ({len(new)} new suggestion(s))",
                  subject_type="profile", subject_id=str(row.id))
     return {"direction": direction.id, "new_suggestions": len(new)}
+
+
+def question_of(kind: str, target: str, item: str) -> str:
+    """The question itself (without the reason) — the same words every time, so memory can tell when it
+    was already answered."""
+    return describe(DirectionSuggestion(kind=kind, target=target, item=item, why="")).removesuffix(" ()")
 
 
 def describe(s: DirectionSuggestion) -> str:
@@ -222,6 +228,7 @@ def answer(session: Session, suggestion_id: int, yes: bool) -> DirectionSuggesti
     if not yes:
         s.status, s.answered_at = "declined", datetime.now(timezone.utc)
         audit.record(session, "m5", "direction_declined", f"You said no: {describe(s)}", subject_type="profile")
+        _remember(session, s, "no")
         return s
     row = store.load_confirmed(session)
     if row is None:
@@ -253,7 +260,19 @@ def answer(session: Session, suggestion_id: int, yes: bool) -> DirectionSuggesti
     data["role_families"] = fam
     _save_lists(session, row, data, f"You said yes: {describe(s)}")
     s.status, s.answered_at = "accepted", datetime.now(timezone.utc)  # only once the change is saved
+    _remember(session, s, "yes")
     return s
+
+
+def _remember(session: Session, s: DirectionSuggestion, answer_text: str) -> None:
+    try:  # Part 5c: your answer is remembered (asked at most once; shown in "what the agent believes")
+        from app.modules.m5_profile.memory import record_answer
+
+        with session.begin_nested():
+            record_answer(session, question_of(s.kind, s.target, s.item), answer_text, module="m5.direction",
+                          extra={"resume_hash": s.resume_hash})
+    except Exception as e:
+        log.warning("couldn't remember the answer: %r", e)
 
 
 # --- your own edits ---------------------------------------------------------------------------------

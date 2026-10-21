@@ -70,3 +70,45 @@ def answer_suggestion(suggestion_id: int, body: AnswerIn, session: Session = Dep
     except D.DirectionError as e:
         raise HTTPException(422, str(e)) from e
     return {"id": s.id, "status": s.status}
+
+
+def _mem_out(e) -> dict:
+    return {"id": e.id, "kind": e.kind, "meaning": e.meaning, "status": e.status, "pinned": e.pinned,
+            "clash": (e.content or {}).get("clash"), "created_at": e.created_at, "last_used_at": e.last_used_at,
+            "expires_at": e.expires_at}
+
+
+@router.get("/memory")
+def list_memory(kind: str | None = None, archived: bool = False, session: Session = Depends(get_session)) -> list[dict]:
+    from app.modules.m5_profile import memory as M
+
+    return [_mem_out(e) for e in M.listing(session, kind=kind, include_archived=archived)]
+
+
+@router.get("/memory/search")
+def search_memory(q: str, session: Session = Depends(get_session)) -> list[dict]:
+    from app.modules.m5_profile import memory as M
+
+    return [{**_mem_out(e), "similarity": round(sim, 3)} for e, sim in M.search_text(session, q)]
+
+
+@router.get("/memory/beliefs")
+def memory_beliefs(session: Session = Depends(get_session)) -> dict:
+    """'What the agent believes about you' (cached until your memories change)."""
+    from app.core.llm import LLM
+    from app.modules.m5_profile import memory as M
+
+    if not LLM.available():
+        raise HTTPException(400, "needs ANTHROPIC_API_KEY")
+    return M.beliefs(session, LLM()).model_dump()
+
+
+@router.post("/memory/{entry_id}/{action}")
+def memory_action(entry_id: int, action: str, session: Session = Depends(get_session)) -> dict:
+    """pin | unpin | forget | restore | keep (the Memory screen's buttons)."""
+    from app.modules.m5_profile import memory as M
+
+    try:
+        return _mem_out(M.act(session, entry_id, action))
+    except M.MemoryError as e:
+        raise HTTPException(422, str(e)) from e

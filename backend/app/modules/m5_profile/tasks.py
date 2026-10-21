@@ -1,12 +1,13 @@
-"""Module 5 background job (daily): notice a new resume, remind about stale pay / notice period, and re-work
-your career direction after your profile changed (its suggestions wait for your yes / no)."""
+"""Module 5 background job (daily): notice a new resume, remind about stale pay / notice period, re-work your
+career direction after your profile changed, and look after memory (patterns, ageing, clashes with a new
+resume). Every change to what the agent looks for still waits for your yes."""
 
 import logging
 
 from app.celery_app import celery_app
 from app.core.llm import LLM
 from app.db import session_scope
-from app.modules.m5_profile import direction
+from app.modules.m5_profile import direction, memory
 from app.modules.m5_profile.profile import check
 
 log = logging.getLogger(__name__)
@@ -21,5 +22,10 @@ def check_profile_task() -> dict:
         with session_scope() as s:
             if direction.needs_refresh(s):
                 result["direction"] = direction.refresh(s, llm)
+        with session_scope() as s:
+            result["memory_clashes"] = memory.check_clashes(s, llm)
+    with session_scope() as s:
+        result["taste"] = memory.update_taste(s)
+        result["memory_age"] = memory.age(s)
     log.info("m5.check_profile: %s", result)
     return result

@@ -46,6 +46,7 @@
     python -m app.cli assign <no> [<role id> | --other "Job title" | --ignore]   # Module 4: which role an email is about
     python -m app.cli profile read|export|confirm|show|edit     # Module 5: your profile from your resume
     python -m app.cli direction [refresh | yes <id> | no <id> | edit | confirm]   # Module 5: career direction
+    python -m app.cli memory [list|search <words>|pin|unpin|forget|restore|keep <id>]   # Module 5: memory
 """
 
 import argparse
@@ -1382,6 +1383,55 @@ def direction_cmd(action: str, suggestion_id: int | None) -> int:
     return 0
 
 
+def memory_cmd(action: str, arg: str | None, kind: str | None, include_archived: bool) -> int:
+    from app.core.llm import LLM
+    from app.db import session_scope
+    from app.modules.m5_profile import memory as M
+
+    with session_scope() as s:
+        if action == "believes":
+            if not LLM.available():
+                print("Needs ANTHROPIC_API_KEY in .env")
+                return 1
+            topics = M.beliefs(s, LLM()).topics
+            if not topics:
+                print("The agent hasn't learned anything about you yet.")
+            for t in topics:
+                print(t.topic)
+                for line in t.statements:
+                    print(f"  - {line}")
+            return 0
+        if action == "list":
+            rows = M.listing(s, kind=kind, include_archived=include_archived)
+            if not rows:
+                print("No memories yet.")
+            for e in rows:
+                flags = " · PINNED" if e.pinned else ""
+                flags += " · needs re-confirming" if e.status == "needs_reconfirm" else ""
+                flags += " · archived" if e.status == "archived" else ""
+                flags += " · MAY CLASH with your new resume" if (e.content or {}).get("clash") else ""
+                print(f"[{e.id}] ({e.kind}) {e.meaning}{flags}")
+            return 0
+        if action == "search":
+            if not arg:
+                print("What to search for? e.g. memory search \"too much travel\"")
+                return 1
+            for e, sim in M.search_text(s, arg):
+                print(f"[{e.id}] ({e.kind}, {sim:.0%} similar) {e.meaning}")
+            return 0
+        if not arg or not arg.isdigit():
+            print(f"Which memory? e.g. memory {action} 12")
+            return 1
+        try:
+            e = M.act(s, int(arg), action)
+        except M.MemoryError as err:
+            print(err)
+            return 1
+        print({"pin": "Pinned (never archived)", "unpin": "Unpinned", "forget": "Forgotten (archived; `memory restore`"
+               " brings it back)", "restore": "Restored", "keep": "Kept as it is"}[action] + f": {e.meaning[:100]}")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1508,6 +1558,12 @@ def main() -> None:
     p_dir = sub.add_parser("direction", help="Module 5: your career direction — families, target roles, suggestions")
     p_dir.add_argument("action", nargs="?", default="show", choices=["show", "refresh", "yes", "no", "edit", "confirm"])
     p_dir.add_argument("suggestion_id", nargs="?", type=int)
+    p_mem = sub.add_parser("memory", help="Module 5: what the agent remembers about you — and your control over it")
+    p_mem.add_argument("action", nargs="?", default="believes",
+                       choices=["believes", "list", "search", "pin", "unpin", "forget", "restore", "keep"])
+    p_mem.add_argument("arg", nargs="*", help="a memory number, or words to search for")
+    p_mem.add_argument("--kind", choices=["answer", "precedent", "taste_signal"])
+    p_mem.add_argument("--all", action="store_true", help="include archived memories")
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -1608,6 +1664,8 @@ def main() -> None:
         sys.exit(profile_cmd(args.action))
     if args.command == "direction":
         sys.exit(direction_cmd(args.action, args.suggestion_id))
+    if args.command == "memory":
+        sys.exit(memory_cmd(args.action, " ".join(args.arg) or None, args.kind, args.all))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 
