@@ -47,7 +47,8 @@ def test_merge_takes_facts_from_the_resume_and_keeps_your_answers():
     data, notes = P.merge(STUB, read())
     assert data["current_role"] == {"title": "Decision Analytics Associate", "company": "ZS Associates", "started": "2023-01"}
     assert [j["company"] for j in data["employment_history"]] == ["ZS Associates", "Acme"]
-    assert data["total_experience_years"] == 3.4 and data["mobile"] == "+91 90000 00000"
+    assert data["total_experience_years"] == store.experience_years(data["employment_history"])  # from the dates
+    assert data["mobile"] == "+91 90000 00000"
     assert data["notice_period_days"] == 60 and data["level_ladder"] == STUB["level_ladder"]   # your answers stay
     assert any(c["field"] == "name" for c in notes["changed"])
     assert OwnerStub.model_validate(data)
@@ -82,3 +83,22 @@ def test_a_review_file_remembers_which_draft_it_came_from(tmp_path):
     text = P.export(SimpleNamespace(id=42, data=data, notes=notes), tmp_path / "p.yaml").read_text(encoding="utf-8")
     assert P.draft_id_in(text) == 42                    # confirm refuses a file from an older draft
     assert P.draft_id_in("current_role: x") is None
+
+
+@pytest.mark.parametrize("history, years", [
+    ([{"start": "2023-11", "end": None}], 3.0),                                   # 2y11m → 3
+    ([{"start": "2024-03", "end": None}], 2.5),                                   # 2y7m → 2.5
+    ([{"start": "2024-08", "end": None}], 2.0),                                   # 2y2m → 2
+    ([{"start": "2024-07", "end": None}], 2.5),                                   # exactly 2y3m → 2.5 (halves up)
+    ([{"start": "2021-07", "end": "2022-12"}, {"start": "2023-01", "end": None}], 5.5),   # two jobs back to back
+    ([{"start": "2022-01", "end": "2023-06"}, {"start": "2023-01", "end": None}], 5.0),   # overlap counted once
+    ([{"start": "", "end": None}], None),
+])
+def test_experience_comes_from_job_dates(history, years):
+    assert store.experience_years(history, today=date(2026, 10, 21)) == years
+
+
+def test_the_profile_in_use_keeps_its_experience_current():
+    row = SimpleNamespace(id=1, data={**STUB, "total_experience_years": 1.0,
+                                      "employment_history": [{"company": "ZS", "title": "A", "start": "2023-11", "end": None}]})
+    assert store.as_owner(row).total_experience_years >= 3.0                  # not the stale stored number

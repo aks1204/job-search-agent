@@ -1282,8 +1282,9 @@ def profile_cmd(action: str) -> int:
             else:
                 d = row.data
                 cr = d.get("current_role") or {}
+                years = store.experience_years(d.get("employment_history")) or d.get("total_experience_years")
                 print(f"{d.get('name')} · {cr.get('title')} at {cr.get('company')} since {cr.get('started')}"
-                      f" · {d.get('total_experience_years')} years · confirmed {row.confirmed_at:%d %b %Y}")
+                      f" · {years} years (from your job dates) · confirmed {row.confirmed_at:%d %b %Y}")
                 for f in P.TIME_SENSITIVE:
                     when = (row.confirmed_fields or {}).get(f)
                     stale = " — PLEASE RE-CONFIRM (profile edit)" if f in P.stale_fields(row) else ""

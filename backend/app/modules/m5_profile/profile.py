@@ -132,8 +132,12 @@ def merge(base: dict, read: ResumeRead) -> tuple[dict, dict]:
             put("current_role", {"title": current["title"], "company": current["company"], "started": current["start"]})
         else:
             notes["unclear"].append("no current job found on the resume: please check current_role")
-    if read.total_experience_years:
-        put("total_experience_years", round(float(read.total_experience_years), 1))
+    years = store.experience_years(data.get("employment_history"))
+    if years is not None:  # from the job dates, never the AI's own estimate
+        put("total_experience_years", years)
+    elif read.total_experience_years:
+        put("total_experience_years", round(float(read.total_experience_years) * 2) / 2)
+        notes["unclear"].append("total_experience_years is the resume reader's estimate: job dates were missing")
     skills = data.get("skills") or {}
     if not (skills.get("must_have") or skills.get("nice_to_have")) and read.skills:
         put("skills", {"must_have": read.skills[:8], "nice_to_have": read.skills[8:15]})

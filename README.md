@@ -442,6 +442,8 @@ API: `GET /api/apply-list` · `GET /api/applications` · `POST /api/applications
 3. **Confirm:** edit the file if needed, save it, and run `profile confirm`. **Nothing uses a draft until you confirm it**, so a misread resume can't silently change your scores or emails.
 4. **From then on, every module uses your confirmed profile:** company judgments, job rules and scoring, drafts and your signature. `owner_stub.yaml` is only a fallback until the first confirm, and can be kept as a backup.
 
+**Experience is worked out from your job dates**, never typed in. Overlapping jobs count once, and the current job counts up to today. It's rounded to the nearest half year (2 years 11 months shows as 3) and stays current as time passes. To change it, fix a job's dates with `profile edit`.
+
 **Updating your resume.** Replace `config/resume.pdf`. The daily check notices the change and prepares a new draft for you to confirm, and the old profile stays in use until you do. The agent never edits or tailors your resume.
 
 **Staying fresh.** Pay and notice period carry a "last confirmed" date. When it's more than 6 months old, you're asked once. To change any answer, run `profile edit`, edit the file, then `profile confirm`.

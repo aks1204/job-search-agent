@@ -6,6 +6,7 @@ database yet, the table not migrated) quietly means "no profile": the app falls 
 """
 
 import logging
+import math
 import time
 
 from sqlalchemy import select
@@ -32,8 +33,12 @@ def latest_draft(session: Session) -> OwnerProfile | None:
 def as_owner(row: OwnerProfile | None) -> OwnerStub | None:
     if row is None:
         return None
+    data = dict(row.data)
+    years = experience_years(data.get("employment_history"))
+    if years is not None:
+        data["total_experience_years"] = years  # always current: worked out from your job dates
     try:
-        return OwnerStub.model_validate(row.data)
+        return OwnerStub.model_validate(data)
     except Exception as e:  # validated at confirm time, so this means a schema change: fall back, say why
         log.warning("confirmed profile %s no longer validates (%s); using owner_stub.yaml", row.id, e)
         return None
@@ -58,3 +63,31 @@ def current_profile() -> OwnerStub | None:
 
 def invalidate() -> None:
     _cache.update(at=0.0, value=None)
+
+
+def experience_years(history: list[dict] | None, today=None) -> float | None:
+    """Total experience from your job dates: months covered by any job (overlaps counted once; the current job
+    up to today), rounded to the nearest half year — how people write it (2 years 11 months → 3)."""
+    from datetime import date
+
+    today = today or date.today()
+    now_idx = today.year * 12 + today.month - 1
+    months: set[int] = set()
+    for job in history or []:
+        try:
+            sy, sm = map(int, str(job.get("start", "")).split("-"))
+        except ValueError:
+            continue
+        start = sy * 12 + sm - 1
+        if job.get("end"):
+            try:
+                ey, em = map(int, str(job["end"]).split("-"))
+            except ValueError:
+                continue
+            end = ey * 12 + em          # an ended job includes its last month
+        else:
+            end = now_idx               # the current job: up to (not including) this month
+        months.update(range(start, min(end, now_idx + 1)))
+    if not months:
+        return None
+    return math.floor(len(months) / 12 * 2 + 0.5) / 2   # nearest half year, halves round up
