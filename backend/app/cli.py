@@ -44,6 +44,7 @@
     python -m app.cli story <cluster_id>                         # one role's whole story
     python -m app.cli track                                      # Module 4: run the tracker now
     python -m app.cli assign <no> [<role id> | --other "Job title" | --ignore]   # Module 4: which role an email is about
+    python -m app.cli profile read|export|confirm|show|edit     # Module 5: your profile from your resume
 """
 
 import argparse
@@ -1200,6 +1201,99 @@ def assign_cmd(no: int, cluster_id: int | None, other: str | None, ignore: bool)
     return 0
 
 
+# --- Module 5a: your profile ------------------------------------------------------------------
+
+def _profile_confirm() -> int:
+    from app.db import session_scope
+    from app.modules.m5_profile import profile as P
+    from app.modules.m5_profile import store
+
+    if not P.REVIEW_FILE.is_file():
+        print("No review/profile.yaml yet — run: python -m app.cli profile read")
+        return 1
+    text = P.REVIEW_FILE.read_text(encoding="utf-8")
+    with session_scope() as s:
+        draft = store.latest_draft(s)
+        if draft is None:
+            print("No draft waiting — run: profile read (new resume) or profile edit (change an answer)")
+            return 1
+        if P.draft_id_in(text) != draft.id:
+            print("This file is older than the agent's latest draft — run: profile export, check it, then confirm")
+            return 1
+        try:
+            row = P.confirm(s, P.parse_review(text), row=draft)
+        except P.ProfileError as e:
+            print(f"Not confirmed: {e}")
+            return 1
+        print(f"Confirmed. Every module now uses this profile (version {row.id}).")
+        print("Your pay and notice period are marked as confirmed today.")
+    return 0
+
+
+def profile_cmd(action: str) -> int:
+    from app.core.llm import LLM
+    from app.db import session_scope
+    from app.modules.m5_profile import profile as P
+    from app.modules.m5_profile import store
+
+    if action == "confirm":
+        code = _profile_confirm()
+        store.invalidate()  # after the commit: this process sees the new profile at once
+        return code
+    with session_scope() as s:
+        if action in ("read", "export"):
+            draft = store.latest_draft(s)
+            fresh = draft is not None and draft.resume_hash == P.file_hash(P.resume_path())
+            if action == "export" or fresh:
+                if draft is None:
+                    print("No draft waiting — run: python -m app.cli profile read")
+                    return 1
+                row = draft                       # the daily check already read this resume: no second AI read
+            else:
+                if not LLM.available():
+                    print("Needs ANTHROPIC_API_KEY in .env")
+                    return 1
+                try:
+                    row = P.make_draft(s, LLM())
+                except ValueError as e:
+                    print(e)
+                    return 1
+            P.export(row)
+            print("Check review/profile.yaml in your project folder (Notepad is fine), fix anything,")
+            print("save it, then run: python -m app.cli profile confirm")
+            if (row.notes or {}).get("gaps"):
+                print("Still to fill in: " + "; ".join(g.split(":")[0] for g in row.notes["gaps"]))
+            return 0
+        if action == "edit":
+            try:
+                row = P.edit_current(s)
+            except P.ProfileError as e:
+                print(e)
+                return 1
+            P.export(row)
+            print("Your current profile is in review/profile.yaml. Change what you like, save, then: profile confirm")
+            return 0
+        if action == "show":
+            row = store.load_confirmed(s)
+            draft = store.latest_draft(s)
+            if row is None:
+                print("No confirmed profile yet — the agent is using config/owner_stub.yaml.")
+                print("Start with: python -m app.cli profile read")
+            else:
+                d = row.data
+                cr = d.get("current_role") or {}
+                print(f"{d.get('name')} · {cr.get('title')} at {cr.get('company')} since {cr.get('started')}"
+                      f" · {d.get('total_experience_years')} years · confirmed {row.confirmed_at:%d %b %Y}")
+                for f in P.TIME_SENSITIVE:
+                    when = (row.confirmed_fields or {}).get(f)
+                    stale = " — PLEASE RE-CONFIRM (profile edit)" if f in P.stale_fields(row) else ""
+                    print(f"  {f}: last confirmed {when or 'never'}{stale}")
+            if draft is not None:
+                print(f"A draft is waiting for you (from {draft.created_at:%d %b}): check review/profile.yaml, then profile confirm")
+            return 0
+    return 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1321,6 +1415,8 @@ def main() -> None:
     p_sg.add_argument("cluster_id", type=int, nargs="?", help="the role it's about")
     p_sg.add_argument("--other", help="a job not in the list (tracked as an outside application)")
     p_sg.add_argument("--ignore", action="store_true", help="not about any of your applications")
+    p_pf = sub.add_parser("profile", help="Module 5: your profile, read from your resume and confirmed by you")
+    p_pf.add_argument("action", choices=["read", "export", "confirm", "show", "edit"])
     p_wd = sub.add_parser("probe-workday", help="diagnose a Workday board (tenant + site)")
     p_wd.add_argument("tenant")
     p_wd.add_argument("site")
@@ -1417,6 +1513,8 @@ def main() -> None:
         sys.exit(track_cmd())
     if args.command == "assign":
         sys.exit(assign_cmd(args.no, args.cluster_id, args.other, args.ignore))
+    if args.command == "profile":
+        sys.exit(profile_cmd(args.action))
     if args.command == "probe-workday":
         sys.exit(probe_workday_cmd(args.tenant, args.site, args.server))
 

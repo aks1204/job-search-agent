@@ -428,6 +428,34 @@ docker compose exec api python -m app.cli track                      # run the t
 
 API: `GET /api/apply-list` · `GET /api/applications` · `POST /api/applications/{role}/applied` · `POST /api/applications/{role}/skip` · `GET /api/roles/{role}/story`.
 
+## Your profile and memory (Module 5)
+
+### Part 5a: your profile from your resume
+
+`config/owner_stub.yaml` was a stand-in. Your profile now comes from your resume and is confirmed by you:
+
+1. **Read:** `profile read` reads `config/resume.pdf` with one AI pass (about 2–3¢). It merges the result with what you already told the agent: your owner_stub answers, or your current profile.
+2. **Check:** the draft is written to `review/profile.yaml`, with notes at the top:
+   - what came from the resume;
+   - what changed;
+   - what's still missing that a resume can't say (pay, notice period, your company's level ladder, locations, mobile for your signature).
+3. **Confirm:** edit the file if needed, save it, and run `profile confirm`. **Nothing uses a draft until you confirm it**, so a misread resume can't silently change your scores or emails.
+4. **From then on, every module uses your confirmed profile:** company judgments, job rules and scoring, drafts and your signature. `owner_stub.yaml` is only a fallback until the first confirm, and can be kept as a backup.
+
+**Updating your resume.** Replace `config/resume.pdf`. The daily check notices the change and prepares a new draft for you to confirm, and the old profile stays in use until you do. The agent never edits or tailors your resume.
+
+**Staying fresh.** Pay and notice period carry a "last confirmed" date. When it's more than 6 months old, you're asked once. To change any answer, run `profile edit`, edit the file, then `profile confirm`.
+
+```bash
+docker compose exec api python -m app.cli profile read      # read the resume into review/profile.yaml
+docker compose exec api python -m app.cli profile export    # write the latest draft (e.g. after a resume change) to the file
+docker compose exec api python -m app.cli profile confirm   # after checking the file
+docker compose exec api python -m app.cli profile show      # what's in use, and when pay/notice were last confirmed
+docker compose exec api python -m app.cli profile edit      # change an answer later
+```
+
+API: `GET /api/profile` · `POST /api/profile/read` · `POST /api/profile/confirm`.
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

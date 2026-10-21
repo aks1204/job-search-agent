@@ -34,6 +34,7 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
         "m3-send": {"task": "m3.send", "schedule": 300.0},
         "m3-mail-check": {"task": "m3.mail_check", "schedule": 900.0},
         "m4-track": {"task": "m4.track", "schedule": 1800.0},
+        "m5-check-profile": {"task": "m5.check_profile", "schedule": crontab(minute="15", hour="6")},
     }
     for name in SCOUT_NAMES:
         scout = getattr(cfg.scouts, name)
@@ -56,7 +57,8 @@ celery_app = Celery(
     broker=_settings.redis_url,
     backend=_settings.redis_url,
     include=["app.tasks.system", "app.modules.m1_companies.tasks", "app.modules.m2_jobs.tasks",
-             "app.modules.m3_outreach.tasks", "app.modules.m4_apply.tasks"],
+             "app.modules.m3_outreach.tasks", "app.modules.m4_apply.tasks",
+             "app.modules.m5_profile.tasks"],
 )
 
 celery_app.conf.update(

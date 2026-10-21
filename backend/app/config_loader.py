@@ -5,6 +5,7 @@ change it). Verdicts and scores record these hashes so they can be re-run when
 the rules they depended on change.
 """
 
+import dataclasses
 import hashlib
 import json
 from dataclasses import dataclass
@@ -42,7 +43,7 @@ class LoadedConfig:
     app: AppConfig
     scouts: ScoutsConfig
     seeds: SeedList
-    owner: OwnerStub | None  # None until config/owner_stub.yaml exists
+    owner_file: OwnerStub | None  # config/owner_stub.yaml (None until it exists) — the fallback before Module 5
     rules: CompanyRules
     job_rules: JobRules
     llm: LLMConfig
@@ -51,6 +52,19 @@ class LoadedConfig:
     apply: ApplyConfig
     adapters: dict[str, dict]  # giant-company adapters from config/adapters/*.yaml, keyed by domain
     seed_packs: dict[str, SeedPack]  # curated optional lists from config/seed_packs/*.yaml, keyed by file stem
+    profile_from_db: bool = False  # the running app: your confirmed profile (Module 5) wins over the file
+
+    @property
+    def owner(self) -> OwnerStub | None:
+        """Who the agent works for. Your confirmed profile (Module 5a) once there is one; until then
+        config/owner_stub.yaml. Every module reads this, so switching over needs no other change."""
+        if self.profile_from_db:
+            from app.modules.m5_profile.store import current_profile  # late: needs the database
+
+            profile = current_profile()
+            if profile is not None:
+                return profile
+        return self.owner_file
 
     def file_version(self, name: str) -> str | None:
         f = self.files.get(name)
@@ -95,7 +109,7 @@ def load_config(config_dir: Path) -> LoadedConfig:
         app=_validate(files, "app", AppConfig) or AppConfig(),
         scouts=_validate(files, "scouts", ScoutsConfig) or ScoutsConfig(),
         seeds=_validate(files, "seed_companies", SeedList) or SeedList(),
-        owner=_validate(files, "owner_stub", OwnerStub),
+        owner_file=_validate(files, "owner_stub", OwnerStub),
         rules=_validate(files, "company_rules", CompanyRules) or CompanyRules(),
         job_rules=_validate(files, "job_rules", JobRules) or JobRules(),
         llm=_validate(files, "llm", LLMConfig) or LLMConfig(),
@@ -139,4 +153,4 @@ def _load_adapters(folder: Path) -> dict[str, dict]:
 
 @lru_cache(maxsize=1)
 def get_config() -> LoadedConfig:
-    return load_config(get_settings().config_dir)
+    return dataclasses.replace(load_config(get_settings().config_dir), profile_from_db=True)
