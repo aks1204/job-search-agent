@@ -77,6 +77,14 @@ def test_your_employer_is_found_by_website_even_under_another_name(db_session):
     assert E.refresh(db_session, FakeLLM("zzemp.io"), None)["blocked"] == 0   # blocked once, one note
 
 
+def test_a_less_sure_guess_is_fine_when_it_is_a_website_the_agent_knows(db_session):
+    # What happened with ZS: the AI was only medium-sure that "ZS Associates" is zs.com.
+    c = _company(db_session, "Zz Strategy & Transformation Consulting", "zzemp.io")
+    assert E.refresh(db_session, FakeLLM("zzemp.io", confidence="medium"), None)["blocked"] == 1
+    db_session.refresh(c)
+    assert c.status == STATUS_BLOCKED
+
+
 def test_a_guess_the_homepage_doesnt_back_is_not_trusted_and_you_are_asked(db_session, monkeypatch):
     monkeypatch.setattr(E, "_site_text", lambda http, domain: "They make keys and other things.")
     E.refresh(db_session, FakeLLM("zzemp.net"), None)                   # not a website the agent knows

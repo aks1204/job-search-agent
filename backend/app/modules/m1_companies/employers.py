@@ -195,10 +195,12 @@ def _ai_domain(session: Session, llm, http, name: str) -> tuple[str | None, bool
     if guess.confidence == "low" or not domain or is_junk(domain):
         return None, True
     fit = _fit(name, domain)
-    if fit is None or (fit == "first" and guess.confidence != "high"):
+    if fit is None:
         return None, True
     if session.scalar(select(Company.id).where(Company.domain == domain).limit(1)) is not None:
-        return domain, True
+        return domain, True                    # fits the name AND is a website the agent already knows
+    if fit == "first" and guess.confidence != "high":
+        return None, True
     text = _site_text(http, domain)
     if text is None:
         return None, False
