@@ -10,6 +10,7 @@
     python -m app.cli override <domain> keep|reject "<reason>" [--permanent]
     python -m app.cli employers [fix "<name>" <domain>|none]     # your current / past employers: never watched
     python -m app.cli hn rebuild                                 # re-read every saved Hacker News post (one-time)
+    python -m app.cli hn repair                                  # restore companies the first rebuild split wrongly
     python -m app.cli names                                      # kept companies whose name doesn't fit their site
     python -m app.cli rename <domain|number> "<name>"            # give a company its right name
     python -m app.cli activate [--limit N] [--domain acme.com]   # set up job feeds for kept companies now
@@ -376,6 +377,20 @@ def hn_rebuild_cmd() -> int:
     return 0
 
 
+def hn_repair_cmd() -> int:
+    from app.db import session_scope
+    from app.modules.m1_companies.hn_rebuild import repair
+
+    with session_scope() as s:
+        out = repair(s)
+    for name in out["restored"]:
+        print(f"  restored: {name}")
+    print(f"{len(out['restored'])} compan{'y' if len(out['restored']) == 1 else 'ies'} restored with their website, "
+          f"{out['counts'].get('copies_removed', 0)} website-less cop{'y' if out['counts'].get('copies_removed', 0) == 1 else 'ies'} removed.")
+    print("Next: python -m app.cli evaluate --force --limit 200")
+    return 0
+
+
 def _find_company(s, key: str):
     from sqlalchemy import select
 
@@ -419,11 +434,20 @@ def names_cmd() -> int:
     from app.modules.m1_companies.employers import _fit
     from app.modules.m1_companies.identity import name_matches_domain
 
+    import re
+
+    from app.core.hosts import domain_label
+
+    def fits(name: str, domain: str) -> bool:
+        words = re.findall(r"[a-z0-9]+", name.lower())
+        label = domain_label(domain).replace("-", "")
+        return (name_matches_domain(name, domain) or _fit(name, domain) is not None
+                or (len(words) > 1 and label in (words[-1], "".join(w[0] for w in words))))  # lilly.com, bcg.com
+
     with session_scope() as s:
         rows = s.scalars(select(Company).where(Company.status.in_(("passed", "watching", "dormant")))
                          .order_by(Company.name)).all()
-        odd = [c for c in rows if c.domain and not any(
-            name_matches_domain(n, c.domain) or _fit(n, c.domain) for n in [c.name, *(c.aliases or [])])]
+        odd = [c for c in rows if c.domain and not any(fits(n, c.domain) for n in [c.name, *(c.aliases or [])])]
         if not odd:
             print("Every kept company's name fits its website.")
             return 0
@@ -1709,7 +1733,7 @@ def main() -> None:
     p_dir.add_argument("action", nargs="?", default="show", choices=["show", "refresh", "yes", "no", "edit", "confirm"])
     p_dir.add_argument("suggestion_id", nargs="?", type=int)
     p_hn = sub.add_parser("hn", help="Hacker News: rebuild everything from the saved posts (one-time)")
-    p_hn.add_argument("action", choices=["rebuild"])
+    p_hn.add_argument("action", choices=["rebuild", "repair"])
     p_ren = sub.add_parser("rename", help="give a company its right name")
     p_ren.add_argument("key", help="its website (zs.com) or its number from `names`")
     p_ren.add_argument("name")
@@ -1825,7 +1849,7 @@ def main() -> None:
     if args.command == "direction":
         sys.exit(direction_cmd(args.action, args.suggestion_id))
     if args.command == "hn":
-        sys.exit(hn_rebuild_cmd())
+        sys.exit(hn_repair_cmd() if args.action == "repair" else hn_rebuild_cmd())
     if args.command == "rename":
         sys.exit(rename_cmd(args.key, args.name))
     if args.command == "names":

@@ -22,6 +22,7 @@ POSTS = {   # made-up comment ids, far from real ones
                "<p>Send your CV to recruiting@zz-strategy-consulting.io",
     990000002: 'Zzgive | Data Analyst | Remote<p>Job description: <a href="https:&#x2F;&#x2F;zz-docs-host.page&#x2F;jd">here</a>',
     990000005: "Zzownedco | Analyst | Remote (worldwide)<p>We build things.",
+    990000007: "Zzmastra | Engineer | Remote<p>We build agent frameworks. Apply through our careers page.",
 }
 READS = {
     990000001: HNRead(is_hiring_post=True, company_name="Zz Strategy Consulting", website="zz-strategy-consulting.io",
@@ -36,6 +37,10 @@ READS = {
     990000005: HNRead(is_hiring_post=True, company_name="Zzownedco", website="unknown", careers_url="unknown",
                       what_they_build="Things", hires_in_india="unknown", remote_from_india="yes", visa="unknown",
                       roles=[HNRole(title="Analyst", location="Remote (worldwide)", apply_url="unknown")], contacts=[]),
+    990000007: HNRead(is_hiring_post=True, company_name="Zzmastra", website="unknown", careers_url="unknown",
+                      what_they_build="Agent frameworks", hires_in_india="unknown", remote_from_india="unknown",
+                      visa="unknown", roles=[HNRole(title="Engineer", location="Remote", apply_url="unknown")],
+                      contacts=[]),
 }
 
 
@@ -160,3 +165,42 @@ def test_another_companys_address_from_a_post_is_never_used(db_session):
     assert _company_address("founder.zz@gmail.com", apple)            # a founder's own inbox
     assert not _company_address("hiring@zzapplepie.io", apple)        # "Apple Pie Labs" is someone else
     assert not _company_address("hiring@zzapplepie.io", SimpleNamespace(domain=None))
+
+
+def test_a_post_without_a_link_keeps_a_website_that_plainly_is_theirs(db_session):
+    # Mastra's post had no link; the website found earlier (mastra.ai) fits the name, so it stays.
+    c = _misfiled(db_session, 990000007, "Zzmastra", "zzmastra.ai")
+    out = rebuild(db_session, FakeHTTP(), FakeLLM())
+    db_session.refresh(c)
+    assert out["counts"].get("moved", 0) == 0 and c.status != STATUS_REJECTED
+    s = db_session.scalars(select(CompanySighting).where(CompanySighting.external_id == "900:990000007")).one()
+    assert s.company_id == c.id
+
+
+def test_repair_restores_a_company_the_first_rebuild_split_off_its_website(db_session):
+    from app.models import CompanyVerdict
+    from app.modules.m1_companies.hn_rebuild import repair
+
+    # The state the first rebuild left: zzmastra.ai dropped, its post on a website-less copy.
+    c = _misfiled(db_session, 990000007, "Zzmastra", "zzmastra.ai")
+    c.status = STATUS_REJECTED
+    db_session.add(CompanyVerdict(company_id=c.id, passed=False, profile="startup", failed_check="misattributed",
+                                  summary="Dropped", checks=[], judgment={}, permanent=False, trigger="hn_rebuild",
+                                  decided_by="machine", rules_versions={}, precedent_ids=[]))
+    copy = Company(name="Zzmastra", normalized_name="zzmastra", status=STATUS_CANDIDATE, aliases=[], source_data={})
+    db_session.add(copy)
+    db_session.flush()
+    s = db_session.scalars(select(CompanySighting).where(CompanySighting.company_id == c.id)).one()
+    s.company_id = copy.id
+    db_session.add(ContactLead(company_id=copy.id, email="jobs@zzmastra.ai", source="hn", context="HN post"))
+    db_session.flush()
+    copy_id = copy.id
+
+    out = repair(db_session)
+    assert "Zzmastra (zzmastra.ai)" in out["restored"]          # (your real dropped ones may be listed too)
+    db_session.refresh(c)
+    db_session.refresh(s)
+    assert c.status == STATUS_CANDIDATE and s.company_id == c.id
+    assert db_session.get(Company, copy_id) is None
+    assert db_session.scalars(select(ContactLead).where(ContactLead.company_id == c.id)).one().email == "jobs@zzmastra.ai"
+    assert "Zzmastra (zzmastra.ai)" not in repair(db_session)["restored"]       # nothing left to restore

@@ -117,9 +117,15 @@ def _target(session: Session, old: Company, name: str, domain: str | None, s: Co
         if only_post and not others or _same_name(name, old):
             return old
         return _new_company(session, name, None)   # an old reader merged different companies' posts here
-    if others and _same_name(name, old):
-        return old                         # other sources vouch for this company and its website
-    return _new_company(session, name, None)       # its website came from a guess or a misread link
+    if (others and _same_name(name, old)) or (_same_name(name, old) and _website_fits(name, old.domain)):
+        return old        # other sources vouch for it, or its website plainly is theirs (mastra.ai ↔ Mastra)
+    return _new_company(session, name, None)       # its website came from a misread link (perfectwiki.page)
+
+
+def _website_fits(name: str, domain: str | None) -> bool:
+    from app.modules.m1_companies.scouts.hn import _fits
+
+    return bool(domain) and _fits(name, domain)
 
 
 def _upsert_contacts(session: Session, company: Company, cand) -> None:
@@ -276,6 +282,52 @@ def _one(session: Session, s: CompanySighting, http, llm, out: Counter, changes:
         changed = True
     if (changed or target.status == STATUS_UNRESOLVED) and hn_only:
         rejudge.add(target.id)
+
+
+def repair(session: Session) -> dict:
+    """Undo the first rebuild's mistake (2026-10-25): a company whose post has no link was split off its
+    website and dropped even when that website plainly is theirs (Mastra and mastra.ai). Such companies get
+    their post, contacts and jobs back and are judged again; the website-less copy goes. Companies whose
+    website doesn't fit their name (GiveDirectly and perfectwiki.page) stay dropped."""
+    out: Counter = Counter()
+    restored: list[str] = []
+    dropped = session.scalars(select(Company).where(Company.status == STATUS_REJECTED,
+                                                    Company.domain.is_not(None))).all()
+    copies = session.scalars(select(Company).where(Company.domain.is_(None))).all()
+    for c in dropped:
+        latest = _latest_verdict(session, c.id)
+        if latest is None or latest.failed_check != "misattributed" or not _website_fits(c.name, c.domain):
+            continue
+        twins = [d for d in copies if d.id != c.id and _same_name(d.name, c)
+                 and all(x.scout == "hn" for x in _sightings(session, d.id))]
+        if not twins:
+            continue
+        for d in twins:
+            for s in _sightings(session, d.id):
+                s.company_id = c.id
+            for lead in session.scalars(select(ContactLead).where(ContactLead.company_id == d.id)).all():
+                if session.scalar(select(ContactLead.id).where(ContactLead.company_id == c.id,
+                                                               ContactLead.email == lead.email)):
+                    session.delete(lead)
+                else:
+                    lead.company_id = c.id
+            if hn := (d.source_data or {}).get("hn"):
+                c.source_data = {**(c.source_data or {}), "hn": hn}
+            session.flush()
+            session.delete(d)                        # the website-less copy (it has nothing else)
+            copies.remove(d)
+            out["copies_removed"] += 1
+        c.status, c.reeval_reason = STATUS_CANDIDATE, "rules_change"   # judged again; its feed resumes if kept
+        audit.record(session, "m1", "company_restored",
+                     f"Restored {c.name} ({c.domain}): its website fits its name, so the post is theirs",
+                     subject_type="company", subject_id=str(c.id))
+        restored.append(f"{c.name} ({c.domain})")
+        out["restored"] += 1
+    session.flush()
+    if restored:
+        notify(session, "update", "happened", f"Hacker News repair: {len(restored)} companies restored",
+               detail=", ".join(restored)[:2000])
+    return {"counts": dict(out), "restored": restored}
 
 
 def rebuild(session: Session, http, llm) -> dict:
