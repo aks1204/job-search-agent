@@ -89,11 +89,21 @@ def feeder_facts(source_data: dict) -> list[tuple[str, object, str, str]]:
 
     if hn := source_data.get("hn"):
         facts.append(("actively_hiring", "yes", "verified", "hn"))
-        headline = hn.get("headline", "")
-        if _INDIA.search(headline):
-            facts.append(("india_presence", "yes", "inferred", "hn"))
-        if _REMOTE.search(headline) and (_INDIA.search(headline) or _REMOTE_GLOBAL.search(headline)):
-            facts.append(("hires_remote_from_india", "yes", "inferred", "hn"))
+        if hn.get("parsed_by") == "ai":   # what the post itself says (read in full)
+            if hn.get("hires_in_india") == "yes":    # roles elsewhere don't mean "no presence in India"
+                facts.append(("india_presence", "yes", "inferred", "hn"))
+            for key, said in (("hires_remote_from_india", hn.get("remote_from_india")),
+                              ("sponsors_visa", hn.get("visa"))):
+                if said in ("yes", "no"):
+                    facts.append((key, said, "inferred", "hn"))
+            if hn.get("what_they_build"):
+                facts.append(("what_they_build", hn["what_they_build"], "inferred", "hn"))
+        else:
+            headline = hn.get("headline", "")
+            if _INDIA.search(headline):
+                facts.append(("india_presence", "yes", "inferred", "hn"))
+            if _REMOTE.search(headline) and (_INDIA.search(headline) or _REMOTE_GLOBAL.search(headline)):
+                facts.append(("hires_remote_from_india", "yes", "inferred", "hn"))
 
     if waas := source_data.get("waas"):
         facts.append(("actively_hiring", "yes", "verified", "waas"))

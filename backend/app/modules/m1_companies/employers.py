@@ -348,6 +348,11 @@ def block(session: Session, company: Company, e: Employer, *, trigger: str = TRI
     )
     session.add(verdict)
     company.status, company.reeval_reason = STATUS_BLOCKED, None
+    from app.models.feed import RawPosting
+
+    for r in session.scalars(select(RawPosting).where(RawPosting.company_id == company.id,
+                                                      RawPosting.closed_at.is_(None))).all():
+        r.closed_at = _now()                 # its open roles leave your lists
     cancelled = stop_company(session, company.id, f"not contacted: {reason}")
     skipped = 0
     for app in session.scalars(select(Application).where(Application.company_id == company.id,

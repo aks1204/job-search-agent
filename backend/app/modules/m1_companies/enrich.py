@@ -49,7 +49,8 @@ class NewsSignals(BaseModel):
 
 
 EXTRACT_SYSTEM = """You fill in a company fact card for a job-search assistant.
-You are given text scraped from the company's own website. State only what the text supports.
+You are given text from the company's own website and/or its own Hacker News job post. State only what the
+text supports.
 Use "unknown" whenever the text doesn't say — never guess locations, hiring or visa policy.
 Return the fact card in the requested JSON format."""
 
@@ -110,19 +111,26 @@ def enrich(session: Session, company, *, llm, http: PoliteClient, profile: str) 
     changed = apply_feeder_facts(session, company)
     subject = ("company", str(company.id))
     site = fetch_site_text(http, company.domain) if (company.domain and profile == "startup") else None
+    # Their own Hacker News job post says what they build and where they hire — read with (or instead of)
+    # the website, never replaced by a guess from the AI's general knowledge.
+    post = ((company.source_data or {}).get("hn") or {}).get("text")
 
-    if site:
-        text, final_url = site
+    if site or (post and profile == "startup"):
+        parts = [f"Company: {company.name}", f"Domain: {company.domain or 'unknown'}"]
+        if site:
+            parts += [f"Page: {site[1]}", "", "--- website text ---", site[0][:6000]]
+        if post:
+            parts += ["", "--- their Hacker News job post ---", post[:4000]]
         result = llm.structured(
             "fast", system=EXTRACT_SYSTEM, schema=CompanyProfile, purpose="m1.extract_website",
-            user=f"Company: {company.name}\nDomain: {company.domain}\nPage: {final_url}\n\n--- website text ---\n{text}",
-            session=session, subject=subject,
+            user="\n".join(parts), session=session, subject=subject,
         )
-        changed |= _apply_profile(session, company.id, result.parsed, source="website")
+        changed |= _apply_profile(session, company.id, result.parsed, source="website" if site else "hn_post")
     else:
         result = llm.structured(
             "fast", system=KNOWLEDGE_SYSTEM, schema=CompanyProfile, purpose="m1.extract_knowledge",
-            user=f"Company: {company.name}\nDomain: {company.domain or 'unknown'}\nAlso known as: {', '.join(company.aliases) or '—'}",
+            user=f"Company: {company.name}\nDomain: {company.domain or 'unknown'}\nAlso known as: {', '.join(company.aliases) or '—'}"
+                 + (f"\n\n--- their Hacker News job post (for context) ---\n{post[:3000]}" if post else ""),
             session=session, subject=subject,
         )
         changed |= _apply_profile(session, company.id, result.parsed, source="llm_knowledge")

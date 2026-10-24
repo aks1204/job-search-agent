@@ -22,13 +22,14 @@ from app.core.http import PoliteClient
 from app.core.llm import LLM
 from app.db import session_scope
 from app.models.assessment import JobAssessment
-from app.models.company import STATUS_BLOCKED, Company, ContactLead
+from app.models.company import STATUS_BLOCKED, STATUS_REJECTED, Company, ContactLead
 from app.models.contact import Bench, BenchMember, Contact, ContactEmail, RoleChannel
 from app.models.job import JobPosting
 from app.models.score import JobScore
 from app.modules.m3_outreach import bench as B
-from app.modules.m3_outreach.addresses import best_address, find_address
-from app.modules.m3_outreach.designated import find_designated
+from app.modules.m3_outreach.addresses import best_address, find_address, mail_domain_for
+from app.modules.m1_companies.candidate import APPLY_MARK
+from app.modules.m3_outreach.designated import _OTHER_LOCALS, find_designated
 from app.modules.m3_outreach.names import is_role_address, name_key, split_name
 from app.modules.m3_outreach.people import person_still_there
 from app.modules.m3_outreach.verify import verify_candidates
@@ -74,7 +75,9 @@ def pursued_roles(session: Session, cluster_ids: list[int] | None = None):
          .join(JobPosting, JobPosting.id == JobAssessment.job_id)
          .join(Company, Company.id == JobPosting.company_id)
          .where(JobAssessment.outcome == "passed", JobPosting.status == "open",
-                Company.status != STATUS_BLOCKED))          # e.g. your current / a past employer
+                Company.status != STATUS_BLOCKED,            # e.g. your current / a past employer
+                # a company no longer kept: only roles you chose yourself ("act")
+                or_(Company.status != STATUS_REJECTED, JobScore.owner_action == "act")))
     if cluster_ids:
         q = q.where(JobScore.cluster_id.in_(cluster_ids))
     else:
@@ -91,14 +94,32 @@ def _due(channel: RoleChannel | None, now: datetime) -> bool:
     return channel.next_retry_at is not None and channel.next_retry_at <= now
 
 
+def _company_address(email: str, company: Company) -> bool:
+    """An address from a post is used for this company only if it's at the company's own mail domain — or a
+    webmail address (gmail…), which belongs to no other company. Never another company's address."""
+    from app.core.hosts import is_junk, normalize_domain
+
+    domain = normalize_domain(email)
+    if domain is None:
+        return False
+    if is_junk(domain):
+        return True                     # gmail.com, outlook.com… (a founder's own inbox)
+    return company.domain is not None and domain in (company.domain, mail_domain_for(company))
+
+
 def _designated_for(session: Session, job: JobPosting, company: Company) -> tuple[str, str] | None:
-    if hit := find_designated(job.description):
+    if hit := find_designated(job.description):          # the job page itself names an address
         return hit
-    if job.lead_only:  # an HN "who's hiring" post: the address in the post is how they asked to be reached
-        lead = session.scalar(select(ContactLead).where(ContactLead.company_id == company.id,
-                                                        ContactLead.source == "hn").order_by(ContactLead.found_at.desc()))
-        if lead:
-            return lead.email.lower(), lead.context or "address given in the Hacker News post"
+    leads = [l for l in session.scalars(select(ContactLead).where(ContactLead.company_id == company.id,
+                                                                  ContactLead.source == "hn")
+                                        .order_by(ContactLead.found_at.desc())).all()
+             if not _OTHER_LOCALS.match(l.email.split("@", 1)[0])   # never press@, security@, privacy@…
+             and _company_address(l.email, company)]
+    # Their HN post said "email X to apply": X is how they asked to be reached — for every role there.
+    if apply := next((l for l in leads if (l.context or "").startswith(APPLY_MARK)), None):
+        return apply.email.lower(), apply.context[len(APPLY_MARK):] or "the Hacker News post asks to apply here"
+    if leads:                                           # otherwise the address their HN post gives
+        return leads[0].email.lower(), leads[0].context or "address given in the Hacker News post"
     return None
 
 
@@ -138,6 +159,11 @@ def decide_channel(session: Session, http: PoliteClient, llm, score: JobScore, a
         channel.bench_id, channel.next_retry_at, channel.note = None, None, "the posting names this address"
         audit.record(session, "m3", "channel_designated", f"{company.name}: the posting asks for {email}",
                      subject_type="job_cluster", subject_id=str(score.cluster_id))
+        return channel
+
+    if not company.domain:   # name-only (HN post without a website): nobody to look up — apply via the post
+        channel.mode, channel.bench_id, channel.next_retry_at = "none", None, None
+        channel.note, channel.decided_at = "no website or address in their post — apply through the post", now
         return channel
 
     shape = B.company_class(session, company)

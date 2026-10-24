@@ -33,7 +33,7 @@ def judged_today(session: Session) -> int:
     return session.scalar(
         select(func.count()).select_from(CompanyVerdict).where(
             CompanyVerdict.decided_by == "machine", CompanyVerdict.created_at >= start_of_today_utc(),
-            CompanyVerdict.trigger != "employer_rule",   # the employer sweep isn't a judgment; it costs nothing
+            CompanyVerdict.trigger.not_in(("employer_rule", "hn_rebuild")),   # sweeps, not judgments: free
         )
     ) or 0
 
@@ -87,8 +87,8 @@ def run_batch(*, limit: int | None = None, force: bool = False, company_ids: lis
             try:
                 with session_scope() as s:
                     company = s.get(Company, company_id)
-                    if company is None or company.domain is None:
-                        continue
+                    if company is None or (company.domain is None and company.status != STATUS_CANDIDATE):
+                        continue          # name-only companies are judged only when a post made them candidates
                     if company.reeval_reason in ("refresh", "rules_change"):
                         trigger = company.reeval_reason
                     verdict = evaluate(s, company, llm=llm, http=http, trigger=trigger)

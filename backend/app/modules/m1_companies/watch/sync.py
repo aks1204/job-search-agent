@@ -64,10 +64,17 @@ def aggregator_jobs(session: Session, company_id: int) -> list[RawJob]:
             continue
         d = s.data or {}
         if s.scout == "hn":
-            title, location = _hn_role(d.get("headline") or "")
-            description = d.get("text")
-        else:
-            title, location, description = d.get("title") or "(untitled)", d.get("location"), d.get("description")
+            # Every role in the post is its own job: its apply link if the post has one, else the post itself.
+            roles = d.get("roles") or [dict(zip(("title", "location"), _hn_role(d.get("headline") or "")))]
+            for i, r in enumerate(roles):
+                jobs.append(RawJob(
+                    external_id=f"hn:{s.external_id}" + (f":{i}" if i else ""),
+                    title=(r.get("title") or "(untitled)")[:300], location=r.get("location"),
+                    url=r.get("apply_url") or s.url, posted_at=str(d.get("posted") or "") or None,
+                    description=d.get("text"), payload={"scout": "hn", "post": s.url},
+                ))
+            continue
+        title, location, description = d.get("title") or "(untitled)", d.get("location"), d.get("description")
         jobs.append(RawJob(
             external_id=f"{s.scout}:{s.external_id}"[:255], title=title, location=location, url=s.url,
             posted_at=str(d.get("created") or d.get("published") or d.get("posted") or "") or None,
@@ -107,7 +114,10 @@ def apply_jobs(session: Session, feed: CompanyFeed, jobs: list[RawJob], now: dat
                 feed_id=feed.id, company_id=feed.company_id, external_id=job.external_id, title=job.title,
                 location=job.location, url=job.url, department=job.department,
                 employment_type=job.employment_type, posted_at=job.posted_at, description=job.description,
-                payload=job.payload, content_hash=digest, lead_only=feed.method == "aggregator",
+                # A role from the company's own HN post is their job ad: a real posting (graded like any
+                # other), not a job-site lead.
+                payload=job.payload, content_hash=digest,
+                lead_only=feed.method == "aggregator" and not job.external_id.startswith("hn:"),
                 first_seen_at=now, last_seen_at=now,
             ))
             result.new += 1

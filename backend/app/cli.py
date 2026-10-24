@@ -9,6 +9,9 @@
     python -m app.cli verdicts [--last 20] [--rejected | --passed] [--details]
     python -m app.cli override <domain> keep|reject "<reason>" [--permanent]
     python -m app.cli employers [fix "<name>" <domain>|none]     # your current / past employers: never watched
+    python -m app.cli hn rebuild                                 # re-read every saved Hacker News post (one-time)
+    python -m app.cli names                                      # kept companies whose name doesn't fit their site
+    python -m app.cli rename <domain|number> "<name>"            # give a company its right name
     python -m app.cli activate [--limit N] [--domain acme.com]   # set up job feeds for kept companies now
     python -m app.cli sync [--limit N] [--domain acme.com]       # read due feeds now
     python -m app.cli feeds                                      # watchlist health
@@ -347,6 +350,90 @@ def employers_cmd(action: str, name: str | None, domain: str | None) -> int:
     return 0
 
 
+def hn_rebuild_cmd() -> int:
+    from app.core.http import PoliteClient
+    from app.core.llm import LLM
+    from app.db import session_scope
+    from app.modules.m1_companies.hn_rebuild import rebuild
+
+    if not LLM.available():
+        print("The rebuild reads every post with the AI — set ANTHROPIC_API_KEY first.")
+        return 1
+    print("Reading every saved Hacker News post again (a few minutes)…")
+    with PoliteClient() as http, session_scope() as s:
+        out = rebuild(s, http, LLM())
+    for line in out["changes"]:
+        print(f"  {line}")
+    print(out["summary"] + ".")
+    skipped = {k: v for k, v in out["counts"].items() if k in ("post_gone", "post_unreachable", "ai_unavailable",
+                                                               "not_a_hiring_post", "no_post_id")}
+    if skipped:
+        print("Left as they were: " + ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in skipped.items()))
+    if waiting := out["counts"].get("to_judge_again", 0):
+        print(f"{waiting} compan{'y waits' if waiting == 1 else 'ies wait'} to be judged again; their jobs aren't "
+              "read until then. Judge them now (they skip the daily limit this way):")
+        print("  python -m app.cli evaluate --force --limit 200")
+    return 0
+
+
+def _find_company(s, key: str):
+    from sqlalchemy import select
+
+    from app.models import Company
+
+    if key.isdigit():
+        return s.get(Company, int(key))
+    return s.scalar(select(Company).where(Company.domain == key.lower()))
+
+
+def rename_cmd(key: str, name: str) -> int:
+    from app.core import audit
+    from app.db import session_scope
+    from app.modules.m1_companies.identity import normalize_name
+
+    name = name.strip()
+    if not name:
+        print('Usage: rename <domain or company number> "<name>"')
+        return 1
+    with session_scope() as s:
+        c = _find_company(s, key)
+        if c is None:
+            print(f"No company {key} (use its website, e.g. zs.com, or its number from `names`)")
+            return 1
+        old = c.name
+        if old.lower() != name.lower() and old not in (c.aliases or []):
+            c.aliases = [*(c.aliases or []), old]
+        c.name, c.normalized_name = name[:255], normalize_name(name)[:255]
+        audit.record(s, "m1", "company_renamed", f"You renamed {old} → {name}", subject_type="company",
+                     subject_id=str(c.id))
+        print(f"{old} → {name} (the old name is kept as another name it's known by)")
+    return 0
+
+
+def names_cmd() -> int:
+    """Kept companies whose name doesn't fit their website — worth a look."""
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Company
+    from app.modules.m1_companies.employers import _fit
+    from app.modules.m1_companies.identity import name_matches_domain
+
+    with session_scope() as s:
+        rows = s.scalars(select(Company).where(Company.status.in_(("passed", "watching", "dormant")))
+                         .order_by(Company.name)).all()
+        odd = [c for c in rows if c.domain and not any(
+            name_matches_domain(n, c.domain) or _fit(n, c.domain) for n in [c.name, *(c.aliases or [])])]
+        if not odd:
+            print("Every kept company's name fits its website.")
+            return 0
+        print("Kept companies whose name doesn't fit their website — fine if it's a brand/product site,")
+        print("otherwise fix it (rename) or drop it (override <domain> reject \"<reason>\"):")
+        for c in odd:
+            print(f"  [{c.id}] {c.name} — {c.domain}" + (f" (also: {', '.join(c.aliases)})" if c.aliases else ""))
+    return 0
+
+
 def _company_ids(domain: str | None) -> list[int] | None:
     if not domain:
         return None
@@ -608,7 +695,7 @@ def shortlist_cmd(band: str | None, limit: int) -> int:
              .join(Company, Company.id == JobPosting.company_id)
              .join(JobCluster, JobCluster.id == JobScore.cluster_id))
         q = q.where(JobScore.band == band) if band else q.where(JobScore.band != "archive")
-        q = q.where(Company.status != "blocked")              # e.g. your current / a past employer
+        q = q.where(Company.status.not_in(("blocked", "rejected")))   # e.g. your employer; a dropped company
         rows = s.execute(q.order_by(JobScore.score.desc()).limit(limit)).all()
         for sc, a, j, c, cl in rows:
             graded = "AI-graded" if sc.graded else "similarity only"
@@ -1621,6 +1708,12 @@ def main() -> None:
     p_dir = sub.add_parser("direction", help="Module 5: your career direction — families, target roles, suggestions")
     p_dir.add_argument("action", nargs="?", default="show", choices=["show", "refresh", "yes", "no", "edit", "confirm"])
     p_dir.add_argument("suggestion_id", nargs="?", type=int)
+    p_hn = sub.add_parser("hn", help="Hacker News: rebuild everything from the saved posts (one-time)")
+    p_hn.add_argument("action", choices=["rebuild"])
+    p_ren = sub.add_parser("rename", help="give a company its right name")
+    p_ren.add_argument("key", help="its website (zs.com) or its number from `names`")
+    p_ren.add_argument("name")
+    sub.add_parser("names", help="kept companies whose name doesn't fit their website")
     p_emp = sub.add_parser("employers", help="your current / past employers — never watched or contacted")
     p_emp.add_argument("action", nargs="?", default="list", choices=["list", "fix"])
     p_emp.add_argument("name", nargs="?", help="fix: the employer's name as in your profile")
@@ -1731,6 +1824,12 @@ def main() -> None:
         sys.exit(profile_cmd(args.action))
     if args.command == "direction":
         sys.exit(direction_cmd(args.action, args.suggestion_id))
+    if args.command == "hn":
+        sys.exit(hn_rebuild_cmd())
+    if args.command == "rename":
+        sys.exit(rename_cmd(args.key, args.name))
+    if args.command == "names":
+        sys.exit(names_cmd())
     if args.command == "employers":
         sys.exit(employers_cmd(args.action, args.name, args.domain))
     if args.command == "memory":

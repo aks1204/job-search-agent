@@ -49,6 +49,13 @@ def normalize_name(name: str) -> str:
     return " ".join(words)
 
 
+def tidy_name(name: str) -> str:
+    """Shouting capitals become a name: 'ARTIFICIAL ANALYSIS' → 'Artificial Analysis', 'BREAKFAST Studio' →
+    'Breakfast Studio'. Short acronyms stay as they are (ICEYE, FUTO, AWS)."""
+    return " ".join(w.capitalize() if w.isalpha() and w.isupper() and len(w) > 5 else w
+                    for w in name.strip().split())
+
+
 def name_matches_domain(name: str, domain: str) -> bool:
     """Does the domain plausibly belong to this name? 'Acme Labs' ~ acmelabs.io / acme.ai."""
     label = domain_label(domain).replace("-", "")
@@ -156,6 +163,21 @@ def assign_domain(session: Session, company: Company, domain: str, *, source: st
     return company
 
 
+CURATED_SCOUTS = ("seeds", "packs", "yc")   # names written with care: kept exactly (NVIDIA stays NVIDIA)
+
+
+def _websiteless_namesake(session: Session, name: str) -> Company | None:
+    """A post without a website joins only a company that has no website either and exactly this name — never
+    a same-name company elsewhere (its post's gmail address would become that company's contact), and never
+    one dropped because its only post turned out to be someone else's."""
+    from app.models.verdict import CompanyVerdict
+
+    dropped = select(CompanyVerdict.company_id).where(CompanyVerdict.failed_check == "misattributed")
+    return session.scalar(select(Company).where(Company.domain.is_(None),
+                                                Company.normalized_name == normalize_name(name),
+                                                Company.id.not_in(dropped)).limit(1))
+
+
 def intake(session: Session, cand: Candidate) -> str:
     """Record one sighting. Returns 'new' | 'matched' | 'seen'."""
     now = _utcnow()
@@ -169,6 +191,8 @@ def intake(session: Session, cand: Candidate) -> str:
         existing.data = cand.data
         company = session.get(Company, existing.company_id)
         _absorb(company, cand)
+        if cand.name_only_ok and company.status == STATUS_UNRESOLVED:
+            company.status = STATUS_CANDIDATE
         _add_contacts(session, company.id, cand)
         return "seen"
 
@@ -177,18 +201,20 @@ def intake(session: Session, cand: Candidate) -> str:
     outcome = "matched"
     if domain:
         company = session.scalar(select(Company).where(Company.domain == domain))
-    if company is None:
+    if company is None and cand.name_only_ok and not domain:
+        company = _websiteless_namesake(session, cand.name)
+    elif company is None:
         company = find_by_name(session, cand.name, domain=domain)
         if company is not None and domain:
             company = assign_domain(session, company, domain, source="seed" if cand.scout == "seeds" else "source")
     if company is None:
         company = Company(
-            name=cand.name.strip()[:255],
+            name=(cand.name.strip() if cand.scout in CURATED_SCOUTS else tidy_name(cand.name))[:255],
             normalized_name=normalize_name(cand.name)[:255],
             domain=domain,
             domain_source=("seed" if cand.scout == "seeds" else "source") if domain else None,
             website=f"https://{domain}" if domain else None,
-            status=STATUS_CANDIDATE if domain else STATUS_UNRESOLVED,
+            status=STATUS_CANDIDATE if domain or cand.name_only_ok else STATUS_UNRESOLVED,
             aliases=[],
             source_data={},
         )
@@ -197,6 +223,8 @@ def intake(session: Session, cand: Candidate) -> str:
         outcome = "new"
 
     _absorb(company, cand)
+    if cand.name_only_ok and company.status == STATUS_UNRESOLVED:
+        company.status = STATUS_CANDIDATE   # the post is enough to judge it: no web search for its website
     session.add(CompanySighting(
         company_id=company.id, scout=cand.scout, external_id=cand.external_id,
         name_seen=cand.name[:255], domain_seen=domain, url=cand.url, data=cand.data,

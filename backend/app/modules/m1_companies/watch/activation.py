@@ -106,17 +106,23 @@ def _candidates(company: Company, discovery: Discovery | None, *, llm=None, sess
         # Re-activation: the board we used before is the first thing to re-check (and re-verify).
         found.append(FeedCandidate(FeedSpec(previous.method, previous.slug, previous.site, previous.host), False,
                                    f"previous {previous.method}/{previous.slug}", source_rank=1))
+    hn = (company.source_data or {}).get("hn") or {}
+    for url in [hn.get("careers_url"), *(hn.get("board_links") or [])]:
+        if h := ats_hint(url):   # the company's own HN post links this board: as good as a link on their site
+            found.append(FeedCandidate(_spec(h, company), True, f"linked in their Hacker News post: {_label(h)}"))
     if discovery:
         for h in discovery.scan.ats_hints:
             found.append(FeedCandidate(_spec(h, company),
                                        discovery.on_company_site, f"{discovery.how}: {_label(h)}"))
     if company.domain in get_config().adapters:
         found.append(FeedCandidate(FeedSpec("adapter"), True, "community adapter", source_rank=1))
-    if not any(c.linked_from_site for c in found):  # only pay for AI suggestions when the site gave us nothing
+    if not company.domain:
+        pass  # name-only (from a Hacker News post): only boards the post links — no guesses to check ownership by
+    elif not any(c.linked_from_site for c in found):  # only pay for AI suggestions when the site gave us nothing
         for h in _ai_suggestions(company, llm, session, notes):
             found.append(FeedCandidate(_spec(h, company), False,
                                        f"AI-suggested {_label(h)}", source_rank=2))
-    for vendor in GUESSABLE:  # last resort; skipped once a better candidate is confirmed
+    for vendor in GUESSABLE if company.domain else ():  # last resort; skipped once a better one is confirmed
         for slug in slug_guesses(company):
             found.append(FeedCandidate(FeedSpec(vendor, slug), False, f"guessed {vendor}/{slug}", source_rank=3))
     unique = {(c.spec.method, (c.spec.slug or "").lower(), c.spec.site): c for c in reversed(found)}
@@ -201,6 +207,8 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
         unreadable = sorted(vendors - set(READERS) - {"phenom"}) or sorted(vendors & {"phenom"})
         if unreadable:
             note = f"jobs are on {', '.join(unreadable)} (no reader yet)"
+        elif not company.domain:
+            note = "no website in their Hacker News post (jobs from the post itself)"
         elif discovery:
             note = "custom careers page (browser reader not built yet)"
         else:

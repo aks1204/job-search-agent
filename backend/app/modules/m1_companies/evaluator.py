@@ -6,9 +6,11 @@ the audit trail, re-runnable as f(fact card, rules version, precedents).
 """
 
 import json
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
@@ -16,7 +18,8 @@ from app.core import audit
 from app.core.http import PoliteClient
 from app.core.memory import search as memory_search
 from app.core.search import search_available
-from app.models.company import STATUS_BLOCKED, STATUS_PASSED, STATUS_REJECTED, Company
+from app.models.company import STATUS_BLOCKED, STATUS_PASSED, STATUS_REJECTED, STATUS_WATCHING, Company
+from app.models.feed import CompanyFeed, RawPosting
 from app.models.verdict import CompanyVerdict
 from app.modules.m1_companies import checks as C
 from app.modules.m1_companies.enrich import enrich, news_signals
@@ -162,6 +165,22 @@ def evaluate(
         session.add(verdict)
         session.flush()
         company.status = STATUS_PASSED if passed else (STATUS_BLOCKED if verdict.permanent else STATUS_REJECTED)
+        if session.scalar(select(CompanyFeed.id).where(CompanyFeed.company_id == company.id).limit(1)):
+            if passed:
+                company.status = STATUS_WATCHING   # re-judged and still kept: its feed carries on
+            else:                                  # no longer watched: its open roles leave your lists
+                from app.modules.m3_outreach.campaigns import stop_company
+
+                from app.models.job import JobPosting
+
+                now = datetime.now(timezone.utc)
+                for r in session.scalars(select(RawPosting).where(RawPosting.company_id == company.id,
+                                                                  RawPosting.closed_at.is_(None))).all():
+                    r.closed_at = now
+                for j in session.scalars(select(JobPosting).where(JobPosting.company_id == company.id,
+                                                                  JobPosting.status == "open")).all():
+                    j.status, j.closed_at = "closed", now   # right away, not at the next job-intake run
+                stop_company(session, company.id, f"no longer kept: {summary[:200]}")   # nothing unsent goes out
         company.reeval_reason = None
         if company.type == "unknown":
             company.type, company.type_source = profile, "evaluator"  # a scale-up keeps type "startup" if known

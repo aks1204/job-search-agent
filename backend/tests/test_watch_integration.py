@@ -208,7 +208,9 @@ def test_hn_and_waas_posts_become_leads_for_fallback_companies(db_session, mock,
     assert feed.method == "aggregator" and first.new == 3  # _company() adds its own "Analyst" HN post too
     leads = {p.title: p for p in db_session.scalars(select(RawPosting).where(RawPosting.feed_id == feed.id))}
     assert set(leads) == {"Senior Data Analyst", "Product Analyst", "Analyst"}
-    assert leads["Senior Data Analyst"].location == "Remote (India)" and leads["Senior Data Analyst"].lead_only
+    assert leads["Senior Data Analyst"].location == "Remote (India)"
+    assert not leads["Senior Data Analyst"].lead_only      # their own HN post is their job ad: a real posting
+    assert leads["Product Analyst"].lead_only              # a job-site listing stays a lead
     assert leads["Product Analyst"].url == "https://www.workatastartup.com/jobs/777"
 
 

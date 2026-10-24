@@ -5,6 +5,7 @@ the guessed site actually names the company. Domains found either way are
 tagged `domain_source = "search"` / `"llm"` (inferred, not verified).
 """
 
+import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -27,14 +28,25 @@ from app.modules.m1_companies.identity import assign_domain, name_matches_domain
 BACKOFF_DAYS = (1, 3, 7, 14)
 
 
-def pick_domain(name: str, results) -> str | None:
-    """First non-junk result whose domain or title clearly names the company."""
+_TITLE_PARTS = re.compile(r"\s*[|–—:·]\s+|\s*\|\s*|\s+-\s+")
+
+
+def _title_names(title: str, name: str) -> bool:
+    """The page title is FOR this company: its first part is the name ('Acme — Data tools' for Acme). A name
+    that merely appears in a title proves nothing: ZS's title 'ZS | Strategy & Transformation Consulting'
+    once made zs.com the website of a German firm called Strategy & Transformation Consulting."""
     wanted = normalize_name(name)
+    first = normalize_name(_TITLE_PARTS.split(title or "", maxsplit=1)[0])
+    return bool(wanted) and (first == wanted or first.startswith(wanted + " "))   # "Plimsoll Analytics | …"
+
+
+def pick_domain(name: str, results) -> str | None:
+    """First non-junk result whose domain clearly fits the company's name, or whose page title leads with it."""
     for r in results:
         domain = normalize_domain(r.url)
         if not domain or is_junk(r.url):
             continue
-        if name_matches_domain(name, domain) or (wanted and wanted in normalize_name(r.title)):
+        if name_matches_domain(name, domain) or _title_names(r.title, name):
             return domain
     return None
 

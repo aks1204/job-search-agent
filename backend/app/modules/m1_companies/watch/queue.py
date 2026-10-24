@@ -49,8 +49,10 @@ def run_activation_batch(*, limit: int | None = None, company_ids: list[int] | N
             try:
                 with session_scope() as s:
                     company = s.get(Company, company_id)
-                    if company is None or not company.domain or company.status == "blocked":
+                    if company is None or company.status in ("blocked", "rejected"):
                         continue                    # blocked (e.g. your employer): never watched, even by hand
+                    # (no website: a name-only company from a Hacker News post — its post's board links and
+                    # the post itself are its feed)
                     feed, first = activate(s, company, http, llm=llm)
                     counts[f"via_{feed.method}"] += 1
                     counts["jobs_found"] += first.new
@@ -69,7 +71,7 @@ def run_sync_batch(*, limit: int | None = None, company_ids: list[int] | None = 
     with session_scope() as s:
         q = select(CompanyFeed.id).join(Company, Company.id == CompanyFeed.company_id)
         if company_ids:
-            q = q.where(CompanyFeed.company_id.in_(company_ids), Company.status != "blocked")
+            q = q.where(CompanyFeed.company_id.in_(company_ids), Company.status.not_in(("blocked", "rejected")))
         else:
             q = q.where(
                 Company.status.in_((STATUS_WATCHING, STATUS_DORMANT)),

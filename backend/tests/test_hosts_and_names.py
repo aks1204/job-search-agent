@@ -94,3 +94,11 @@ def test_pick_domain_skips_boards_and_requires_name_match():
     ]
     assert pick_domain("Acme", results) == "acmelogistics.io"
     assert pick_domain("Nothing Matches", results) is None
+
+
+def test_a_name_inside_someone_elses_page_title_is_not_their_website():
+    # ZS's title "ZS | Strategy & Transformation Consulting" once made zs.com a German firm's website.
+    zs = [SearchResult("ZS | Strategy & Transformation Consulting", "https://www.zs.com/", "")]
+    assert pick_domain("Strategy & Transformation Consulting", zs) is None
+    own = [SearchResult("Plimsoll — Analytics for shipping", "https://getplim.io/", "")]
+    assert pick_domain("Plimsoll", own) == "getplim.io"                  # the title leads with the name
