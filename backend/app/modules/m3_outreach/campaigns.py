@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
 from app.core import audit
+from app.models.company import STATUS_BLOCKED, Company
 from app.models.contact import Bench, ContactEmail, RoleChannel
 from app.models.draft import OutreachDraft
 from app.models.outreach import DraftEdit, OutreachCampaign, OutreachEmail
@@ -75,6 +76,9 @@ def prepare_campaigns(session: Session, cluster_ids: list[int] | None = None) ->
         channel = session.get(RoleChannel, draft.cluster_id)
         if channel is None or channel.mode not in ("designated", "bench", "mailbox"):
             continue
+        company = session.get(Company, channel.company_id)
+        if company is not None and company.status == STATUS_BLOCKED:
+            continue                         # e.g. your current / a past employer: never contacted
         campaigns = session.scalars(select(OutreachCampaign).where(OutreachCampaign.cluster_id == draft.cluster_id)
                                     .order_by(OutreachCampaign.id.desc())).all()
         current = campaigns[0] if campaigns else None

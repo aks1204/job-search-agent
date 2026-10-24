@@ -175,6 +175,12 @@ def evaluate(
         )
         return verdict
 
+    # 0 — owner rule: your current and past employers are never watched (free, before anything else).
+    from app.modules.m1_companies import employers
+
+    if (employer := employers.match(session, company)) is not None:
+        return employers.block(session, company, employer)   # not a judgment: doesn't use the daily limit
+
     # 1 — free: what the scouts already know.
     apply_feeder_facts(session, company)
     card = fact_card(session, company.id)

@@ -21,7 +21,8 @@ def list_jobs(
     offset: int = 0,
     session: Session = Depends(get_session),
 ) -> list[dict]:
-    q = select(JobPosting, Company).join(Company, Company.id == JobPosting.company_id).where(JobPosting.status == "open")
+    q = select(JobPosting, Company).join(Company, Company.id == JobPosting.company_id).where(JobPosting.status == "open",
+                                                                                        Company.status != "blocked")
     if filter_status:
         q = q.where(JobPosting.filter_status == filter_status)
     if company_id is not None:
@@ -58,6 +59,7 @@ def shortlist(
          .join(Company, Company.id == JobPosting.company_id)
          .join(JobCluster, JobCluster.id == JobScore.cluster_id))
     q = q.where(JobScore.band == band) if band else q.where(JobScore.band != "archive")
+    q = q.where(Company.status != "blocked")                  # e.g. your current / a past employer
     rows = session.execute(q.order_by(JobScore.score.desc()).limit(limit)).all()
     return [
         {"cluster_id": cl.id, "score": sc.score, "band": sc.band, "graded": sc.graded,

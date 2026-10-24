@@ -22,7 +22,7 @@ from app.core.http import PoliteClient
 from app.core.llm import LLM
 from app.db import session_scope
 from app.models.assessment import JobAssessment
-from app.models.company import Company, ContactLead
+from app.models.company import STATUS_BLOCKED, Company, ContactLead
 from app.models.contact import Bench, BenchMember, Contact, ContactEmail, RoleChannel
 from app.models.job import JobPosting
 from app.models.score import JobScore
@@ -73,7 +73,8 @@ def pursued_roles(session: Session, cluster_ids: list[int] | None = None):
          .join(JobAssessment, JobAssessment.id == JobScore.assessment_id)
          .join(JobPosting, JobPosting.id == JobAssessment.job_id)
          .join(Company, Company.id == JobPosting.company_id)
-         .where(JobAssessment.outcome == "passed", JobPosting.status == "open"))
+         .where(JobAssessment.outcome == "passed", JobPosting.status == "open",
+                Company.status != STATUS_BLOCKED))          # e.g. your current / a past employer
     if cluster_ids:
         q = q.where(JobScore.cluster_id.in_(cluster_ids))
     else:

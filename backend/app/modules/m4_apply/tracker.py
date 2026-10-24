@@ -24,7 +24,7 @@ from app.core.http import PoliteClient
 from app.core.notify import notify
 from app.models.application import STATUS_RANK, Application, ApplicationEvent
 from app.models.assessment import JobAssessment
-from app.models.company import Company
+from app.models.company import STATUS_BLOCKED, Company
 from app.models.job import JobCluster, JobPosting
 from app.models.outreach import OutreachCampaign, OutreachEmail
 from app.models.score import JobScore
@@ -120,7 +120,7 @@ def queue_roles(session: Session) -> Counter:
         .join(JobAssessment, JobAssessment.id == JobScore.assessment_id)
         .join(JobPosting, JobPosting.id == JobAssessment.job_id)
         .join(Company, Company.id == JobPosting.company_id)
-        .where(JobAssessment.outcome == "passed", JobPosting.status == "open",
+        .where(JobAssessment.outcome == "passed", JobPosting.status == "open", Company.status != STATUS_BLOCKED,
                or_(JobScore.band.in_(cfg.apply_bands), JobScore.owner_action == "act"),
                or_(JobScore.owner_action.is_(None), JobScore.owner_action.not_in(("skip", "thumbs_down"))))
         .order_by(JobScore.score.desc())

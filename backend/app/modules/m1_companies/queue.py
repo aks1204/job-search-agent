@@ -32,7 +32,8 @@ def start_of_today_utc() -> datetime:
 def judged_today(session: Session) -> int:
     return session.scalar(
         select(func.count()).select_from(CompanyVerdict).where(
-            CompanyVerdict.decided_by == "machine", CompanyVerdict.created_at >= start_of_today_utc()
+            CompanyVerdict.decided_by == "machine", CompanyVerdict.created_at >= start_of_today_utc(),
+            CompanyVerdict.trigger != "employer_rule",   # the employer sweep isn't a judgment; it costs nothing
         )
     ) or 0
 

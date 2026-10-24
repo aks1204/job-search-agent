@@ -16,8 +16,18 @@ log = logging.getLogger(__name__)
 @celery_app.task(name="m5.check_profile")
 def check_profile_task() -> dict:
     llm = LLM() if LLM.available() else None
+    try:  # first, on its own: owner rule — your current / past employers are never watched
+        from app.core.http import PoliteClient
+        from app.modules.m1_companies import employers
+
+        with PoliteClient() as http, session_scope() as s:
+            employer_result = employers.refresh(s, llm, http)
+    except Exception as e:
+        log.warning("m5 employers failed: %r", e)
+        employer_result = {"error": str(e)[:200]}
     with session_scope() as s:
         result = check(s, llm)
+    result["employers"] = employer_result
     if llm is not None:
         with session_scope() as s:
             if direction.needs_refresh(s):

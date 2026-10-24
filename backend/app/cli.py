@@ -8,6 +8,7 @@
                                      # judge companies now (respects the daily limit unless --force)
     python -m app.cli verdicts [--last 20] [--rejected | --passed] [--details]
     python -m app.cli override <domain> keep|reject "<reason>" [--permanent]
+    python -m app.cli employers [fix "<name>" <domain>|none]     # your current / past employers: never watched
     python -m app.cli activate [--limit N] [--domain acme.com]   # set up job feeds for kept companies now
     python -m app.cli sync [--limit N] [--domain acme.com]       # read due feeds now
     python -m app.cli feeds                                      # watchlist health
@@ -304,6 +305,48 @@ def override_cmd(domain: str, decision: str, reason: str, permanent: bool) -> in
     return 0
 
 
+def employers_cmd(action: str, name: str | None, domain: str | None) -> int:
+    from app.core.http import PoliteClient
+    from app.core.llm import LLM
+    from app.db import session_scope
+    from app.modules.m1_companies import employers as E
+
+    with session_scope() as s:
+        if action == "fix":
+            if not name or not domain:
+                print('Usage: employers fix "<employer name>" <domain>|none')
+                return 1
+            try:
+                e, released = E.fix(s, name, None if domain.lower() == "none" else domain)
+            except ValueError as err:
+                print(err)
+                return 1
+            if e is None:
+                print(f"“{name}” isn't an employer in your profile. The list: python -m app.cli employers")
+                return 1
+            print(f"{e.name}: website set to {e.domain or 'none (matched by name only)'}")
+            out = {"released": released, "blocked": E.apply(s)}
+        else:
+            with PoliteClient() as http:
+                out = E.refresh(s, LLM() if LLM.available() else None, http)
+        known = E.employers(s)
+        if not known:
+            print("No employers in your profile yet (profile show).")
+            return 0
+        print("Your employers — never watched or contacted:")
+        for e in known:
+            blocked = E.blocked_for(s, e)
+            seen = f" — not watching: {', '.join(c.name for c in blocked)}" if blocked else ""
+            print(f"  {e.name} ({'current' if e.current else 'past'}): "
+                  f"{e.domain or 'website not found yet — matched by exact name only'}{seen}")
+        print(f"{out['blocked']} compan{'y' if out['blocked'] == 1 else 'ies'} newly taken off your watchlist.")
+        if out.get("released"):
+            print(f"{out['released']} wrongly matched compan{'y' if out['released'] == 1 else 'ies'} "
+                  "put back for a fresh look.")
+        print('Wrong website? employers fix "<name>" <domain>. Keep one anyway? override <domain> keep "<reason>"')
+    return 0
+
+
 def _company_ids(domain: str | None) -> list[int] | None:
     if not domain:
         return None
@@ -565,6 +608,7 @@ def shortlist_cmd(band: str | None, limit: int) -> int:
              .join(Company, Company.id == JobPosting.company_id)
              .join(JobCluster, JobCluster.id == JobScore.cluster_id))
         q = q.where(JobScore.band == band) if band else q.where(JobScore.band != "archive")
+        q = q.where(Company.status != "blocked")              # e.g. your current / a past employer
         rows = s.execute(q.order_by(JobScore.score.desc()).limit(limit)).all()
         for sc, a, j, c, cl in rows:
             graded = "AI-graded" if sc.graded else "similarity only"
@@ -1577,6 +1621,10 @@ def main() -> None:
     p_dir = sub.add_parser("direction", help="Module 5: your career direction — families, target roles, suggestions")
     p_dir.add_argument("action", nargs="?", default="show", choices=["show", "refresh", "yes", "no", "edit", "confirm"])
     p_dir.add_argument("suggestion_id", nargs="?", type=int)
+    p_emp = sub.add_parser("employers", help="your current / past employers — never watched or contacted")
+    p_emp.add_argument("action", nargs="?", default="list", choices=["list", "fix"])
+    p_emp.add_argument("name", nargs="?", help="fix: the employer's name as in your profile")
+    p_emp.add_argument("domain", nargs="?", help="fix: its website, e.g. zs.com — or none")
     p_mem = sub.add_parser("memory", help="Module 5: what the agent remembers about you — and your control over it")
     p_mem.add_argument("action", nargs="?", default="believes",
                        choices=["believes", "list", "search", "pin", "unpin", "forget", "restore", "keep", "undo"])
@@ -1683,6 +1731,8 @@ def main() -> None:
         sys.exit(profile_cmd(args.action))
     if args.command == "direction":
         sys.exit(direction_cmd(args.action, args.suggestion_id))
+    if args.command == "employers":
+        sys.exit(employers_cmd(args.action, args.name, args.domain))
     if args.command == "memory":
         sys.exit(memory_cmd(args.action, " ".join(args.arg) or None, args.kind, args.all))
     if args.command == "probe-workday":

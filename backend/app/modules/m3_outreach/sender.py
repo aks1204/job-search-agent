@@ -28,6 +28,7 @@ from app.core import audit
 from app.core.http import PoliteClient
 from app.core.redis_client import get_redis
 from app.db import session_scope
+from app.models.company import STATUS_BLOCKED, Company
 from app.models.contact import Contact, ContactEmail, MailDomain, RoleChannel
 from app.models.outreach import OutreachCampaign, OutreachEmail, SendBreaker
 from app.modules.m2_jobs.profile_text import resume_path
@@ -129,8 +130,10 @@ def _queue_clean(session: Session) -> bool:
 def next_candidates(session: Session, now: datetime) -> list[tuple[OutreachEmail, OutreachCampaign]]:
     rows = session.execute(
         select(OutreachEmail, OutreachCampaign).join(OutreachCampaign, OutreachCampaign.id == OutreachEmail.campaign_id)
+        .join(Company, Company.id == OutreachCampaign.company_id)
         .where(OutreachEmail.status == "queued", OutreachEmail.decision == "approved",
-               OutreachCampaign.status.in_(("scheduled", "running")))
+               OutreachCampaign.status.in_(("scheduled", "running")),
+               Company.status != STATUS_BLOCKED)    # last line of defence: never email a blocked company
         .order_by(OutreachCampaign.armed_at, OutreachEmail.wave, OutreachEmail.position)
     ).all()
     return [(e, c) for e, c in rows if wave_due_at(c, e.wave) <= now]

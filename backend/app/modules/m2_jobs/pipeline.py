@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.config_loader import get_config
 from app.core.http import PoliteClient
 from app.db import session_scope
+from app.models.company import Company
 from app.models.feed import CompanyFeed, RawPosting
 from app.models.job import JobCluster, JobPosting
 from app.modules.m2_jobs import normalize as N
@@ -155,8 +156,9 @@ def fetch_descriptions(session: Session, http: PoliteClient, limit: int | None =
         select(JobPosting, CompanyFeed)
         .join(RawPosting, RawPosting.id == JobPosting.raw_posting_id)
         .join(CompanyFeed, CompanyFeed.id == RawPosting.feed_id)
+        .join(Company, Company.id == JobPosting.company_id)
         .where(JobPosting.filter_status == "passed", JobPosting.status == "open",
-               JobPosting.description_status == "pending")
+               JobPosting.description_status == "pending", Company.status != "blocked")
         .order_by(JobPosting.first_seen_at.desc()).limit(limit)
     ).all()
     cache: dict = {}

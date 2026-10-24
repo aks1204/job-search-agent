@@ -6,6 +6,7 @@ from app.models.company import Company, CompanySighting, ContactLead
 from app.models.contact import Bench, BenchMember, Contact, ContactEmail, EnrichmentLookup, MailDomain, RoleChannel
 from app.models.direction import CareerDirection, DirectionSuggestion
 from app.models.draft import OutreachDraft
+from app.models.employer import OwnerEmployer
 from app.models.feed import CompanyFeed, RawPosting
 from app.models.job import JobCluster, JobPosting
 from app.models.llm_call import LLMCall
@@ -19,6 +20,6 @@ from app.models.verdict import CompanyFact, CompanyVerdict
 
 __all__ = [
     "Application", "ApplicationEvent", "AuditLog", "Bench", "BenchMember", "CareerDirection", "DirectionSuggestion", "Company", "CompanyFact", "CompanyFeed", "CompanySighting", "CompanyVerdict", "Contact", "ContactEmail",
-    "ContactLead", "DraftEdit", "EnrichmentLookup", "MailAccount", "OutreachCampaign", "OutreachEmail", "SendBreaker", "MailDomain", "OutreachDraft", "OwnerProfile", "RoleChannel",
+    "ContactLead", "DraftEdit", "EnrichmentLookup", "MailAccount", "OutreachCampaign", "OutreachEmail", "SendBreaker", "MailDomain", "OutreachDraft", "OwnerEmployer", "OwnerProfile", "RoleChannel",
     "ExchangeFactor", "InboxMessage", "JobAssessment", "JobCluster", "JobFeedback", "JobPosting", "JobScore", "LLMCall", "MemoryEntry", "Notification", "RawPosting", "ScoutRun", "ScoutState",
 ]

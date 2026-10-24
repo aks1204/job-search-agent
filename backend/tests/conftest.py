@@ -37,3 +37,11 @@ def db_session():
         session.close()
         outer.rollback()
         conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_employers(monkeypatch):
+    """Your real employers (from your profile) never block test companies; the employer tests set their own."""
+    from app.modules.m1_companies import employers
+
+    monkeypatch.setattr(employers, "_from_profile", lambda: [])
