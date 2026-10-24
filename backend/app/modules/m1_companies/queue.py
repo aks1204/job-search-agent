@@ -2,7 +2,7 @@
 
 import logging
 from collections import Counter
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -21,6 +21,8 @@ from app.settings import redact
 log = logging.getLogger(__name__)
 
 MAX_CONSECUTIVE_ERRORS = 3
+FAILED_RETRY_AFTER = timedelta(days=1)
+KEY_PROBLEMS = ("AuthenticationError", "PermissionDeniedError", "credit balance is too low")
 
 
 def start_of_today_utc() -> datetime:
@@ -43,19 +45,23 @@ def pick_candidates(session: Session, n: int) -> list[int]:
     cfg = get_config()
     priority = {s: i for i, s in enumerate(cfg.rules.evaluation.source_priority)}
     stmt = (
-        select(Company.id, Company.reeval_reason, Company.first_seen_at, func.array_agg(CompanySighting.scout))
+        select(Company.id, Company.reeval_reason, Company.first_seen_at, func.array_agg(CompanySighting.scout),
+               Company.updated_at)
         .join(CompanySighting, CompanySighting.company_id == Company.id)
         .where(Company.status == STATUS_CANDIDATE)
         .group_by(Company.id)
     )
+    retry_after = datetime.now(timezone.utc) - FAILED_RETRY_AFTER
     if cfg.owner is None or cfg.owner.placeholder_fields():
         # Established companies are judged against the owner's real history; wait for it.
         stmt = stmt.where(Company.type != "established")
     rows = session.execute(stmt).all()
 
     def key(row):
-        _, reeval, first_seen, scouts = row
-        failed = reeval == "error"
+        _, reeval, first_seen, scouts, updated = row
+        # A failure waits a day at the back, then takes its normal place again — otherwise a busy queue
+        # would starve it for ever (Groww, Bain and Meta from your seed list waited two weeks this way).
+        failed = reeval == "error" and updated is not None and updated > retry_after
         requeued = reeval is not None and not failed
         best = min((priority.get(s, len(priority)) for s in scouts), default=len(priority))
         return (failed, not requeued, best, first_seen)
@@ -99,6 +105,11 @@ def run_batch(*, limit: int | None = None, force: bool = False, company_ids: lis
                 counts["skipped_no_key"] += 1
                 break
             except Exception as e:  # one company's failure must not stop the queue (LLMError, network, …)
+                if any(k in str(e) for k in KEY_PROBLEMS):
+                    # The API key itself is wrong / out of credit: not this company's fault — stop, mark nothing.
+                    counts["stopped_api_key_problem"] = 1
+                    log.warning("evaluation stopped: AI key problem: %s", redact(str(e))[:200])
+                    break
                 errors_in_a_row += 1
                 counts["errors"] += 1
                 log.warning("evaluation of company %s failed: %s", company_id, e)
