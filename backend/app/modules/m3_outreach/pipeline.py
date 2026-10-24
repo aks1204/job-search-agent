@@ -107,19 +107,23 @@ def _company_address(email: str, company: Company) -> bool:
     return company.domain is not None and domain in (company.domain, mail_domain_for(company))
 
 
-def _designated_for(session: Session, job: JobPosting, company: Company) -> tuple[str, str] | None:
+def _designated_for(session: Session, job: JobPosting, company: Company) -> tuple[str, str, list[str]] | None:
+    """(address, why, more addresses) the company asked applicants to use — each gets its own email."""
     if hit := find_designated(job.description):          # the job page itself names an address
-        return hit
+        return hit[0], hit[1], []
     leads = [l for l in session.scalars(select(ContactLead).where(ContactLead.company_id == company.id,
                                                                   ContactLead.source == "hn")
                                         .order_by(ContactLead.found_at.desc())).all()
              if not _OTHER_LOCALS.match(l.email.split("@", 1)[0])   # never press@, security@, privacy@…
              and _company_address(l.email, company)]
-    # Their HN post said "email X to apply": X is how they asked to be reached — for every role there.
-    if apply := next((l for l in leads if (l.context or "").startswith(APPLY_MARK)), None):
-        return apply.email.lower(), apply.context[len(APPLY_MARK):] or "the Hacker News post asks to apply here"
-    if leads:                                           # otherwise the address their HN post gives
-        return leads[0].email.lower(), leads[0].context or "address given in the Hacker News post"
+    # Their HN post said "email X (or Y) to apply": that's how they asked to be reached — for every role there,
+    # and every such address (each its own email). Other addresses in the post are then left alone.
+    apply = list(dict.fromkeys(l.email.lower() for l in leads if (l.context or "").startswith(APPLY_MARK)))
+    if apply:
+        first = next(l for l in leads if l.email.lower() == apply[0])
+        return apply[0], first.context[len(APPLY_MARK):] or "the Hacker News post asks to apply here", apply[1:5]
+    if leads:                                           # otherwise the one address their HN post gives
+        return leads[0].email.lower(), leads[0].context or "address given in the Hacker News post", []
     return None
 
 
@@ -151,13 +155,18 @@ def decide_channel(session: Session, http: PoliteClient, llm, score: JobScore, a
         session.add(channel)
     elif channel.manual:
         return channel  # your own call stands
+    channel.also_emails = []   # only a posting that names several addresses sets these (just below)
 
     if hit := _designated_for(session, job, company):
-        email, context = hit
-        _ensure_address(session, http, company, email, **kw)  # checked for 3c's sake; still the only channel
+        email, context, more = hit
+        for address in [email, *more]:
+            _ensure_address(session, http, company, address, **kw)  # checked for 3c's sake; still the only channel
         channel.mode, channel.designated_email, channel.designated_context = "designated", email, context[:1000]
-        channel.bench_id, channel.next_retry_at, channel.note = None, None, "the posting names this address"
-        audit.record(session, "m3", "channel_designated", f"{company.name}: the posting asks for {email}",
+        channel.also_emails = more
+        channel.bench_id, channel.next_retry_at = None, None
+        channel.note = "the posting names this address" if not more else f"the posting names {1 + len(more)} addresses"
+        audit.record(session, "m3", "channel_designated",
+                     f"{company.name}: the posting asks for {', '.join([email, *more])}",
                      subject_type="job_cluster", subject_id=str(score.cluster_id))
         return channel
 
@@ -289,9 +298,10 @@ def designate(session: Session, cluster_id: int, email: str | None, reason: str)
     if email is None:
         channel.manual, channel.next_retry_at, channel.note = False, _now(), f"released by you: {reason}"
         if channel.mode == "designated":
-            channel.mode, channel.designated_email = "none", None
+            channel.mode, channel.designated_email, channel.also_emails = "none", None, []
     else:
         channel.mode, channel.designated_email, channel.designated_context = "designated", email.lower(), reason
+        channel.also_emails = []                    # yours is the only address
         channel.manual, channel.bench_id, channel.next_retry_at, channel.note = True, None, None, "set by you"
         if session.scalar(select(ContactEmail).where(ContactEmail.company_id == company_id,
                                                      ContactEmail.email == email.lower())) is None:

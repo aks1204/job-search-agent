@@ -32,7 +32,8 @@ def role_channel(cluster_id: int, session: Session = Depends(get_session)) -> di
     if ch is None:
         raise HTTPException(404, "no channel decided for this role yet")
     out = {"cluster_id": cluster_id, "company": session.get(Company, ch.company_id).name, "mode": ch.mode,
-           "manual": ch.manual, "address": ch.designated_email, "context": ch.designated_context, "note": ch.note,
+           "manual": ch.manual, "address": ch.designated_email, "also": ch.also_emails or [],
+           "context": ch.designated_context, "note": ch.note,
            "next_retry_at": ch.next_retry_at, "bench": None}
     if ch.bench_id and ch.mode != "designated":
         out["bench"] = _bench(session, session.get(Bench, ch.bench_id))

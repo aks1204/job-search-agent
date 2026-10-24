@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
 from app.core import audit
-from app.models.company import STATUS_BLOCKED, Company
+from app.models.company import STATUS_BLOCKED, Company, ContactLead
 from app.models.contact import Bench, ContactEmail, RoleChannel
 from app.models.draft import OutreachDraft
 from app.models.outreach import DraftEdit, OutreachCampaign, OutreachEmail
@@ -51,13 +51,20 @@ def render_email(t: Template, campaign: OutreachCampaign, email: OutreachEmail) 
 
 def _recipients(session: Session, channel: RoleChannel) -> list[dict]:
     if channel.mode in ("designated", "mailbox") and channel.designated_email:
-        row = session.scalar(select(ContactEmail).where(ContactEmail.company_id == channel.company_id,
-                                                        ContactEmail.email == channel.designated_email))
-        conf = row.confidence if row else "unchecked"
         # A designated address is the company's own instruction: it counts as published, but a
         # bounce-proof check still matters, so unverified ones need your go-ahead like any other.
-        return [{"contact_id": None, "address_id": row.id if row else None, "to_email": channel.designated_email,
-                 "to_name": None, "confidence": conf, "vouched": bool(row and row.vouched)}]
+        # Several named ("email priya@ or rahul@ to apply"): one email each.
+        addresses = [channel.designated_email, *(channel.also_emails or [] if channel.mode == "designated" else [])]
+        out = []
+        for address in dict.fromkeys(a.lower() for a in addresses):
+            row = session.scalar(select(ContactEmail).where(ContactEmail.company_id == channel.company_id,
+                                                            ContactEmail.email == address))
+            lead = session.scalar(select(ContactLead).where(ContactLead.company_id == channel.company_id,
+                                                            ContactLead.email == address))
+            out.append({"contact_id": None, "address_id": row.id if row else None,
+                        "to_email": address, "to_name": lead.name if lead else None,
+                        "confidence": row.confidence if row else "unchecked", "vouched": bool(row and row.vouched)})
+        return out
     if channel.mode == "bench" and channel.bench_id:
         return [{"contact_id": c.id, "address_id": a.id, "to_email": a.email, "to_name": c.full_name,
                  "confidence": a.confidence, "vouched": a.vouched}

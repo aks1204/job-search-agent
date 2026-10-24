@@ -824,7 +824,7 @@ def channel_cmd(cluster_id: int) -> int:
         if ch.note:
             print(f"  {ch.note}")
         if ch.designated_email:
-            print(f"  address: {ch.designated_email}")
+            print(f"  address: {', '.join([ch.designated_email, *(ch.also_emails or [])])}")
         if ch.designated_context:
             print(f"  “{ch.designated_context[:200]}”")
         if ch.next_retry_at:
@@ -962,7 +962,7 @@ def draft_cmd(cluster_id: int) -> int:
         if ch and ch.mode == "bench" and ch.bench_id:
             recipients = [(c.full_name, a.email, a.confidence) for _, c, a in usable_members(s, s.get(Bench, ch.bench_id))]
         elif ch and ch.designated_email:
-            recipients = [(None, ch.designated_email, ch.mode)]
+            recipients = [(None, a, ch.mode) for a in [ch.designated_email, *(ch.also_emails or [])]]
         else:
             recipients = []
         first = recipients[0] if recipients else (None, "(no recipient yet)", "")

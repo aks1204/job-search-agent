@@ -135,6 +135,9 @@ class RoleChannel(Base):
     mode: Mapped[str] = mapped_column(String(12))                # designated | bench | none
     designated_email: Mapped[str | None] = mapped_column(String(320))
     designated_context: Mapped[str | None] = mapped_column(Text)
+    # More addresses the company asked applicants to use (an HN post: "email priya@ or rahul@ to apply") —
+    # each gets its own email, like the designated one.
+    also_emails: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
     bench_id: Mapped[int | None] = mapped_column(ForeignKey("benches.id", ondelete="SET NULL"))
     manual: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))  # owner override
     note: Mapped[str | None] = mapped_column(Text)

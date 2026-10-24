@@ -141,10 +141,12 @@ def _move_contacts(session: Session, old: Company, new: Company, emails: list[st
 
     emails = [e.lower() for e in emails]
     if emails:
-        for ch in session.scalars(select(RoleChannel).where(RoleChannel.company_id == old.id,
-                                                            RoleChannel.designated_email.in_(emails))).all():
-            ch.mode, ch.designated_email, ch.next_retry_at = "none", None, _now()   # look again for this role
-            ch.note = "the address belonged to another company's post"
+        for ch in session.scalars(select(RoleChannel).where(RoleChannel.company_id == old.id)).all():
+            if ch.designated_email in emails:
+                ch.mode, ch.designated_email, ch.also_emails, ch.next_retry_at = "none", None, [], _now()
+                ch.note = "the address belonged to another company's post"   # looked for again
+            elif set(ch.also_emails or []) & set(emails):
+                ch.also_emails = [a for a in ch.also_emails if a not in emails]
         for e in session.scalars(select(OutreachEmail).join(OutreachCampaign,
                                                             OutreachCampaign.id == OutreachEmail.campaign_id)
                                  .where(OutreachCampaign.company_id == old.id, OutreachEmail.status == "queued",

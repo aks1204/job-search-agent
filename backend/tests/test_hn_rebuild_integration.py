@@ -115,11 +115,21 @@ def test_the_posts_apply_address_is_the_only_one_for_that_companys_roles(db_sess
     db_session.add_all([
         ContactLead(company_id=c.id, email="press@zzapply.io", source="hn", context="HN post: Zzapply"),
         ContactLead(company_id=c.id, email="priya@zzapply.io", name="Priya", source="hn",
+                    context=APPLY_MARK + "HN post: Zzapply"),
+        ContactLead(company_id=c.id, email="rahul@zzapply.io", name="Rahul", source="hn",
                     context=APPLY_MARK + "HN post: Zzapply")])
     db_session.flush()
     board_role = SimpleNamespace(description="Great role.", external_id="greenhouse:7", lead_only=False)
-    email, _ = _designated_for(db_session, board_role, c)
-    assert email == "priya@zzapply.io"
+    email, _, more = _designated_for(db_session, board_role, c)
+    # "email Priya or Rahul to apply": both get their own email; press@ (not an apply address) neither
+    assert sorted([email, *more]) == ["priya@zzapply.io", "rahul@zzapply.io"]
+
+    from app.models import RoleChannel
+    from app.modules.m3_outreach.campaigns import _recipients
+
+    ch = RoleChannel(cluster_id=0, company_id=c.id, mode="designated", designated_email=email, also_emails=more)
+    assert sorted((r["to_email"], r["to_name"]) for r in _recipients(db_session, ch)) == [
+        ("priya@zzapply.io", "Priya"), ("rahul@zzapply.io", "Rahul")]           # each greeted by name
 
 
 def test_a_post_without_a_website_never_joins_a_same_name_company_elsewhere(db_session):
