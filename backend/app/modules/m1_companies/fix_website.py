@@ -100,6 +100,23 @@ def _leads_staying(session: Session, c: Company, stay_scouts: set[str]) -> list[
             if l.source in stay_scouts and normalize_domain(l.email) == c.domain]
 
 
+def start_over(session: Session, c: Company) -> None:
+    """Remove everything built for the company (roles, judgments, contacts found, outreach — the database removes
+    what hangs off them: scores, drafts, campaigns, applications…) and send it through the pipeline afresh,
+    first in the judging queue. Its sources (posts, listings) and the addresses they gave stay."""
+    session.execute(delete(JobCluster).where(JobCluster.company_id == c.id))
+    session.execute(delete(CompanyFeed).where(CompanyFeed.company_id == c.id))
+    session.execute(delete(OutreachCampaign).where(OutreachCampaign.company_id == c.id))
+    session.execute(delete(Bench).where(Bench.company_id == c.id))
+    session.execute(delete(ContactEmail).where(ContactEmail.company_id == c.id))
+    session.execute(delete(Contact).where(Contact.company_id == c.id))
+    session.execute(delete(CompanyFact).where(CompanyFact.company_id == c.id))
+    session.execute(delete(CompanyVerdict).where(CompanyVerdict.company_id == c.id))
+    c.aliases = []
+    c.type, c.type_source, c.enriched_at = "unknown", None, None
+    c.status, c.reeval_reason = STATUS_CANDIDATE, "rules_change"
+
+
 def plan(session: Session, c: Company, *, new_domain: str | None = None, new_name: str | None = None) -> Correction:
     domain = c.domain
     if new_domain is not None:
@@ -172,22 +189,11 @@ def apply(session: Session, p: Correction) -> Company:
     stay_scouts = {s.scout for s in stay}
     stay_leads = _leads_staying(session, c, stay_scouts)
     moving_scouts = {s.scout for s in _sightings(session, c.id) if s.id not in set(p.stay_ids)}
-    # Everything built from the old details goes (roles, judgments, contacts found, outreach — the database
-    # removes what hangs off them: scores, drafts, campaigns, applications…).
-    session.execute(delete(JobCluster).where(JobCluster.company_id == c.id))
-    session.execute(delete(CompanyFeed).where(CompanyFeed.company_id == c.id))
-    session.execute(delete(OutreachCampaign).where(OutreachCampaign.company_id == c.id))
-    session.execute(delete(Bench).where(Bench.company_id == c.id))
-    session.execute(delete(ContactEmail).where(ContactEmail.company_id == c.id))
-    session.execute(delete(Contact).where(Contact.company_id == c.id))
-    session.execute(delete(CompanyFact).where(CompanyFact.company_id == c.id))
-    session.execute(delete(CompanyVerdict).where(CompanyVerdict.company_id == c.id))
-    # The corrected details, and a fresh start through the pipeline (judged first in the queue).
-    c.name, c.normalized_name, c.aliases = p.new_name, normalize_name(p.new_name)[:255], []
+    start_over(session, c)
+    # The corrected details.
+    c.name, c.normalized_name = p.new_name, normalize_name(p.new_name)[:255]
     if p.new_domain != p.domain:
         c.domain, c.website, c.domain_source = p.new_domain, f"https://{p.new_domain}", "manual"
-    c.type, c.type_source, c.enriched_at = "unknown", None, None
-    c.status, c.reeval_reason = STATUS_CANDIDATE, "rules_change"
     c.source_data = {k: v for k, v in old_data.items()
                      if k != "owner" and not (k in stay_scouts and k not in moving_scouts)}
     if c.domain is None and "hn" not in moving_scouts:

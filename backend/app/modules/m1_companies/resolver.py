@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
 from app.core import audit
-from app.core.hosts import is_junk, normalize_domain
+from app.core.hosts import is_junk, is_profile_site_for_other, normalize_domain
 from app.core.http import PoliteClient
 from app.core.llm import LLMError
 from app.core.search import search_available, web_search
@@ -44,8 +44,8 @@ def pick_domain(name: str, results) -> str | None:
     """First non-junk result whose domain clearly fits the company's name, or whose page title leads with it."""
     for r in results:
         domain = normalize_domain(r.url)
-        if not domain or is_junk(r.url):
-            continue
+        if not domain or is_junk(r.url) or is_profile_site_for_other(domain, name):
+            continue                        # e.g. "Innerscore — Overview | ZoomInfo" is ZoomInfo's page, not theirs
         if name_matches_domain(name, domain) or _title_names(r.title, name):
             return domain
     return None
@@ -142,7 +142,7 @@ def llm_resolve_batch(session: Session, http: PoliteClient, llm, limit: int = 10
             counts["llm_error"] += 1
             continue
         domain = normalize_domain(guess.domain)
-        if guess.confidence == "low" or not domain or is_junk(domain):
+        if guess.confidence == "low" or not domain or is_junk(domain) or is_profile_site_for_other(domain, company.name):
             counts["no_guess"] += 1
             continue
         site = fetch_site_text(http, domain)

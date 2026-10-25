@@ -16,7 +16,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core import audit
-from app.core.hosts import domain_label, is_junk, normalize_domain
+from app.core.hosts import domain_label, is_junk, is_profile_site_for_other, normalize_domain
 from app.models.company import (
     STATUS_CANDIDATE,
     STATUS_UNRESOLVED,
@@ -197,6 +197,8 @@ def intake(session: Session, cand: Candidate) -> str:
         return "seen"
 
     domain = _clean_domain(cand.domain)
+    if is_profile_site_for_other(domain, cand.name):
+        domain = None                       # a listing that points at a profile page about the company
     company = None
     outcome = "matched"
     if domain:

@@ -102,3 +102,13 @@ def test_a_name_inside_someone_elses_page_title_is_not_their_website():
     assert pick_domain("Strategy & Transformation Consulting", zs) is None
     own = [SearchResult("Plimsoll — Analytics for shipping", "https://getplim.io/", "")]
     assert pick_domain("Plimsoll", own) == "getplim.io"                  # the title leads with the name
+
+
+def test_a_profile_page_about_a_company_is_not_its_website():
+    # "Innerscore — Overview & Contacts | ZoomInfo" glued 11 companies onto zoominfo.com.
+    from app.core.hosts import is_profile_site_for_other
+
+    assert is_profile_site_for_other("zoominfo.com", "Innerscore")
+    assert not is_profile_site_for_other("zoominfo.com", "ZoomInfo")             # ZoomInfo itself is fine
+    page = [SearchResult("Innerscore - Overview, News & Contacts | ZoomInfo", "https://www.zoominfo.com/c/innerscore/1", "")]
+    assert pick_domain("Innerscore", page) is None

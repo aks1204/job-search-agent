@@ -30,6 +30,35 @@ JUNK_DOMAINS = frozenset({
     "protonmail.com", "icloud.com",
 })
 
+# Sites that host profile pages ABOUT other companies ("Innerscore — Overview | ZoomInfo"). They are real
+# companies themselves, so they're only ever a company's website when the company's name fits them
+# (ZoomInfo ↔ zoominfo.com) — never because a search result for someone else landed there.
+PROFILE_SITES = frozenset({
+    "zoominfo.com", "apollo.io", "rocketreach.co", "owler.com", "tracxn.com", "ambitionbox.com", "pitchbook.com",
+    "dnb.com", "signalhire.com", "leadiq.com", "cbinsights.com", "craft.co", "dealroom.co", "zaubacorp.com",
+    "tofler.in", "thecompanycheck.com", "instafinancials.com", "bloomberg.com", "f6s.com", "clutch.co", "g2.com",
+    "comparably.com", "kununu.com", "trustpilot.com", "theorg.com", "lusha.com", "contactout.com", "datanyze.com",
+    "growjo.com", "cbinsights.com", "golden.com", "zippia.com", "justdial.com", "indiamart.com",
+})
+
+
+# Owners whose name doesn't spell out their profile site's domain.
+PROFILE_OWNERS = {"dnb.com": ("dun and bradstreet", "dnb", "d and b")}
+
+
+def is_profile_site_for_other(domain: str | None, name: str) -> bool:
+    """A profile site that isn't this company's own (Innerscore on zoominfo.com). Only the WHOLE name counts:
+    "ZoomInfo" / "ZoomInfo Technologies" own zoominfo.com; "Apollo Hospitals" does not own apollo.io."""
+    if not domain or domain not in PROFILE_SITES:
+        return False
+    from app.modules.m1_companies.identity import normalize_name
+
+    normalized = normalize_name(name)
+    if not normalized:
+        return True
+    return normalized.replace(" ", "") != domain_label(domain).replace("-", "") \
+        and normalized not in PROFILE_OWNERS.get(domain, ())
+
 # Full hostnames that are junk even though their registrable domain is a real company.
 JUNK_HOSTS = frozenset({
     "docs.google.com", "drive.google.com", "sites.google.com", "forms.google.com",

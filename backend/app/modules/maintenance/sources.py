@@ -75,6 +75,7 @@ class SourceRow:
     kept: int = 0
     read_directly: int = 0
     via_job_sites: int = 0
+    not_set_up: int = 0          # kept, but job reading not set up yet
     only_here: int = 0
     # … and their roles
     open_roles: int = 0
@@ -213,6 +214,8 @@ def build(session: Session, days: int | None = 90) -> dict:
             elif f is not None:
                 r.via_job_sites += 1
                 fallback[_fallback_cause(f)] += 1
+            else:
+                r.not_set_up += 1
             if not fits_website(c):
                 misfits.append(f"{c.name} ({c.domain})")
             if scouts_of.get(cid, set()) <= {scout}:
@@ -307,6 +310,17 @@ def _system_warnings(session: Session, companies: dict[int, Company]) -> list[Wa
             out.append(Warning_("system:finder", f"website-finder: {pending} companies waiting, no website found in "
                                 f"the last {FINDER_QUIET_DAYS} days (no search key, or its budget used up?)",
                                 check="python -m app.cli stats"))
+    # Kept, but job reading still not set up a day later (it's normally set up within 15 minutes).
+    has_feed = set(session.scalars(select(CompanyFeed.company_id)))
+    stalled = [c for c in companies.values() if c.status == STATUS_PASSED and c.id not in has_feed
+               and (v := session.scalars(select(CompanyVerdict).where(CompanyVerdict.company_id == c.id)
+                                         .order_by(CompanyVerdict.id.desc()).limit(1)).first()) is not None
+               and v.created_at < _now() - timedelta(days=1)]
+    if stalled:
+        out.append(Warning_("system:setup", f"{len(stalled)} kept compan{'y' if len(stalled) == 1 else 'ies'} still "
+                            "without job reading a day after being kept", [f"{c.name} ({c.domain or 'no website'})"
+                                                                          for c in stalled[:3]],
+                            check="python -m app.cli activate --limit 50"))
     odd = []
     for a in session.scalars(select(AuditLog).where(AuditLog.action == "company_merged")).all():
         d = a.detail or {}

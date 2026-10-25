@@ -11,6 +11,7 @@
     python -m app.cli employers [fix "<name>" <domain>|none]     # your current / past employers: never watched
     python -m app.cli hn rebuild                                 # re-read every saved Hacker News post (one-time)
     python -m app.cli hn repair                                  # restore companies the first rebuild split wrongly
+    python -m app.cli repair profile-sites [--yes]               # split companies glued onto e.g. zoominfo.com
     python -m app.cli names [ok <site>]                          # names that don't fit their site / mark one correct
     python -m app.cli fix-website <site|number> <right site> [--yes]  # correct a website: preview, then --yes
     python -m app.cli report [--days N|--all-time] [--all]       # each source's funnel + warning signs
@@ -421,7 +422,8 @@ def report_cmd(days: int | None, show_all: bool) -> int:
             print(f"                    waiting: {r.waiting_judging} to be judged · {r.looking_for_website} still "
                   "looking for a website")
         print(f"  kept now          {r.kept} companies → {r.read_directly} read directly, {r.via_job_sites} via job "
-              f"sites/posts → {r.open_roles} open roles → {r.passed_filters} roles passed filters"
+              f"sites/posts" + (f", {r.not_set_up} not set up yet" if r.not_set_up else "")
+              + f" → {r.open_roles} open roles → {r.passed_filters} roles passed filters"
               + (f"   (only here: {r.only_here})" if r.kept else ""))
         print(f"  results           roles: {r.fast_lane} fast lane · {r.inbox} inbox · {r.maybe} maybe · "
               f"{r.applied} applied")
@@ -443,6 +445,25 @@ def report_cmd(days: int | None, show_all: bool) -> int:
         for x in rep["shortlisted"][:15]:
             band = "Fast lane" if x["band"] == "fast_lane" else "Inbox"
             print(f"  [{x['score']:>3}] {band:<9} {x['company']} — {x['title'][:60]}   ({', '.join(x['sources'])})")
+    return 0
+
+
+def repair_profile_sites_cmd(yes: bool) -> int:
+    from app.db import session_scope
+    from app.modules.m1_companies import profile_repair as R
+
+    with session_scope() as s:
+        plans = R.plan(s)
+        for line in R.describe(plans):
+            print(line)
+        if not plans:
+            return 0
+        if not yes:
+            print("Nothing changed yet. To do it, run the same command with --yes")
+            return 0
+        out = R.apply(s, plans)
+        print(f"Done: {out['split']} compan{'y' if out['split'] == 1 else 'ies'} split off; their real websites are "
+              "looked up again by the website-finder.")
     return 0
 
 
@@ -1817,6 +1838,9 @@ def main() -> None:
     p_dir.add_argument("suggestion_id", nargs="?", type=int)
     p_hn = sub.add_parser("hn", help="Hacker News: rebuild everything from the saved posts (one-time)")
     p_hn.add_argument("action", choices=["rebuild", "repair"])
+    p_rep2 = sub.add_parser("repair", help="one-time data repairs (preview first)")
+    p_rep2.add_argument("what", choices=["profile-sites"], help="profile-sites: split companies glued onto e.g. zoominfo.com")
+    p_rep2.add_argument("--yes", action="store_true", help="carry it out (without: preview only)")
     p_ren = sub.add_parser("rename", help="correct a company's name (preview first; it starts over)")
     p_ren.add_argument("key", help="its website (zs.com) or its number from `names`")
     p_ren.add_argument("name")
@@ -1942,6 +1966,8 @@ def main() -> None:
         sys.exit(profile_cmd(args.action))
     if args.command == "direction":
         sys.exit(direction_cmd(args.action, args.suggestion_id))
+    if args.command == "repair":
+        sys.exit(repair_profile_sites_cmd(args.yes))
     if args.command == "hn":
         sys.exit(hn_repair_cmd() if args.action == "repair" else hn_rebuild_cmd())
     if args.command == "rename":

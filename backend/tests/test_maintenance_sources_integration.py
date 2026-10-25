@@ -186,3 +186,46 @@ def test_renaming_a_company_still_without_a_website_sends_it_back_to_the_website
     F.apply(db_session, F.plan(db_session, c, new_name="Zzacme Analytics"))
     db_session.refresh(c)
     assert c.status == "unresolved" and c.resolution_attempts == 0 and c.name == "Zzacme Analytics"
+
+
+def test_companies_glued_onto_a_profile_site_are_split_back_out(db_session, monkeypatch):
+    from app.core import hosts
+    from app.modules.m1_companies import profile_repair as R
+
+    sites = hosts.PROFILE_SITES | {"zzprofilesite.io"}                 # a made-up profile site
+    monkeypatch.setattr(hosts, "PROFILE_SITES", sites)
+    monkeypatch.setattr(R, "PROFILE_SITES", sites)
+    # The record was created by the first glued company, so it carries its name; the site's own company is there too.
+    site = _company(db_session, 0, "Zzinnerscore", "zzprofilesite.io", "watching", feed="aggregator", scout="adzuna")
+    db_session.add_all([
+        CompanySighting(company_id=site.id, scout="adzuna", external_id="zz-glue-1", name_seen="Zztoppers Edge",
+                        data={"title": "Analyst at Toppers"}),
+        CompanySighting(company_id=site.id, scout="packs", external_id="zz-own-1", name_seen="Zzprofilesite"),
+    ])
+    db_session.flush()
+    plan = next(p for p in R.plan(db_session) if p.company_id == site.id)
+    assert sorted(plan.out) == ["Zzinnerscore", "Zztoppers Edge"] and plan.own_name == "Zzprofilesite"
+    R.apply(db_session, [plan])
+    db_session.refresh(site)
+    assert site.name == "Zzprofilesite" and site.status == "candidate"           # starts over under its own name
+    assert not db_session.scalars(select(CompanyFeed).where(CompanyFeed.company_id == site.id)).all()
+    split = {c.name: c for c in db_session.scalars(select(Company).where(
+        Company.name.in_(["Zzinnerscore", "Zztoppers Edge"]))).all()}
+    assert set(split) == {"Zzinnerscore", "Zztoppers Edge"}
+    assert all(c.domain is None and c.status == "unresolved" for c in split.values())
+    assert split["Zztoppers Edge"].source_data == {"adzuna": {"title": "Analyst at Toppers"}}   # only its own listing
+
+
+def test_the_profile_site_name_rule_needs_the_whole_name():
+    from app.core.hosts import is_profile_site_for_other
+
+    assert not is_profile_site_for_other("zoominfo.com", "ZoomInfo Technologies")
+    assert is_profile_site_for_other("apollo.io", "Apollo Hospitals")           # not apollo.io's owner
+    assert not is_profile_site_for_other("dnb.com", "Dun & Bradstreet")          # a known owner
+
+
+def test_a_kept_company_without_job_reading_is_counted(db_session):
+    _company(db_session, 0, "Zzfeedless", "zzfeedless.io", "watching")             # kept, no feed yet
+    _company(db_session, 1, "Zzwithfeed", "zzwithfeed.io", "watching", feed="greenhouse")
+    r = _row(db_session)
+    assert (r.kept, r.read_directly, r.not_set_up) == (2, 1, 1)
