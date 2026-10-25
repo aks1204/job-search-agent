@@ -35,6 +35,7 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
         "m3-mail-check": {"task": "m3.mail_check", "schedule": 900.0},
         "m4-track": {"task": "m4.track", "schedule": 1800.0},
         "m5-check-profile": {"task": "m5.check_profile", "schedule": crontab(minute="15", hour="6")},
+        "m1-scout-catchup": {"task": "m1.scout_catchup", "schedule": 900.0},
         "maintenance-source-check": {"task": "maintenance.source_check",
                                      "schedule": crontab(minute="30", hour="7", day_of_week="mon")},
     }

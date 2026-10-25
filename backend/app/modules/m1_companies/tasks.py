@@ -60,3 +60,11 @@ def _on_worker_start(**_) -> None:
     """Spec §1.2: seeds load on startup. A rules edit needs a restart, so check for one here too."""
     run_scout_task.delay("seeds")
     check_rules_changes_task.delay()
+
+
+@celery_app.task(name="m1.scout_catchup")
+def scout_catchup_task() -> dict:
+    """Every 15 minutes: run any source whose scheduled run was missed (laptop off at that time)."""
+    from app.modules.m1_companies.catchup import run_catchup
+
+    return run_catchup()
