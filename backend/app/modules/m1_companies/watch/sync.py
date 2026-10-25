@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -23,6 +24,7 @@ AGGREGATOR_SCOUTS = ("adzuna", "jooble", "remotive")  # job sites (also used by 
 # are often a small startup's only job ad, so they count as leads too.
 LEAD_SCOUTS = (*AGGREGATOR_SCOUTS, "waas", "hn")
 LEAD_WINDOW_DAYS = {"hn": 45}  # monthly thread: posts stay relevant longer
+LEAD_PREFIXES = tuple(f"{s}:" for s in LEAD_SCOUTS)  # external ids of roles from posts / listings
 AGGREGATOR_WINDOW_DAYS = 21
 
 
@@ -87,6 +89,22 @@ def fetch_jobs(session: Session, http: PoliteClient, feed: CompanyFeed, company:
     cfg = get_config()
     if feed.method == "aggregator":
         return aggregator_jobs(session, company.id)
+    jobs = _site_jobs(session, http, feed, company, cfg)
+    # Roles named in the company's own Hacker News post count too, next to its careers page (owner decision,
+    # 2026-10-26) — the same role in both is one role, the careers page's.
+    have = {_title_key(j.title) for j in jobs}
+    return jobs + [p for p in aggregator_jobs(session, company.id)
+                   if p.external_id.startswith(POST_PREFIX) and _title_key(p.title) not in have]
+
+
+POST_PREFIX = "hn:"
+
+
+def _title_key(title: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+
+
+def _site_jobs(session: Session, http: PoliteClient, feed: CompanyFeed, company: Company, cfg) -> list[RawJob]:
     if feed.method == "adapter":
         adapter = cfg.adapters.get(company.domain or "")
         if adapter is None:
@@ -156,7 +174,9 @@ def sync_feed(session: Session, http: PoliteClient, feed: CompanyFeed) -> SyncRe
         return SyncResult(error=feed.last_error)
 
     result = apply_jobs(session, feed, jobs, now)
-    feed.open_jobs = len({j.external_id for j in jobs})
+    # Only the careers page's own jobs count here: a post's roles must not make a broken careers reader look fine.
+    feed.open_jobs = len({j.external_id for j in jobs
+                          if feed.method == "aggregator" or not j.external_id.startswith(POST_PREFIX)})
     feed.consecutive_failures = 0
     feed.last_error = None
     feed.last_success_at = now

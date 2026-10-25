@@ -11,8 +11,10 @@
     python -m app.cli employers [fix "<name>" <domain>|none]     # your current / past employers: never watched
     python -m app.cli hn rebuild                                 # re-read every saved Hacker News post (one-time)
     python -m app.cli hn repair                                  # restore companies the first rebuild split wrongly
-    python -m app.cli names                                      # kept companies whose name doesn't fit their site
-    python -m app.cli rename <domain|number> "<name>"            # give a company its right name
+    python -m app.cli names [ok <site>]                          # names that don't fit their site / mark one correct
+    python -m app.cli fix-website <site|number> <right site> [--yes]  # correct a website: preview, then --yes
+    python -m app.cli report [--days N|--all-time] [--all]       # each source's funnel + warning signs
+    python -m app.cli rename <site|number> "<name>" [--yes]       # correct a name: preview, then --yes
     python -m app.cli activate [--limit N] [--domain acme.com]   # set up job feeds for kept companies now
     python -m app.cli sync [--limit N] [--domain acme.com]       # read due feeds now
     python -m app.cli feeds                                      # watchlist health
@@ -377,6 +379,73 @@ def hn_rebuild_cmd() -> int:
     return 0
 
 
+def report_cmd(days: int | None, show_all: bool) -> int:
+    from app.db import session_scope
+    from app.modules.maintenance.sources import build
+
+    def when(d) -> str:
+        return d.strftime("%d %b %H:%M") if d else "never"
+
+    with session_scope() as s:
+        rep = build(s, days=days)
+    window = f"last {days} days" if days else "all time"
+    print(f"Sources — discovery: {window}; kept companies: all of them.")
+    print("A company found by several sources counts under each one.\n")
+    for w in rep["system"]:
+        print(f"⚠ {w.text}")
+        if w.examples:
+            print(f"    e.g. {' · '.join(w.examples)}")
+        if w.check:
+            print(f"    → {w.check}")
+    if rep["system"]:
+        print()
+    quiet = []
+    for r in rep["rows"]:
+        if r.state in ("disabled", "not_configured") and not r.found and not r.kept:
+            quiet.append(f"{r.label}: {r.state_note}")
+            continue
+        if r.healthy and not show_all:
+            quiet.append(f"{r.label}: ✓ healthy")
+            continue
+        status = "✓ healthy" if r.healthy else f"⚠ {len(r.warnings)} warning{'s' if len(r.warnings) > 1 else ''}"
+        print(f"{r.label.upper():<60}{status}")
+        run = when(r.last_run) + ("" if r.last_run_ok is None else (" ✓" if r.last_run_ok else " ✗ failed"))
+        print(f"  last run          {run}" + (f"   ({r.state_note})" if r.state_note else ""))
+        nc = f"{when(r.last_new_company[0])} ({r.last_new_company[1]})" if r.last_new_company else \
+            f"never ({r.runs} runs so far)"
+        print(f"  last new company  {nc}")
+        print(f"  last new role     " + (f"{when(r.last_new_role[0])} ({r.last_new_role[1][:70]})" if r.last_new_role else "none yet"))
+        print(f"  found ({window:>8})  {r.found} companies → {r.with_website} have a website → {r.judged} judged → "
+              f"{r.kept_of_found} kept")
+        if r.waiting_judging or r.looking_for_website:
+            print(f"                    waiting: {r.waiting_judging} to be judged · {r.looking_for_website} still "
+                  "looking for a website")
+        print(f"  kept now          {r.kept} companies → {r.read_directly} read directly, {r.via_job_sites} via job "
+              f"sites/posts → {r.open_roles} open roles → {r.passed_filters} roles passed filters"
+              + (f"   (only here: {r.only_here})" if r.kept else ""))
+        print(f"  results           roles: {r.fast_lane} fast lane · {r.inbox} inbox · {r.maybe} maybe · "
+              f"{r.applied} applied")
+        print(f"  outreach          roles: {r.to_review} to review · {r.approved} approved · {r.sent} sent · "
+              f"{r.replied} replied")
+        for w in r.warnings:
+            print(f"  ⚠ {w.text}")
+            if w.examples:
+                print(f"      e.g. {' · '.join(w.examples)}")
+            if w.check:
+                print(f"      → check: {w.check}")
+        print()
+    for line in quiet:
+        print(line)
+    if quiet and not show_all:
+        print("(python -m app.cli report --all shows every source in full)")
+    if rep["shortlisted"]:
+        print("\nSHORTLISTED NOW (fast lane + inbox, kept companies)")
+        for x in rep["shortlisted"][:15]:
+            band = "Fast lane" if x["band"] == "fast_lane" else "Inbox"
+            print(f"  [{x['score']:>3}] {band:<9} {x['company']} — {x['title'][:60]}   ({', '.join(x['sources'])})")
+    return 0
+
+
 def hn_repair_cmd() -> int:
     from app.db import session_scope
     from app.modules.m1_companies.hn_rebuild import repair
@@ -394,68 +463,82 @@ def hn_repair_cmd() -> int:
 def _find_company(s, key: str):
     from sqlalchemy import select
 
+    from app.core.hosts import normalize_domain
     from app.models import Company
 
     if key.isdigit():
         return s.get(Company, int(key))
-    return s.scalar(select(Company).where(Company.domain == key.lower()))
+    domain = normalize_domain(key) or key.strip().lower()     # zs.com, www.zs.com, https://zs.com/ all work
+    return s.scalar(select(Company).where(Company.domain == domain))
 
 
-def rename_cmd(key: str, name: str) -> int:
-    from app.core import audit
+def _correct(key: str, *, new_domain: str | None = None, new_name: str | None = None, yes: bool = False) -> int:
+    """fix-website and rename: preview what starts over, then (with --yes) do it."""
     from app.db import session_scope
-    from app.modules.m1_companies.identity import normalize_name
+    from app.modules.m1_companies import fix_website as F
 
-    name = name.strip()
-    if not name:
-        print('Usage: rename <domain or company number> "<name>"')
-        return 1
     with session_scope() as s:
         c = _find_company(s, key)
         if c is None:
             print(f"No company {key} (use its website, e.g. zs.com, or its number from `names`)")
             return 1
-        old = c.name
-        if old.lower() != name.lower() and old not in (c.aliases or []):
-            c.aliases = [*(c.aliases or []), old]
-        c.name, c.normalized_name = name[:255], normalize_name(name)[:255]
-        audit.record(s, "m1", "company_renamed", f"You renamed {old} → {name}", subject_type="company",
-                     subject_id=str(c.id))
-        print(f"{old} → {name} (the old name is kept as another name it's known by)")
+        try:
+            p = F.plan(s, c, new_domain=new_domain, new_name=new_name)
+        except ValueError as e:
+            print(e)
+            return 1
+        for line in p.describe():
+            print(line)
+        if not yes:
+            print("Nothing changed yet. To do it, run the same command with --yes")
+            return 0
+        c = F.apply(s, p)
+        print(f"Done: {c.name} ({c.domain or 'no website'}) starts over — it's judged again in the next run, "
+              "then its roles, contacts and drafts follow.")
     return 0
 
 
-def names_cmd() -> int:
-    """Kept companies whose name doesn't fit their website — worth a look."""
+def rename_cmd(key: str, name: str, yes: bool = False) -> int:
+    return _correct(key, new_name=name, yes=yes)
+
+
+def names_cmd(action: str | None = None, key: str | None = None) -> int:
+    """Kept companies whose name doesn't fit their website — worth a look. `names ok <site>`: it's correct."""
     from sqlalchemy import select
 
+    from app.core import audit
     from app.db import session_scope
     from app.models import Company
-    from app.modules.m1_companies.employers import _fit
-    from app.modules.m1_companies.identity import name_matches_domain
-
-    import re
-
-    from app.core.hosts import domain_label
-
-    def fits(name: str, domain: str) -> bool:
-        words = re.findall(r"[a-z0-9]+", name.lower())
-        label = domain_label(domain).replace("-", "")
-        return (name_matches_domain(name, domain) or _fit(name, domain) is not None
-                or (len(words) > 1 and label in (words[-1], "".join(w[0] for w in words))))  # lilly.com, bcg.com
+    from app.modules.maintenance.sources import fits_website   # the same check as the source report
 
     with session_scope() as s:
+        if action == "ok":
+            c = _find_company(s, key or "")
+            if c is None or not c.domain:
+                print("Usage: names ok <website or company number>   (a company that has a website)")
+                return 1
+            owner = {**((c.source_data or {}).get("owner") or {}), "name_ok": c.domain}
+            c.source_data = {**(c.source_data or {}), "owner": owner}
+            audit.record(s, "m1", "name_confirmed", f"You confirmed {c.name} ↔ {c.domain} is correct",
+                         subject_type="company", subject_id=str(c.id))
+            print(f"{c.name} ↔ {c.domain}: marked correct — never flagged again (unless its website changes)")
+            return 0
         rows = s.scalars(select(Company).where(Company.status.in_(("passed", "watching", "dormant")))
                          .order_by(Company.name)).all()
-        odd = [c for c in rows if c.domain and not any(fits(n, c.domain) for n in [c.name, *(c.aliases or [])])]
+        odd = [c for c in rows if c.domain and not fits_website(c)]
         if not odd:
             print("Every kept company's name fits its website.")
             return 0
-        print("Kept companies whose name doesn't fit their website — fine if it's a brand/product site,")
-        print("otherwise fix it (rename) or drop it (override <domain> reject \"<reason>\"):")
+        print("Kept companies whose name doesn't fit their website:")
         for c in odd:
             print(f"  [{c.id}] {c.name} — {c.domain}" + (f" (also: {', '.join(c.aliases)})" if c.aliases else ""))
+        print("For each:  it's correct → names ok <site> · wrong name → rename <site> \"<name>\" ·")
+        print('           wrong website → fix-website <site> <right site> · not a company for you → override <site> reject "<why>"')
     return 0
+
+
+def fix_website_cmd(key: str, new_domain: str, yes: bool) -> int:
+    return _correct(key, new_domain=new_domain, yes=yes)
 
 
 def _company_ids(domain: str | None) -> list[int] | None:
@@ -1734,10 +1817,21 @@ def main() -> None:
     p_dir.add_argument("suggestion_id", nargs="?", type=int)
     p_hn = sub.add_parser("hn", help="Hacker News: rebuild everything from the saved posts (one-time)")
     p_hn.add_argument("action", choices=["rebuild", "repair"])
-    p_ren = sub.add_parser("rename", help="give a company its right name")
+    p_ren = sub.add_parser("rename", help="correct a company's name (preview first; it starts over)")
     p_ren.add_argument("key", help="its website (zs.com) or its number from `names`")
     p_ren.add_argument("name")
-    sub.add_parser("names", help="kept companies whose name doesn't fit their website")
+    p_ren.add_argument("--yes", action="store_true", help="carry it out (without: preview only)")
+    p_names = sub.add_parser("names", help="kept companies whose name doesn't fit their website")
+    p_names.add_argument("action", nargs="?", choices=["ok"], help="ok: mark a name/website pair as correct")
+    p_names.add_argument("key", nargs="?", help="its website or number")
+    p_fix = sub.add_parser("fix-website", help="correct a company's website (preview first)")
+    p_fix.add_argument("key", help="its current website or its number")
+    p_fix.add_argument("new_domain")
+    p_fix.add_argument("--yes", action="store_true", help="carry it out (without: preview only)")
+    p_rep = sub.add_parser("report", help="how each source of companies is doing, and where it breaks")
+    p_rep.add_argument("--days", type=int, default=90, help="look-back window (default 90)")
+    p_rep.add_argument("--all-time", action="store_true", help="ignore the window")
+    p_rep.add_argument("--all", action="store_true", help="also show healthy sources in full")
     p_emp = sub.add_parser("employers", help="your current / past employers — never watched or contacted")
     p_emp.add_argument("action", nargs="?", default="list", choices=["list", "fix"])
     p_emp.add_argument("name", nargs="?", help="fix: the employer's name as in your profile")
@@ -1851,9 +1945,13 @@ def main() -> None:
     if args.command == "hn":
         sys.exit(hn_repair_cmd() if args.action == "repair" else hn_rebuild_cmd())
     if args.command == "rename":
-        sys.exit(rename_cmd(args.key, args.name))
+        sys.exit(rename_cmd(args.key, args.name, args.yes))
+    if args.command == "report":
+        sys.exit(report_cmd(None if args.all_time else args.days, args.all))
     if args.command == "names":
-        sys.exit(names_cmd())
+        sys.exit(names_cmd(args.action, args.key))
+    if args.command == "fix-website":
+        sys.exit(fix_website_cmd(args.key, args.new_domain, args.yes))
     if args.command == "employers":
         sys.exit(employers_cmd(args.action, args.name, args.domain))
     if args.command == "memory":

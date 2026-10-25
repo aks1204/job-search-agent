@@ -29,6 +29,8 @@ MIN_DESCRIPTION = 200  # shorter than this isn't a real description (aggregator 
 
 
 def _apply_raw(job: JobPosting, raw: RawPosting, method: str) -> None:
+    if raw.external_id.startswith("hn:"):
+        method = "hn"   # a role from the company's HN post: its description is the post, never fetched from a site
     job.method = method
     job.external_id = raw.external_id
     job.title = raw.title

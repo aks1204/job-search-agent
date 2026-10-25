@@ -63,8 +63,8 @@ def check_staleness(session: Session, now: datetime) -> Counter:
     feeds = session.scalars(select(CompanyFeed).where(CompanyFeed.method != "aggregator",
                                                       CompanyFeed.needs_reactivation.is_(False))).all()
     for feed in feeds:
-        ours = _titles(session.scalars(select(RawPosting.title).where(
-            RawPosting.feed_id == feed.id, RawPosting.closed_at.is_(None))))
+        ours = _titles(session.scalars(select(RawPosting.title).where(   # the careers page's own jobs only
+            RawPosting.feed_id == feed.id, RawPosting.closed_at.is_(None), ~RawPosting.external_id.like("hn:%"))))
         theirs = _titles((s.data or {}).get("title") for s in session.scalars(select(CompanySighting).where(
             CompanySighting.company_id == feed.company_id, CompanySighting.scout.in_(AGGREGATOR_SCOUTS),
             CompanySighting.last_seen_at >= since)))

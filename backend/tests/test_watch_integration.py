@@ -42,8 +42,8 @@ def http():
         yield client
 
 
-def _company(session, name="Zentest", domain="zentest-co.io", status="passed") -> Company:
-    intake(session, Candidate(scout="hn", external_id=f"w-{domain}", name=name, domain=domain,
+def _company(session, name="Zentest", domain="zentest-co.io", status="passed", scout="seeds") -> Company:
+    intake(session, Candidate(scout=scout, external_id=f"w-{domain}", name=name, domain=domain,
                               data={"headline": f"{name} | Analyst | Remote"}))
     c = session.scalars(select(Company).where(Company.domain == domain)).one()
     c.status = status
@@ -192,7 +192,7 @@ def test_uber_shaped_site_activates_on_oracle_and_coverage_counts_it(db_session,
 
 def test_hn_and_waas_posts_become_leads_for_fallback_companies(db_session, mock, http):
     """A small startup whose only job ad is its HN post (and a WaaS listing) still gets those jobs."""
-    company = _company(db_session, name="Tinyhire", domain="tinyhire-test.io")
+    company = _company(db_session, name="Tinyhire", domain="tinyhire-test.io", scout="hn")
     intake(db_session, Candidate(scout="hn", external_id="t:42", name="Tinyhire", domain="tinyhire-test.io",
                                  url="https://news.ycombinator.com/item?id=42",
                                  data={"headline": "Tinyhire | Senior Data Analyst | Remote (India) | Full-time",
@@ -245,3 +245,16 @@ def company_sightings(session, company):
     from app.models import CompanySighting
 
     return session.scalars(select(CompanySighting).where(CompanySighting.company_id == company.id)).all()
+
+
+def test_roles_from_the_companys_own_post_count_next_to_its_careers_page(db_session, mock, http):
+    """Owner decision: roles come from both the post and the careers page; the same role in both is one."""
+    _greenhouse(mock)
+    company = _company(db_session, scout="hn")           # its HN post names "Analyst"
+    intake(db_session, Candidate(scout="hn", external_id="t:43", name="Zentest", domain="zentest-co.io",
+                                 data={"roles": [{"title": "Senior Data Analyst", "location": "Remote"}]}))
+
+    feed, first = activate(db_session, company, http)
+
+    assert feed.method == "greenhouse"
+    assert _open(db_session, feed) == ["Analyst", "Product Analyst", "Senior Data Analyst"]  # no duplicate

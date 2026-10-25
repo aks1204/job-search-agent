@@ -1,6 +1,6 @@
 """Per-scout health, shown in the dashboard and `python -m app.cli stats`."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
@@ -38,11 +38,14 @@ def scout_health(session: Session) -> list[dict]:
             health = "ok"
 
         last = finished[0] if finished else None
+        successful = session.scalar(select(func.count()).select_from(ScoutRun).where(
+            ScoutRun.scout == name, ScoutRun.status == "ok")) or 0
         report.append({
             "scout": name,
             "health": health,
             "reason": reason if health == "not_configured" else None,
             "consecutive_failures": failures,
+            "successful_runs": successful,
             "last_run": None if last is None else {
                 "status": last.status,
                 "started_at": last.started_at,
