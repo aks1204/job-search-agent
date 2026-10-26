@@ -117,6 +117,21 @@ def name_ok(c: Company) -> bool:
     return bool(c.domain) and ((c.source_data or {}).get("owner") or {}).get("name_ok") == c.domain
 
 
+def _merge_fits(merged: str, c: Company) -> bool:
+    """A merged-in name that plainly is the same company: it fits the website, contains the website's name
+    ("Wells Fargo Bank" ↔ wellsfargo.com), or extends the company's name ("Acme Labs India" ↔ Acme Labs).
+    Abbreviations ("Amex") can't be told — `names ok <site>` marks those as checked."""
+    from app.core.hosts import domain_label
+    from app.modules.m1_companies.identity import normalize_name
+
+    if name_fits(merged, c.domain):
+        return True
+    joined = normalize_name(merged).replace(" ", "")
+    label = domain_label(c.domain).replace("-", "")
+    own = normalize_name(c.name)
+    return (len(label) >= 4 and label in joined) or (bool(own) and normalize_name(merged).startswith(own + " "))
+
+
 def fits_website(c: Company) -> bool:
     return not c.domain or name_ok(c) or any(name_fits(n, c.domain) for n in [c.name, *(c.aliases or [])])
 
@@ -330,8 +345,9 @@ def _system_warnings(session: Session, companies: dict[int, Company]) -> list[Wa
             continue
         if not any(w in (d.get("reason") or "") for w in ("via search", "via llm")):
             continue          # only merges made by a website guess
-        if not name_fits(merged, c.domain):
+        if not _merge_fits(merged, c):
             odd.append(f"“{merged}” merged into {c.name} ({c.domain})")
+    odd = list(dict.fromkeys(odd))                      # the same merge logged twice counts once
     if odd:
         out.append(Warning_("system:merges", f"{len(odd)} merge(s) by a website guess where the name doesn't fit — "
                             "possibly a different company", odd[:3],

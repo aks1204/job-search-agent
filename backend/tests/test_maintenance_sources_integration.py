@@ -229,3 +229,12 @@ def test_a_kept_company_without_job_reading_is_counted(db_session):
     _company(db_session, 1, "Zzwithfeed", "zzwithfeed.io", "watching", feed="greenhouse")
     r = _row(db_session)
     assert (r.kept, r.read_directly, r.not_set_up) == (2, 1, 1)
+
+
+def test_merges_of_the_same_company_under_another_name_are_not_flagged():
+    from app.modules.maintenance.sources import _merge_fits
+
+    wells = Company(name="Wells Fargo", normalized_name="wells fargo", domain="wellsfargo.com", aliases=[])
+    assert _merge_fits("Wells Fargo Bank", wells)                       # contains the website's name
+    zoominfo = Company(name="ZoomInfo", normalized_name="zoominfo", domain="zoominfo.com", aliases=[])
+    assert not _merge_fits("Innerscore", zoominfo)                      # a different company: still flagged
