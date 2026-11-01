@@ -233,3 +233,75 @@ def test_job_page_data_with_a_list_type_or_a_graph():
     assert _ld_job_description(page({"@graph": [{"@type": "WebPage"}, {"@type": "JobPosting", "description": "B"}]})) == "B"
     assert _ld_job_description(page([{"@graph": [{"@type": "JobPosting", "description": "C"}]}])) == "C"
     assert _ld_job_description(page("just a string") + page(7)) is None
+
+
+def test_talentbrew_with_search_closed_to_tools_reads_the_sitemap(http):
+    client, mock = http
+
+    def robots(request):
+        if request.url.host == "careers.zzuhg-test.io":
+            return httpx.Response(200, text="User-agent: *\nDisallow:/search-jobs/")
+        return httpx.Response(404)
+
+    mock.get(url__regex=r"https://[^/]+/robots\.txt").mock(side_effect=robots)
+    search = mock.get(url__regex=r"https://careers\.zzuhg-test\.io/search-jobs/.*").respond(json={"results": ""})
+    base = "https://careers.zzuhg-test.io"
+    mock.get(f"{base}/sitemap.xml").respond(200, text=(
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        f"<url><loc>{base}/category/technology-jobs/34088/81405/1</loc></url>"
+        f"<url><loc>{base}/job/hyderabad/senior-data-analyst/34088/98544565312</loc></url>"
+        f"<url><loc>{base}/job/makati-city/data-analyst/34088/99821103152</loc></url>"
+        f"<url><loc>{base}/job/dallas/physical-therapist-assistant-pta-prn/34088/102507844896</loc></url>"
+        "</urlset>"))
+    r = read_talentbrew(client, FeedSpec("talentbrew", "careers.zzuhg-test.io"), ["Senior Data Analyst"])
+    assert not search.called                                        # robots.txt says no: never asked
+    assert [(j.external_id, j.title, j.location) for j in r.jobs] == [
+        ("98544565312", "Senior Data Analyst", "Hyderabad"),
+        ("99821103152", "Data Analyst", "Makati City")]                # seniority aside, the work words match
+    assert r.jobs[0].url == f"{base}/job/hyderabad/senior-data-analyst/34088/98544565312"
+
+
+def test_a_talentbrew_job_page_gives_the_exact_title_and_place(http):
+    from types import SimpleNamespace
+
+    from app.modules.m2_jobs.details import fetch_description
+
+    client, mock = http
+    url = "https://careers.zzuhg-test.io/job/hyderabad/sr-data-analyst-payer/34088/1"
+    ld = json.dumps({"@type": "JobPosting", "title": "Sr. Data Analyst &amp; Payer", "description": "<p>Own it</p>",
+                     "jobLocation": [{"@type": "Place", "address": {
+                         "addressLocality": "Hyderabad", "addressRegion": "Telangana", "addressCountry": "India"}}]})
+    mock.get(url).respond(200, html=f'<script type="application/ld+json">{ld}</script>')
+    job = SimpleNamespace(url=url)
+    _, extra = fetch_description(client, SimpleNamespace(method="talentbrew"), job, {})
+    assert extra == {"title": "Sr. Data Analyst & Payer", "location": "Hyderabad, Telangana, India"}
+    _, extra = fetch_description(client, SimpleNamespace(method="phenom"), job, {})
+    assert extra == {}                                               # other sites' lists already give these
+
+
+def test_a_job_open_in_several_places_keeps_them_all():
+    from app.modules.m2_jobs.details import _ld_place
+
+    two = {"jobLocation": [{"address": {"addressLocality": "Dallas", "addressCountry": {"name": "US"}}},
+                           {"address": {"addressLocality": "Hyderabad", "addressCountry": "India"}}]}
+    assert _ld_place(two) == "Dallas, US; Hyderabad, India"           # not judged by Dallas alone
+    assert _ld_place({"jobLocationType": "TELECOMMUTE"}) == "Remote"
+
+
+def test_sitemap_roles_of_only_seniority_words_and_the_size_cap(http, monkeypatch):
+    from app.modules.m1_companies.watch import readers
+
+    client, mock = http
+    base = "https://careers.zzcap-test.io"
+
+    def job(ext, slug):
+        return f"<url><loc>{base}/job/pune/{slug}/1/{ext}</loc></url>"
+
+    mock.get(f"{base}/sitemap.xml").respond(200, text="<urlset>" + job(5, "associate-director-finance")
+                                            + job(9, "registered-nurse") + job(7, "director-associate-relations")
+                                            + "</urlset>")
+    r = readers._talentbrew_sitemap(client, "careers.zzcap-test.io", ["Associate Director"])
+    assert [j.external_id for j in r.jobs] == ["5", "7"]               # all its words needed, not "everything"
+    monkeypatch.setattr(readers, "SITEMAP_JOBS_LIMIT", 2)
+    r = readers._talentbrew_sitemap(client, "careers.zzcap-test.io", [])
+    assert [j.external_id for j in r.jobs] == ["9", "7"]               # the newest two, whatever the order

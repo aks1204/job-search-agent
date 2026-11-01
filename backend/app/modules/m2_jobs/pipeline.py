@@ -164,6 +164,7 @@ def fetch_descriptions(session: Session, http: PoliteClient, limit: int | None =
         .order_by(JobPosting.first_seen_at.desc()).limit(limit)
     ).all()
     cache: dict = {}
+    retitled: set[int] = set()
     for job, feed in rows:
         try:
             text, extra = fetch_description(http, feed, job, cache)
@@ -178,6 +179,13 @@ def fetch_descriptions(session: Session, http: PoliteClient, limit: int | None =
         else:
             job.description_status = "unavailable"
             counts["empty"] += 1
+        if extra.get("title") and extra["title"] != job.title:   # the page's exact title over one from its address
+            job.title, job.title_norm = extra["title"], N.normalize_title(extra["title"])
+            if job.cluster_id:
+                retitled.add(job.cluster_id)
+        if extra.get("location"):
+            job.location = extra["location"]
+            job.is_india, job.is_remote = N.location_flags(extra["location"])
         if job.employment_type == "unknown" and extra.get("employment"):
             job.employment_type = N.employment_type(extra["employment"], job.title)
         if job.posted_at is None and extra.get("posted"):
@@ -185,6 +193,7 @@ def fetch_descriptions(session: Session, http: PoliteClient, limit: int | None =
         if reasons := kind1(job, net, cfg.job_rules):
             job.filter_status, job.filter_reasons = "failed", reasons
             counts["filtered_out_after_details"] += 1
+    _refresh_clusters(session, retitled)   # the role's own title follows (applications, inbox)
     return counts
 
 

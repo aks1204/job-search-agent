@@ -91,6 +91,32 @@ _LD_JSON = re.compile(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</scri
 
 def _ld_job_description(page: str) -> str | None:
     """The schema.org JobPosting most careers sites embed for search engines."""
+    return (_ld_job(page) or {}).get("description")
+
+
+def _ld_address(place) -> str | None:
+    address = place.get("address") if isinstance(place, dict) else None
+    if not isinstance(address, dict):
+        return None
+    country = address.get("addressCountry")
+    country = country.get("name") if isinstance(country, dict) else country
+    parts = [address.get("addressLocality"), address.get("addressRegion"), country]
+    return ", ".join(dict.fromkeys(p.strip() for p in parts if isinstance(p, str) and p.strip())) or None
+
+
+def _ld_place(job: dict) -> str | None:
+    """Every place a JobPosting lists ('Dallas, Texas, US; Hyderabad, Telangana, India'), plus 'Remote' when it
+    says so — a job open in several cities must not be judged by the first one alone."""
+    places = job.get("jobLocation")
+    places = places if isinstance(places, list) else [places]
+    found = [a for p in places if (a := _ld_address(p))]
+    kind = job.get("jobLocationType")
+    if "TELECOMMUTE" in (kind if isinstance(kind, list) else [kind]):
+        found.append("Remote")
+    return "; ".join(dict.fromkeys(found)) or None
+
+
+def _ld_job(page: str) -> dict | None:
     import json
 
     for block in _LD_JSON.findall(page):
@@ -106,7 +132,7 @@ def _ld_job_description(page: str) -> str | None:
             kind = item.get("@type")
             kinds = kind if isinstance(kind, list) else [kind]
             if "JobPosting" in kinds and isinstance(item.get("description"), str) and item["description"]:
-                return item["description"]
+                return item
     return None
 
 
@@ -117,8 +143,13 @@ def _job_page(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cache: dic
     resp = http.get(job.url, scrape=True)
     resp.raise_for_status()
     page = resp.text
-    if desc := _ld_job_description(page):
-        return _text(desc), {}
+    if ld := _ld_job(page):
+        extra = {}
+        if feed.method == "talentbrew":   # read from the sitemap, the title and city came from the address
+            title = ld.get("title")
+            extra = {"title": html.unescape(title).strip() if isinstance(title, str) else None,
+                     "location": _ld_place(ld)}
+        return _text(ld["description"]), {k: v for k, v in extra.items() if v}
     if feed.method == "phenom":                       # the job page's embedded phApp.ddo.jobDetail
         from app.modules.m1_companies.watch.readers import _PHENOM_DDO
 

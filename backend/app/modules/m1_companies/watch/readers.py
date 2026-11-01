@@ -6,13 +6,16 @@ when the vendor reports one (used for the ownership check).
 
 import html
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import quote
 
-from app.core.http import PoliteClient
+from app.core.http import PoliteClient, RobotsDisallowed
 from app.modules.m1_companies.enrich import html_to_text
+
+log = logging.getLogger(__name__)
 
 DESCRIPTION_LIMIT = 20_000
 _TAG = re.compile(r"<[^>]+>")
@@ -492,9 +495,67 @@ _TB_LOCATION = re.compile(r'class="job-location[^"]*"[^>]*>(.*?)</span>', re.I |
 
 
 def read_talentbrew(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_per_role: int = 2) -> FetchResult:
-    """TalentBrew (Radancy) careers sites (UnitedHealth Group): the search page's own results service,
-    searched with the owner's roles, 50 jobs a page; the job list comes back as an HTML fragment."""
-    host = spec.slug
+    """TalentBrew (Radancy) careers sites: the search page's own results service, searched with the owner's
+    roles. Sites whose robots.txt closes search to tools (UnitedHealth Group) are read from their sitemap."""
+    try:
+        return _talentbrew_search(http, spec.slug, roles, pages_per_role)
+    except RobotsDisallowed:
+        return _talentbrew_sitemap(http, spec.slug, roles)
+
+
+# https://HOST/job/hyderabad/senior-data-analyst/34088/98544565312 — city, title, site number, job id
+_TB_SITEMAP_JOB = re.compile(r"<loc>\s*https?://[^/<]+(/job/([^/<]+)/([^/<]+)/\d+/(\d+))/?\s*</loc>", re.I)
+_LOC = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
+SITEMAP_JOBS_LIMIT = 3000
+
+
+def _words(text: str, *, all_words: bool = False) -> set[str]:
+    """The words that say what the work is ("Senior Data Analyst" → data, analyst), stemmed like the filters;
+    all_words keeps seniority words too."""
+    from app.modules.m2_jobs.filters import _STOP, stems
+
+    return {s for s in stems(text.replace("-", " ")) if all_words or s not in _STOP}
+
+
+def _talentbrew_sitemap(http: PoliteClient, host: str, roles: list[str]) -> FetchResult:
+    """Every job page is in the sitemap, its address carrying the city and the title. Kept: jobs whose title
+    has the work words of one of the owner's roles (seniority aside — the filters judge that; a role of only
+    such words, "Associate Director", needs all of them). The exact title and location come with the job page."""
+    resp = http.get(f"https://{host}/sitemap.xml", scrape=True)
+    if resp.status_code == 404:
+        raise FeedNotFound(f"{host}: search closed to tools and no sitemap")
+    resp.raise_for_status()
+    xml = resp.text
+    if "<sitemapindex" in xml.lower():                       # an index: open its child sitemaps on this host
+        parts = []
+        for child in [u for u in _LOC.findall(xml) if host in u][:5]:
+            r = http.get(html.unescape(child), scrape=True)
+            if r.status_code < 400:
+                parts.append(r.text)
+        xml = "\n".join(parts)
+    wanted = [w for r in roles if (w := _words(r) or _words(r, all_words=True))]
+    seen: dict[str, RawJob] = {}
+    for path, city, slug, ext in _TB_SITEMAP_JOB.findall(xml):
+        if ext in seen or (wanted and not any(w <= _words(slug, all_words=True) for w in wanted)):
+            continue
+        seen[ext] = RawJob(
+            external_id=ext, title=" ".join(w.capitalize() for w in slug.split("-") if w),
+            location=" ".join(w.capitalize() for w in city.split("-") if w) or None,
+            url=f"https://{host}{html.unescape(path)}", payload={"from": "sitemap"},
+        )
+    if not seen and not _TB_SITEMAP_JOB.search(xml):
+        raise FeedNotFound(f"{host}: search closed to tools and no job pages in the sitemap")
+    jobs = list(seen.values())
+    if len(jobs) > SITEMAP_JOBS_LIMIT:
+        # The newest by job number, the same set every sync (the sitemap's order shifts; a cut by position
+        # would close and reopen jobs at the edge each time).
+        log.warning("%s: %d matching jobs in the sitemap, keeping the newest %d", host, len(jobs), SITEMAP_JOBS_LIMIT)
+        jobs = sorted(jobs, key=lambda j: int(j.external_id), reverse=True)[:SITEMAP_JOBS_LIMIT]
+    return FetchResult(jobs)
+
+
+def _talentbrew_search(http: PoliteClient, host: str, roles: list[str], pages_per_role: int) -> FetchResult:
+    """The results service, 50 jobs a page; the job list comes back as an HTML fragment."""
     seen: dict[str, RawJob] = {}
     for query in roles or [""]:
         for page in range(1, pages_per_role + 1):
