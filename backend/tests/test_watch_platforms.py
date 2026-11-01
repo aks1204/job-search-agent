@@ -171,7 +171,8 @@ def test_a_real_job_system_behind_a_phenom_front_wins(http):
     mock.get(url__regex=r"https://zzfront-test\.io/(careers|jobs)").respond(404)
     mock.get(url__regex=r"https://jobs\.zzfront-test\.io.*").respond(404)
     found = discover(client, SimpleNamespace(domain="zzfront-test.io", name="Zzfront"))
-    assert found and {h["vendor"] for h in found.scan.ats_hints} == {"workday"}
+    # Workday first; the Phenom front stays only as the second choice (tried if Workday fails)
+    assert found and [h["vendor"] for h in found.scan.ats_hints] == ["workday", "phenom"]
 
 
 def test_a_phenom_front_with_nothing_behind_it_is_used(http):
