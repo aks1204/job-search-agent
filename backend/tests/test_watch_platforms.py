@@ -387,6 +387,27 @@ def test_a_careers_link_that_redirects_to_the_companys_careers_domain_is_followe
     assert found and found.scan.ats_hints == [{"vendor": "lever", "slug": "zzciti"}]
 
 
+def test_a_moved_homepage_and_a_careers_page_linking_to_the_careers_site_are_followed(http):
+    from types import SimpleNamespace
+
+    from app.modules.m1_companies.watch.careers import discover
+
+    client, mock = http
+    # barclays.com → home.barclays, whose careers hub links on to search.jobs.barclays
+    mock.get("https://zzbank-test.com").mock(return_value=httpx.Response(
+        301, headers={"location": "https://www.zzbank-test.co.uk/"}))
+    mock.get("https://www.zzbank-test.co.uk/").respond(200, html='<a href="/careers/">Careers hub</a>')
+    mock.get("https://www.zzbank-test.co.uk/careers/").respond(
+        200, html='<a href="https://search.jobs.zzbank-test.io/">Search jobs</a>'
+                  '<a href="https://jobs.example.org/">Search jobs</a>')
+    mock.get("https://search.jobs.zzbank-test.io/").respond(
+        200, html='<a href="https://jobs.lever.co/zzbank">Open roles</a>')
+    found = discover(client, SimpleNamespace(domain="zzbank-test.com", name="Zzbank"))
+    assert found and found.scan.ats_hints == [{"vendor": "lever", "slug": "zzbank"}]
+    assert found.on_company_site
+    assert not any("example.org" in str(c.request.url) for c in mock.calls)   # not the company's: not followed
+
+
 def test_dates_written_out_in_words_are_understood():
     from datetime import datetime, timezone
 

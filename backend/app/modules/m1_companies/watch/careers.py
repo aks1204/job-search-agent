@@ -152,16 +152,19 @@ _STRONG_JOB_TEXT = re.compile(
 DEEPER_LINKS = 3
 
 
-def _deeper_links(scan: PageScan | None, domain: str | set[str], tried: set[str]) -> list[tuple[str, str]]:
-    """The most promising next hops from a careers landing page, best first."""
+def _deeper_links(scan: PageScan | None, domain: str | set[str], tried: set[str],
+                  company=None) -> list[tuple[str, str]]:
+    """The most promising next hops from a careers landing page, best first. With the company, a Careers/Jobs
+    link to a careers site carrying its name counts too (home.barclays/careers → search.jobs.barclays)."""
     if scan is None:
         return []
     here = urlsplit(scan.url).netloc
     ranked = []
     for href, text in scan.links:
-        if href in tried or not (_on_domain(href, domain) or is_ats_url(href)):
+        if href in tried or not (CAREER_WORDS.search(text) or _STRONG_JOB_TEXT.search(text)):
             continue
-        if not (CAREER_WORDS.search(text) or _STRONG_JOB_TEXT.search(text)):
+        if not (_on_domain(href, domain) or is_ats_url(href)
+                or (company is not None and _careers_domain(href, company))):
             continue
         score = (3 if is_ats_url(href) else 0) + (2 if urlsplit(href).netloc != here else 0) \
             + (1 if _STRONG_JOB_TEXT.search(text) else 0)
@@ -222,6 +225,9 @@ def discover(
     home_scan = scan_page(home[1], home[0]) if home else None
     if home_scan:
         seen |= home_scan.vendors
+    own = {domain}   # the company's domains: its site, plus a careers site its homepage links to (amazon.jobs)
+    if home and (moved := _careers_domain(home[0], company)):
+        own.add(moved)   # its homepage now lives on a domain with its name (barclays.com → home.barclays)
 
     # A careers-site platform (Phenom, Jibe, TalentBrew) is only a front: a real job system behind it (e.g.
     # Workday — far more jobs, full descriptions) is looked for first; the front is the second choice.
@@ -235,7 +241,6 @@ def discover(
 
     # Rung 1b: nav links that say careers/jobs, then the usual URL guesses.
     candidates: list[tuple[str, str]] = []
-    own = {domain}   # the company's domains: its site, plus a careers site its homepage links to (amazon.jobs)
     if home_scan:
         for href, text in home_scan.links:
             if not (CAREER_WORDS.search(text) or CAREER_WORDS.search(urlsplit(href).path)):
@@ -275,8 +280,10 @@ def discover(
         if board := consider(found):
             return board
         # One level deeper: careers landing pages link on to "Jobs" / "Open roles" / a careers subdomain.
-        for href, text in _deeper_links(scan, own, tried):
+        for href, text in _deeper_links(scan, own, tried, company):
             tried.add(href)
+            if not (_on_domain(href, own) or is_ats_url(href)):
+                own.add(_careers_domain(href, company))   # their careers page links to their careers site
             found, deeper = _check(http, href, own, f"{how} → “{text}”", company)
             if deeper:
                 seen |= deeper.vendors
