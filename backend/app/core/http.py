@@ -3,7 +3,7 @@
 - Honest user-agent pointing at the project.
 - Per-host rate limit shared across all worker processes (via Redis; falls back
   to in-process timing if Redis is unavailable).
-- robots.txt respected on scrape paths (`scrape=True`); public APIs skip it.
+- robots.txt respected on scrape paths (`scrape=True`), at every redirect too; public APIs skip it.
 """
 
 import logging
@@ -29,8 +29,20 @@ HOST_INTERVALS = {
 }
 
 
+MAX_REDIRECTS = 10
+
+
 class RobotsDisallowed(Exception):
     pass
+
+
+def _robots_parser(text: str) -> RobotFileParser:
+    """Python's reader ends a group at a blank line, so `User-agent: *`, a blank line, then `Disallow: /api`
+    (careers.walmart.com) would allow everything. Crawlers group rules by their User-agent lines instead
+    (RFC 9309), so blank and comment-only lines are dropped first."""
+    parser = RobotFileParser()
+    parser.parse([line for line in text.splitlines() if line.split("#", 1)[0].strip()])
+    return parser
 
 
 class PoliteClient:
@@ -87,8 +99,7 @@ class PoliteClient:
                     parser = RobotFileParser()
                     parser.parse(["User-agent: *", "Disallow: /"])  # server trouble: back off
                 elif resp.status_code < 400:
-                    parser = RobotFileParser()
-                    parser.parse(resp.text.splitlines())
+                    parser = _robots_parser(resp.text)
                 # 4xx: no robots.txt -> everything allowed (parser stays None)
             except httpx.HTTPError:
                 parser = None
@@ -97,10 +108,24 @@ class PoliteClient:
         return parser is None or parser.can_fetch(ROBOTS_AGENT, url)
 
     def request(self, method: str, url: str, *, scrape: bool = False, **kwargs) -> httpx.Response:
-        if scrape and not self._robots_allow(url):
+        if not scrape:
+            self._wait_turn(urlsplit(url).hostname or "")
+            return self._http.request(method, url, **kwargs)
+        if not self._robots_allow(url):
             raise RobotsDisallowed(url)
         self._wait_turn(urlsplit(url).hostname or "")
-        return self._http.request(method, url, **kwargs)
+        resp = self._http.request(method, url, follow_redirects=False, **kwargs)
+        # Redirects one hop at a time, so each address is checked against its own site's robots.txt
+        # (an allowed page can redirect into a disallowed one).
+        for _ in range(MAX_REDIRECTS):
+            nxt = resp.next_request
+            if nxt is None:
+                return resp
+            if not self._robots_allow(str(nxt.url)):
+                raise RobotsDisallowed(str(nxt.url))
+            self._wait_turn(nxt.url.host or "")
+            resp = self._http.send(nxt, follow_redirects=False)
+        raise httpx.TooManyRedirects(f"more than {MAX_REDIRECTS} redirects", request=resp.request)
 
     def get(self, url: str, **kwargs) -> httpx.Response:
         return self.request("GET", url, **kwargs)

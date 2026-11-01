@@ -323,3 +323,40 @@ def test_workday_tenant_matching_domain_is_strong_evidence():
     assert ok and "tenant" in why
     assert not verify_ownership(lilly, jobs, linked_from_site=False, careers_url=None,
                                 method="workday", slug="lillyfoods", employee_estimate="10000+")[0]
+
+
+# --- robots.txt -------------------------------------------------------------
+
+def test_robots_rules_after_a_blank_line_still_apply():
+    """careers.walmart.com's layout: Python's own reader would drop every rule after the blank line."""
+    from app.core.http import RobotsDisallowed
+
+    with PoliteClient(default_interval=0, use_redis=False) as client, respx.mock(assert_all_called=False) as mock:
+        mock.get("https://zzshop-test.com/robots.txt").respond(200, text=(
+            "User-agent: *\n\nDisallow: /api\n# search pages\nDisallow: /results\n\nUser-agent: OtherBot\nDisallow: /\n"))
+        mock.get("https://zzshop-test.com/about").respond(200, html="ok")
+        with pytest.raises(RobotsDisallowed):
+            client.get("https://zzshop-test.com/results?q=data", scrape=True)
+        with pytest.raises(RobotsDisallowed):
+            client.get("https://zzshop-test.com/api/graphql", scrape=True)
+        assert client.get("https://zzshop-test.com/about", scrape=True).status_code == 200   # OtherBot's rule isn't ours
+
+
+def test_each_redirect_is_checked_against_robots():
+    from app.core.http import RobotsDisallowed
+
+    with PoliteClient(default_interval=0, use_redis=False) as client, respx.mock(assert_all_called=False) as mock:
+        mock.get("https://zzshop-test.com/robots.txt").respond(200, text="User-agent: *\nDisallow: /results\n")
+        mock.get("https://jobs.zzshop-test.io/robots.txt").respond(404)
+        mock.get("https://zzshop-test.com/search").mock(
+            return_value=httpx.Response(302, headers={"location": "/results?q=x"}))
+        results = mock.get(url__regex=r"https://zzshop-test\.com/results.*").respond(200, html="jobs")
+        mock.get("https://zzshop-test.com/careers").mock(
+            return_value=httpx.Response(301, headers={"location": "https://jobs.zzshop-test.io/open"}))
+        mock.get("https://jobs.zzshop-test.io/open").respond(200, html="jobs")
+
+        with pytest.raises(RobotsDisallowed):
+            client.get("https://zzshop-test.com/search", scrape=True)       # allowed page → disallowed one
+        assert not results.called
+        r = client.get("https://zzshop-test.com/careers", scrape=True)      # an allowed redirect is still followed
+        assert (r.status_code, str(r.url)) == (200, "https://jobs.zzshop-test.io/open")
