@@ -86,7 +86,58 @@ def _smartrecruiters(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cac
     return _text("\n\n".join(p for p in parts if p)), {"employment": (body.get("typeOfEmployment") or {}).get("label")}
 
 
-FETCHERS = {"workday": _workday, "oracle": _oracle, "eightfold": _eightfold, "smartrecruiters": _smartrecruiters}
+_LD_JSON = re.compile(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', re.I | re.S)
+
+
+def _ld_job_description(page: str) -> str | None:
+    """The schema.org JobPosting most careers sites embed for search engines."""
+    import json
+
+    for block in _LD_JSON.findall(page):
+        try:
+            data = json.loads(block.strip())
+        except ValueError:
+            continue
+        items = data if isinstance(data, list) else [data]
+        items += [g for d in items if isinstance(d, dict) and isinstance(d.get("@graph"), list) for g in d["@graph"]]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("@type")
+            kinds = kind if isinstance(kind, list) else [kind]
+            if "JobPosting" in kinds and isinstance(item.get("description"), str) and item["description"]:
+                return item["description"]
+    return None
+
+
+def _job_page(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cache: dict) -> tuple[str | None, dict]:
+    """Phenom, TalentBrew and JazzHR lists give titles only: read the role's own public job page."""
+    if not job.url:
+        raise ValueError("no job page")
+    resp = http.get(job.url, scrape=True)
+    resp.raise_for_status()
+    page = resp.text
+    if desc := _ld_job_description(page):
+        return _text(desc), {}
+    if feed.method == "phenom":                       # the job page's embedded phApp.ddo.jobDetail
+        from app.modules.m1_companies.watch.readers import _PHENOM_DDO
+
+        m = _PHENOM_DDO.search(page)
+        if m:
+            import json
+
+            try:
+                ddo, _ = json.JSONDecoder().raw_decode(page, m.end())
+                desc = (((ddo.get("jobDetail") or {}).get("data") or {}).get("job") or {}).get("description")
+                if desc:
+                    return _text(desc), {}
+            except ValueError:
+                pass
+    return _text(page), {}                            # last resort: the page's text
+
+
+FETCHERS = {"workday": _workday, "oracle": _oracle, "eightfold": _eightfold, "smartrecruiters": _smartrecruiters,
+            "phenom": _job_page, "talentbrew": _job_page, "jazzhr": _job_page}
 
 
 def fetch_description(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cache: dict) -> tuple[str | None, dict]:

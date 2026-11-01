@@ -90,6 +90,9 @@ _ATS_PATTERNS: list[tuple[str, re.Pattern]] = [
         r"^([a-z0-9-]+\.fa(?:\.[a-z0-9-]+)*\.oraclecloud\.com)/hcmUI/CandidateExperience/[a-z]{2}(?:-[a-z]{2})?/sites/([\w-]+)",
         re.I)),
     ("eightfold", re.compile(r"^([\w-]+)\.eightfold\.ai/careers", re.I)),
+    ("teamtailor", re.compile(r"^([\w-]+(?:\.[a-z]{2})?)\.teamtailor\.com", re.I)),   # incl. regional x.na.
+    ("jazzhr", re.compile(r"^([\w-]+)\.applytojob\.com", re.I)),
+    ("pinpoint", re.compile(r"^([\w-]+)\.pinpointhq\.com", re.I)),
 ]
 
 # Template-literal fragments in page scripts (e.g. "aexp.eightfold.ai/careers?location=${country}") are
@@ -103,12 +106,18 @@ _ORACLE_SITE_NUMBER = re.compile(r'data-sitenumber="([\w-]+)"', re.I)
 
 # Path segments that look like slugs but aren't.
 _NOT_SLUGS = {"embed", "api", "js", "v0", "v1", "jobs", "careers", "job", "apply", "www", "app", "widget", "en-us"}
+# The vendors' own pages (help.pinpointhq.com, status.teamtailor.com …), not a company's board. Checked on board
+# slugs only — a Workday site can really be named "Career".
+_VENDOR_PAGES = {"help", "support", "status", "docs", "developers", "developer", "blog", "info", "career"}
+# Workday paths that are never a site name (its API, embeds). "Careers", "Jobs" … are real site names there.
+_WORKDAY_NOT_SITES = {"wday", "en-us", "embed", "api", "js"}
 
 # Any readable-ATS URL inside raw HTML/JS (hrefs, iframes, script srcs, JSON config).
 ATS_URL = re.compile(
     # Scheme optional: server-rendered JSON sometimes carries bare hosts ("lilly.wd115.myworkdayjobs.com/LLY/…").
     r"(?<![\w.-])(?:(?:https?:)?//)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:greenhouse\.io|lever\.co|ashbyhq\.com|"
-    r"workable\.com|smartrecruiters\.com|recruitee\.com|myworkdayjobs\.com|oraclecloud\.com|eightfold\.ai)"
+    r"workable\.com|smartrecruiters\.com|recruitee\.com|myworkdayjobs\.com|oraclecloud\.com|eightfold\.ai|"
+    r"teamtailor\.com|applytojob\.com|pinpointhq\.com)"
     r"(?:/[^\s\"'<>)\\]*)?",
     re.I,
 )
@@ -142,7 +151,12 @@ VENDOR_SIGNATURES: dict[str, re.Pattern] = {name: re.compile(p, re.I) for name, 
     "pinpoint": r"[\w-]+\.pinpointhq\.com",
     "rippling": r"ats\.rippling\.com",
     "phenom": r"cdn\.phenompeople\.com",  # a careers-site platform (usually fronting another ATS)
+    "jibe": r"cms\.jibecdn\.com",          # a careers-site platform in front of iCIMS (Booking, Rivian, ICE)
+    "talentbrew": r"tbcdn\.talentbrew\.com",  # Radancy careers sites (UnitedHealth Group)
 }.items()}
+
+# Careers-site platforms: the page itself IS the job list's front door, so the hint is the page's own host.
+PLATFORMS = ("jibe", "phenom", "talentbrew")
 
 
 def _scannable(raw_html: str) -> str:
@@ -204,14 +218,16 @@ def ats_hint(url: str | None) -> dict | None:
             continue
         if vendor == "workday":
             tenant, wd, site = m.group(1), m.group(2), m.group(3)
-            if site.lower() in _NOT_SLUGS:
+            if site.lower() in _WORKDAY_NOT_SITES:
                 return None
             return {"vendor": vendor, "slug": tenant, "site": site, "host": f"{tenant}.{wd}"}
         if vendor == "oracle":
             return {"vendor": vendor, "slug": m.group(2), "host": m.group(1).lower()}
         slug = m.group(1)
-        if slug.lower() in _NOT_SLUGS:
+        if slug.split(".")[0].lower() in _NOT_SLUGS | _VENDOR_PAGES:
             return None
+        if vendor == "teamtailor" and "." in slug:   # regional board: keep the full host (x.na.teamtailor.com)
+            slug = f"{slug}.teamtailor.com"
         return {"vendor": vendor, "slug": slug}
     return None
 

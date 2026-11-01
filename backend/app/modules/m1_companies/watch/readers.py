@@ -5,6 +5,7 @@ when the vendor reports one (used for the ownership check).
 """
 
 import html
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from app.core.http import PoliteClient
 from app.modules.m1_companies.enrich import html_to_text
 
 DESCRIPTION_LIMIT = 20_000
+_TAG = re.compile(r"<[^>]+>")
 
 
 class FeedNotFound(Exception):
@@ -377,6 +379,235 @@ def read_adapter(http: PoliteClient, adapter: dict) -> FetchResult:
     return FetchResult(jobs, adapter.get("name"))
 
 
+# --- careers-site platforms (2026-11-01: checked live on Booking, Rivian, ICE, BCG, UHG, Axmed, Sun King,
+# Paradromics). Each takes only the public, logged-out job list.
+
+def _host(spec: FeedSpec, suffix: str) -> str:
+    """'axmed' → 'axmed.teamtailor.com'; a full host (custom careers domain) stays as it is."""
+    return spec.slug if "." in (spec.slug or "") else f"{spec.slug}.{suffix}"
+
+
+def read_jibe(http: PoliteClient, spec: FeedSpec, roles: list[str], *, max_pages: int = 10) -> FetchResult:
+    """Jibe careers sites, usually in front of iCIMS (Booking, Rivian, ICE): /api/jobs lists every job with its
+    iCIMS apply link. Small boards are read whole; very big ones are searched with the owner's roles."""
+    host = spec.slug
+    seen: dict[str, RawJob] = {}
+
+    def take(items: list, query: str) -> None:
+        for item in items:
+            d = item.get("data") or item
+            ext = str(d.get("req_id") or d.get("slug") or "")
+            if not ext or ext in seen:
+                continue
+            location = d.get("full_location") or d.get("location_name") or \
+                ", ".join(x for x in (d.get("city"), d.get("country")) if x) or None
+            seen[ext] = RawJob(
+                external_id=ext[:255], title=d.get("title") or "", location=location,
+                url=d.get("canonical_url") or (f"https://{host}/jobs/{d['slug']}" if d.get("slug") else d.get("apply_url")),
+                department=d.get("department") or ", ".join(c.get("name", "") for c in (d.get("categories") or [])[:2]
+                                                            if isinstance(c, dict)) or None,
+                employment_type=d.get("employment_type"), posted_at=d.get("posted_date"),
+                description=_text(d.get("description")),
+                payload={"apply_url": d.get("apply_url"), "ats": d.get("ats_code"), "country": d.get("country"),
+                         "location_type": d.get("location_type"), "query": query},
+            )
+
+    first = _get_json(http, f"https://{host}/api/jobs", params={"page": 1, "limit": 100})
+    if not isinstance(first, dict) or "jobs" not in first:
+        raise FeedNotFound(f"{host}: not a Jibe job list")
+    total = int(first.get("totalCount") or 0)            # 0 = the site doesn't say: read pages until empty
+    if total <= max_pages * 100:                         # read it all
+        items = first.get("jobs") or []
+        size = len(items)                                # the site's own page size (100, or 10 if it ignores limit)
+        take(items, "")
+        for page in range(2, max_pages + 1):
+            if not size or len(items) < size or (total and len(seen) >= total):
+                break
+            body = _get_json(http, f"https://{host}/api/jobs", params={"page": page, "limit": 100})
+            items = (body.get("jobs") or []) if isinstance(body, dict) else []
+            take(items, "")
+    else:                                                # too big to read whole: the site's own search
+        for query in roles or [""]:
+            take(_get_json(http, f"https://{host}/api/jobs",
+                           params={"page": 1, "limit": 100, "keywords": query}).get("jobs") or [], query)
+    return FetchResult(list(seen.values()))
+
+
+_PHENOM_DDO = re.compile(r"phApp\.ddo\s*=\s*")
+
+
+def _phenom_jobs(page_html: str) -> tuple[list[dict], int] | None:
+    m = _PHENOM_DDO.search(page_html)
+    if not m:
+        return None
+    try:
+        ddo, _ = json.JSONDecoder().raw_decode(page_html, m.end())
+    except ValueError:
+        return None
+    search = (ddo or {}).get("eagerLoadRefineSearch") or {}
+    return (search.get("data") or {}).get("jobs") or [], int(search.get("totalHits") or 0)
+
+
+def read_phenom(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_per_role: int = 2) -> FetchResult:
+    """Phenom careers sites (BCG): the search page carries its results in an embedded phApp.ddo object.
+    Searched with the owner's roles, 10 jobs a page (?keywords=…&from=N)."""
+    home = http.get(f"https://{spec.slug}/", scrape=True)                    # → https://careers.bcg.com/global/en/
+    if home.status_code == 404:
+        raise FeedNotFound(spec.slug)
+    home.raise_for_status()
+    base = str(home.url).split("?")[0].rstrip("/")
+    seen: dict[str, RawJob] = {}
+    for query in roles or [""]:
+        for p in range(pages_per_role):
+            params = {"keywords": query, "from": p * 10} if query else {"from": p * 10, "s": 1}
+            resp = http.get(f"{base}/search-results", params=params, scrape=True)
+            resp.raise_for_status()
+            found = _phenom_jobs(resp.text)
+            if found is None:
+                raise FeedNotFound(f"{spec.slug}: no Phenom search results on the page")
+            jobs, _ = found
+            for j in jobs:
+                ext = str(j.get("jobId") or j.get("jobSeqNo") or "")
+                if not ext or ext in seen:
+                    continue
+                seen[ext] = RawJob(
+                    external_id=ext, title=(j.get("title") or "").replace("​", "").strip(),
+                    location=j.get("location") or "; ".join((j.get("multi_location") or [])[:3]) or None,
+                    url=j.get("jobUrl") or j.get("applyUrl"), department=j.get("category"),
+                    employment_type=j.get("type"), posted_at=j.get("postedDate") or j.get("dateCreated"),
+                    # The list's one-line teaser isn't the description: leaving it empty lets the full job
+                    # page be fetched later.
+                    payload={"apply_url": j.get("applyUrl"), "country": j.get("country"), "query": query,
+                             "teaser": j.get("descriptionTeaser")},
+                )
+            if len(jobs) < 10:
+                break
+    return FetchResult(list(seen.values()))
+
+
+_TB_ITEM = re.compile(r"<li\b[^>]*>(.*?)</li>", re.I | re.S)
+_TB_LINK = re.compile(r'<a\b[^>]*href="(/job/[^"]+)"[^>]*?data-job-id="(\d+)"', re.I)
+_TB_TITLE = re.compile(r"<h2[^>]*>(.*?)</h2>", re.I | re.S)
+_TB_LOCATION = re.compile(r'class="job-location[^"]*"[^>]*>(.*?)</span>', re.I | re.S)
+
+
+def read_talentbrew(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_per_role: int = 2) -> FetchResult:
+    """TalentBrew (Radancy) careers sites (UnitedHealth Group): the search page's own results service,
+    searched with the owner's roles, 50 jobs a page; the job list comes back as an HTML fragment."""
+    host = spec.slug
+    seen: dict[str, RawJob] = {}
+    for query in roles or [""]:
+        for page in range(1, pages_per_role + 1):
+            resp = http.get(f"https://{host}/search-jobs/results", scrape=True, headers={"X-Requested-With": "XMLHttpRequest"},
+                            params={"ActiveFacetID": 0, "CurrentPage": page, "RecordsPerPage": 50, "Distance": 50,
+                                    "RadiusUnitType": 0, "Keywords": query, "Location": "", "ShowRadius": "False",
+                                    "IsPagination": "False", "FacetType": 0, "SearchResultsModuleName": "Search Results",
+                                    "SearchFiltersModuleName": "Search Filters", "SortCriteria": 0, "SortDirection": 0,
+                                    "SearchType": 5, "ResultsType": 0})
+            if resp.status_code == 404:
+                raise FeedNotFound(host)
+            resp.raise_for_status()
+            try:
+                fragment = resp.json().get("results") or ""
+            except ValueError:
+                raise FeedNotFound(f"{host}: not a TalentBrew results service")
+            found = 0
+            for item in _TB_ITEM.findall(fragment):
+                link = _TB_LINK.search(item)
+                if not link:
+                    continue
+                found += 1
+                path, ext = link.groups()
+                if ext in seen:
+                    continue
+                title, loc = _TB_TITLE.search(item), _TB_LOCATION.search(item)
+                seen[ext] = RawJob(
+                    external_id=ext, title=html.unescape(_TAG.sub("", title.group(1))).strip() if title else "",
+                    location=html.unescape(_TAG.sub("", loc.group(1))).strip() if loc else None,
+                    url=f"https://{host}{path}", payload={"query": query},
+                )
+            if found < 50:
+                break
+    return FetchResult(list(seen.values()))
+
+
+def read_teamtailor(http: PoliteClient, spec: FeedSpec, roles: list[str]) -> FetchResult:
+    """Teamtailor (Axmed): the public JSON Feed at /jobs.json, with a schema.org JobPosting per job."""
+    url, seen, name = f"https://{_host(spec, 'teamtailor.com')}/jobs.json", {}, None
+    for _ in range(10):                                         # JSON Feed pages via next_url
+        data = _get_json(http, url)
+        name = name or data.get("title")
+        for it in data.get("items") or []:
+            jp = it.get("_jobposting") or {}
+            ext = str((jp.get("identifier") or {}).get("value") or it.get("id") or "")
+            if not ext or ext in seen:
+                continue
+            places = jp.get("jobLocation") or []
+            places = places if isinstance(places, list) else [places]
+            parts = [", ".join(x for x in ((p.get("address") or {}).get("addressLocality"),
+                                           (p.get("address") or {}).get("addressCountry")) if x)
+                     for p in places[:3] if isinstance(p, dict)]
+            where = "; ".join(x for x in parts if x) or None
+            if jp.get("jobLocationType") == "TELECOMMUTE":
+                where = f"Remote ({where})" if where else "Remote"
+            seen[ext] = RawJob(
+                external_id=ext, title=it.get("title") or jp.get("title") or "", location=where, url=it.get("url"),
+                employment_type=jp.get("employmentType") if isinstance(jp.get("employmentType"), str) else None,
+                posted_at=it.get("date_published") or jp.get("datePosted"),
+                description=_text(it.get("content_html") or jp.get("description")),
+                payload={"remote": jp.get("jobLocationType") == "TELECOMMUTE"},
+            )
+        if not data.get("next_url"):
+            break
+        url = data["next_url"]
+    return FetchResult(list(seen.values()), name)
+
+
+def read_pinpoint(http: PoliteClient, spec: FeedSpec, roles: list[str]) -> FetchResult:
+    """Pinpoint (Sun King): every posting in one public JSON list, /postings.json."""
+    data = _get_json(http, f"https://{_host(spec, 'pinpointhq.com')}/postings.json")
+    jobs = []
+    for j in data.get("data") or []:
+        loc = j.get("location") or {}
+        where = ", ".join(x for x in (loc.get("city"), loc.get("province"), loc.get("name")) if x) or None
+        body = "".join(j.get(k) or "" for k in ("description", "key_responsibilities", "skills_knowledge_expertise"))
+        jobs.append(RawJob(
+            external_id=str(j.get("id")), title=j.get("title") or "", location=where, url=j.get("url"),
+            department=((j.get("job") or {}).get("department") or {}).get("name"),
+            employment_type=j.get("employment_type_text") or j.get("employment_type"),
+            description=_text(body) if body else None,
+            payload={"workplace": j.get("workplace_type"), "deadline": j.get("deadline_at")},
+        ))
+    return FetchResult([j for j in jobs if j.external_id and j.external_id != "None"])
+
+
+_JAZZ_ITEM = re.compile(r'<li class="list-group-item"[^>]*>(.*?)</ul>\s*</li>', re.I | re.S)
+_JAZZ_LINK = re.compile(r'<a href="(https?://[^"]+/apply/([A-Za-z0-9]{6,})/[^"]*)"[^>]*>(.*?)</a>', re.I | re.S)
+_JAZZ_LOCATION = re.compile(r'fa-map-marker"></i>(.*?)</li>', re.I | re.S)
+_PAGE_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+
+def read_jazzhr(http: PoliteClient, spec: FeedSpec, roles: list[str]) -> FetchResult:
+    """JazzHR (Paradromics): the public job list at https://<company>.applytojob.com/apply (no feed)."""
+    host = _host(spec, "applytojob.com")
+    resp = http.get(f"https://{host}/apply", scrape=True)
+    if resp.status_code == 404 or "applytojob.com" not in str(resp.url):    # unknown boards bounce to jazzhr.com
+        raise FeedNotFound(host)
+    resp.raise_for_status()
+    jobs = []
+    for item in _JAZZ_ITEM.findall(resp.text):
+        link = _JAZZ_LINK.search(item)
+        if not link:
+            continue
+        url, code, title = link.groups()
+        loc = _JAZZ_LOCATION.search(item)
+        jobs.append(RawJob(external_id=code, title=html.unescape(_TAG.sub("", title)).strip(), url=url,
+                           location=html.unescape(_TAG.sub("", loc.group(1))).strip() if loc else None))
+    page_title = _PAGE_TITLE.search(resp.text)
+    name = html.unescape(page_title.group(1)).split(" - ")[0].strip() if page_title else None
+    return FetchResult(jobs, name)
+
+
 READERS = {
     "greenhouse": read_greenhouse,
     "lever": read_lever,
@@ -387,4 +618,10 @@ READERS = {
     "workday": read_workday,
     "oracle": read_oracle,
     "eightfold": read_eightfold,
+    "jibe": read_jibe,
+    "phenom": read_phenom,
+    "talentbrew": read_talentbrew,
+    "teamtailor": read_teamtailor,
+    "pinpoint": read_pinpoint,
+    "jazzhr": read_jazzhr,
 }

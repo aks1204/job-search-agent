@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
-from app.core.hosts import ats_hint, ats_hints_in, detect_vendors, is_ats_url, normalize_domain
+from app.core.hosts import PLATFORMS, ats_hint, ats_hints_in, detect_vendors, is_ats_url, normalize_domain
 from app.core.http import PoliteClient, RobotsDisallowed
 from app.core.search import search_available, web_search
 
@@ -66,8 +66,13 @@ def scan_page(raw_html: str, base_url: str) -> PageScan:
             continue
         links.append((urljoin(base_url, href), _TAG.sub(" ", text).strip()[:80]))
     job_links = list(dict.fromkeys(h for h, _ in links if JOB_PATH.search(urlsplit(h).path)))
-    return PageScan(url=base_url, links=links, ats_hints=ats_hints_in(raw_html), job_links=job_links,
-                    vendors=detect_vendors(raw_html))
+    vendors = detect_vendors(raw_html)
+    hints = ats_hints_in(raw_html)
+    host = urlsplit(base_url).hostname
+    for platform in PLATFORMS:   # Jibe / Phenom / TalentBrew: this page is the careers site, read from its host
+        if platform in vendors and host and not any(h["vendor"] == platform for h in hints):
+            hints.append({"vendor": platform, "slug": host})
+    return PageScan(url=base_url, links=links, ats_hints=hints, job_links=job_links, vendors=vendors)
 
 
 def fetch_html(http: PoliteClient, url: str) -> tuple[str, str] | None:
@@ -83,6 +88,11 @@ def fetch_html(http: PoliteClient, url: str) -> tuple[str, str] | None:
 
 def _on_domain(url: str, domain: str) -> bool:
     return normalize_domain(url) == domain
+
+
+def _real_hints(scan: PageScan) -> list[dict]:
+    """Job systems on the page other than a careers-site platform front (Phenom, Jibe, TalentBrew)."""
+    return [h for h in scan.ats_hints if h["vendor"] not in PLATFORMS]
 
 
 def _check(http: PoliteClient, url: str, domain: str, how: str) -> tuple[Discovery | None, PageScan | None]:
@@ -180,9 +190,15 @@ def discover(
     if home_scan:
         seen |= home_scan.vendors
 
+    # A careers-site platform (Phenom, Jibe, TalentBrew) is only a front: a real job system behind it (e.g.
+    # Workday — far more jobs, full descriptions) is looked for first; the front is the second choice.
+    platform_only: Discovery | None = None
+
     # Rung 1a: the homepage itself links to an ATS board.
-    if home_scan and home_scan.ats_hints:
+    if home_scan and _real_hints(home_scan):
         return Discovery(home_scan.url, home_scan, "ATS link on homepage", on_company_site=True)
+    if home_scan and home_scan.ats_hints:
+        platform_only = Discovery(home_scan.url, home_scan, "careers platform on homepage", on_company_site=True)
 
     # Rung 1b: nav links that say careers/jobs, then the usual URL guesses.
     candidates: list[tuple[str, str]] = []
@@ -202,10 +218,12 @@ def discover(
     fallback: Discovery | None = None
 
     def consider(found: Discovery | None) -> Discovery | None:
-        nonlocal fallback
-        if found and found.scan.ats_hints:
+        nonlocal fallback, platform_only
+        if found and _real_hints(found.scan):
             return found
-        if found and fallback is None:
+        if found and found.scan.ats_hints:          # only a careers-site platform: keep looking
+            platform_only = platform_only or found
+        elif found and fallback is None:
             fallback = found
         return None
 
@@ -233,11 +251,11 @@ def discover(
     hosts = [f"https://{domain}"] + [
         f"{urlsplit(u).scheme}://{urlsplit(u).netloc}" for u in tried if _on_domain(u, domain)
     ]
-    if found := _from_sitemaps(http, list(dict.fromkeys(hosts))[:4], domain, seen):
-        return found
+    if board := consider(_from_sitemaps(http, list(dict.fromkeys(hosts))[:4], domain, seen)):
+        return board
 
     # Rung 2: web search, keeping only the company's own site or ATS boards (never LinkedIn/Glassdoor).
-    if search_available():
+    if platform_only is None and search_available():   # (a platform front already found: no search spend)
         results = web_search(http, f'"{company.name}" careers jobs', purpose="careers",
                              monthly_budget=CAREERS_SEARCH_BUDGET) or []
         for r in results[:5]:
@@ -248,7 +266,7 @@ def discover(
                     return board
 
     # Rung 3: the AI picks from the homepage links.
-    if llm is not None and home_scan and home_scan.links:
+    if platform_only is None and llm is not None and home_scan and home_scan.links:
         listing = "\n".join(f"- {text or '(no text)'} → {href}" for href, text in home_scan.links[:80])
         try:
             pick = llm.structured(
@@ -262,4 +280,6 @@ def discover(
             found, _ = _check(http, pick.url, domain, "AI-picked homepage link")
             if board := consider(found):
                 return board
-    return fallback  # an on-site page of job links with no known board (custom careers page), or None
+    # A careers-site platform with nothing better behind it (BCG); else an on-site page of job links with no
+    # known board (custom careers page), or None.
+    return platform_only or fallback

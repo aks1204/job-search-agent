@@ -6,7 +6,7 @@ which is also how gardening heals broken feeds and ATS migrations.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.config_loader import get_config
 from app.core import audit
 from app.core.http import PoliteClient
-from app.core.hosts import ats_hint, domain_label
+from app.core.hosts import PLATFORMS, ats_hint, domain_label
 from app.models.company import STATUS_WATCHING, Company
 from app.models.feed import CompanyFeed
 from app.modules.m1_companies.facts import fact_card, value
@@ -31,8 +31,10 @@ from app.modules.m1_companies.watch.sync import SyncResult, aggregator_jobs, syn
 log = logging.getLogger(__name__)
 
 # The ladder: public ATS endpoints → Workday / Oracle → per-company adapters → aggregator floor.
-LADDER = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "workday", "oracle", "eightfold", "adapter")
+LADDER = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "teamtailor", "pinpoint", "jazzhr",
+          "workday", "oracle", "eightfold", "jibe", "phenom", "talentbrew", "adapter")
 GUESSABLE = ("greenhouse", "lever", "ashby", "smartrecruiters")
+KEEP_IF_WORKED = timedelta(days=7)   # an unreachable previous board is kept only if it worked this recently
 
 
 @dataclass
@@ -112,8 +114,10 @@ def _candidates(company: Company, discovery: Discovery | None, *, llm=None, sess
             found.append(FeedCandidate(_spec(h, company), True, f"linked in their Hacker News post: {_label(h)}"))
     if discovery:
         for h in discovery.scan.ats_hints:
-            found.append(FeedCandidate(_spec(h, company),
-                                       discovery.on_company_site, f"{discovery.how}: {_label(h)}"))
+            # A careers-site platform (Phenom, Jibe, TalentBrew) is only the front: a real job system behind it
+            # (e.g. Workday) is tried first and wins.
+            found.append(FeedCandidate(_spec(h, company), discovery.on_company_site, f"{discovery.how}: {_label(h)}",
+                                       source_rank=1 if h["vendor"] in PLATFORMS else 0))
     if company.domain in get_config().adapters:
         found.append(FeedCandidate(FeedSpec("adapter"), True, "community adapter", source_rank=1))
     if not company.domain:
@@ -129,8 +133,16 @@ def _candidates(company: Company, discovery: Discovery | None, *, llm=None, sess
     return sorted(unique.values(), key=lambda c: (c.source_rank, LADDER.index(c.spec.method)))
 
 
-def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[FetchResult | None, str]:
-    """(result, what happened) — the note is kept so a fallback can explain itself."""
+def _transient(e: Exception) -> bool:
+    """A failure that's only temporary — no connection, a timeout, the server busy — not "this board is gone"."""
+    if isinstance(e, httpx.TransportError):
+        return True
+    return isinstance(e, httpx.HTTPStatusError) and (e.response.status_code >= 500 or e.response.status_code == 429)
+
+
+def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[FetchResult | None, str, bool]:
+    """(result, what happened, whether a failure was only temporary) — the note is kept so a fallback can
+    explain itself."""
     cfg = get_config()
     roles = list(cfg.owner.target_roles) if cfg.owner else []
     try:
@@ -146,7 +158,7 @@ def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[Fet
                 if host is None:
                     first = (f"HTTP {first_error.response.status_code}"
                              if isinstance(first_error, httpx.HTTPStatusError) else "not found")
-                    return None, f"{first}; {'; '.join(probes)}"
+                    return None, f"{first}; {'; '.join(probes)}", _transient(first_error)
                 old = cand.spec.host
                 cand.spec.host = host
                 cand.how += f" (server {old} → {host})"
@@ -154,13 +166,13 @@ def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[Fet
         else:
             result = READERS[cand.spec.method](http, cand.spec, roles)
     except FeedNotFound:
-        return None, "not found"
+        return None, "not found", False
     except httpx.HTTPStatusError as e:
-        return None, f"HTTP {e.response.status_code}"
+        return None, f"HTTP {e.response.status_code}", _transient(e)
     except Exception as e:
         log.info("candidate %s failed for %s: %s", cand.how, company.name, e)
-        return None, f"{type(e).__name__}: {str(e)[:80]}"
-    return result, f"{len(result.jobs)} jobs"
+        return None, f"{type(e).__name__}: {str(e)[:80]}", _transient(e)
+    return result, f"{len(result.jobs)} jobs", False
 
 
 def activate(session: Session, company: Company, http: PoliteClient, *, llm=None) -> tuple[CompanyFeed, SyncResult]:
@@ -173,12 +185,17 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
     attempts: list[str] = []  # every board tried and what happened — shown when we fall back
     size = value(fact_card(session, company.id), "employee_estimate")
     existing = session.scalar(select(CompanyFeed).where(CompanyFeed.company_id == company.id))
+    previous_unreachable = False
     for cand in _candidates(company, discovery, llm=llm, session=session, notes=attempts, previous=existing):
         if chosen and not cand.linked_from_site:
             break  # never let a guess displace a board the company itself links to
-        result, note = _try(http, company, cand)
+        if chosen and cand.spec.method in PLATFORMS and chosen[0].spec.method not in PLATFORMS:
+            continue  # a real job system was found: the careers-site front in front of it isn't needed
+        result, note, transient = _try(http, company, cand)
         if result is None:
             attempts.append(f"{cand.how} → {note}")
+            if cand.how.startswith("previous") and transient:
+                previous_unreachable = True   # the board that worked couldn't be reached right now (not gone)
             continue
         ok, evidence = verify_ownership(company, result, linked_from_site=cand.linked_from_site,
                                         careers_url=discovery.careers_url if discovery else None,
@@ -197,14 +214,24 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
         feed = CompanyFeed(company_id=company.id, activated_at=now)
         session.add(feed)
 
+    # The board that worked (within the last week) couldn't be reached just now — laptop waking up, a site
+    # hiccup: keep it rather than falling back to job-site listings; the next re-check tries again. A board
+    # that keeps failing for over a week is let go as usual.
+    keep_previous = bool(not chosen and previous_unreachable and existing is not None
+                         and existing.method not in ("aggregator", "adapter")
+                         and existing.last_success_at is not None and now - existing.last_success_at < KEEP_IF_WORKED)
     if chosen:
         cand, evidence = chosen
         feed.method, feed.slug, feed.site, feed.host = cand.spec.method, cand.spec.slug, cand.spec.site, cand.spec.host
         feed.ownership_evidence = f"{cand.how} — {evidence}"
+    elif keep_previous:
+        kept = f"kept the previous {existing.method} board — it couldn't be reached during this re-check"
+        feed.ownership_evidence = f"{(existing.ownership_evidence or '').split(' | kept')[0]} | {kept}"[:2000]
+        attempts.append(kept)
     else:
         feed.method, feed.slug, feed.site, feed.host = "aggregator", None, None, None
         n = len(aggregator_jobs(session, company.id))
-        unreadable = sorted(vendors - set(READERS) - {"phenom"}) or sorted(vendors & {"phenom"})
+        unreadable = sorted(vendors - set(READERS))
         if unreadable:
             note = f"jobs are on {', '.join(unreadable)} (no reader yet)"
         elif not company.domain:
@@ -218,10 +245,11 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
             feed.ownership_evidence += " | tried: " + "; ".join(attempts[:10])
     feed.careers_url = discovery.careers_url if discovery else feed.careers_url
     feed.detected_vendors = sorted(vendors | ({feed.method} if feed.method != "aggregator" else set()))
-    feed.verified_at = now
     feed.needs_reactivation = False
-    feed.consecutive_failures = 0
-    feed.health = "pending"
+    if not keep_previous:   # a kept board wasn't re-verified: its failure count, last check and health stand
+        feed.verified_at = now
+        feed.consecutive_failures = 0
+        feed.health = "pending"
     feed.cadence = feed.cadence or "active"
     session.flush()
 
@@ -236,5 +264,10 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
                 "attempts": attempts,
                 "evidence": feed.ownership_evidence, "discovery": discovery.how if discovery else None},
     )
+    if keep_previous:
+        # It just failed to answer: syncing again now would fail, hit the failure limit and queue another full
+        # re-check every tick. Wait as a failed sync would; that next sync decides.
+        feed.next_sync_at = now + timedelta(hours=min(2 ** feed.consecutive_failures, 48))
+        return feed, SyncResult(error="previous board unreachable; kept, next try later")
     first = sync_feed(session, http, feed)  # first sync immediately
     return feed, first

@@ -258,3 +258,58 @@ def test_roles_from_the_companys_own_post_count_next_to_its_careers_page(db_sess
 
     assert feed.method == "greenhouse"
     assert _open(db_session, feed) == ["Analyst", "Product Analyst", "Senior Data Analyst"]  # no duplicate
+
+
+def test_a_recheck_that_cant_reach_the_working_board_keeps_it(db_session, mock, http):
+    """Laptop just waking up / a site hiccup during a re-check: keep the board that worked, don't fall back."""
+    jobs_route = _greenhouse(mock)
+    company = _company(db_session)
+    feed, _ = activate(db_session, company, http)
+    assert feed.method == "greenhouse"
+    jobs_route.respond(503)                                  # unreachable right now
+    mock.get(url__regex=r"https://zentest-co\.io/?$").respond(503)
+    mock.get(url__regex=r"https://(www\.|careers\.|jobs\.)?zentest-co\.io/.*").respond(503)
+    feed, _ = activate(db_session, company, http)
+    assert feed.method == "greenhouse" and "kept the previous greenhouse board" in feed.ownership_evidence
+
+
+def test_a_kept_board_is_not_sent_straight_back_for_a_recheck(db_session, mock, http):
+    """After 5 failed syncs a re-check keeps the board; it must not sync again at once, fail, and re-queue itself."""
+    jobs_route = _greenhouse(mock)
+    company = _company(db_session)
+    feed, _ = activate(db_session, company, http)
+    feed.consecutive_failures, feed.needs_reactivation, feed.health = 5, True, "failing"
+    db_session.flush()
+    jobs_route.respond(503)
+    mock.get(url__regex=r"https://zentest-co\.io/?$").respond(503)
+    mock.get(url__regex=r"https://(www\.|careers\.|jobs\.)?zentest-co\.io/.*").respond(503)
+    feed, first = activate(db_session, company, http)
+    assert feed.method == "greenhouse" and first.error
+    # an immediate sync would have failed: 6 failures and flagged for re-check again
+    assert feed.needs_reactivation is False and feed.consecutive_failures == 5 and feed.health == "failing"
+    assert feed.next_sync_at > datetime.now(timezone.utc) + timedelta(hours=24)
+
+
+def test_a_recheck_where_the_board_is_gone_falls_back(db_session, mock, http):
+    """A 404 means the board was closed or moved — not a hiccup: don't keep it."""
+    jobs_route = _greenhouse(mock)
+    company = _company(db_session)
+    activate(db_session, company, http)
+    jobs_route.respond(404)
+    mock.get(url__regex=r"https://zentest-co\.io/?$").respond(503)
+    mock.get(url__regex=r"https://(www\.|careers\.|jobs\.)?zentest-co\.io/.*").respond(503)
+    feed, _ = activate(db_session, company, http)
+    assert feed.method == "aggregator"
+
+
+def test_a_board_unreachable_for_over_a_week_is_let_go(db_session, mock, http):
+    jobs_route = _greenhouse(mock)
+    company = _company(db_session)
+    feed, _ = activate(db_session, company, http)
+    feed.last_success_at = datetime.now(timezone.utc) - timedelta(days=8)
+    db_session.flush()
+    jobs_route.respond(503)
+    mock.get(url__regex=r"https://zentest-co\.io/?$").respond(503)
+    mock.get(url__regex=r"https://(www\.|careers\.|jobs\.)?zentest-co\.io/.*").respond(503)
+    feed, _ = activate(db_session, company, http)
+    assert feed.method == "aggregator"
