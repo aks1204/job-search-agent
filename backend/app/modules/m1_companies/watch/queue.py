@@ -42,10 +42,10 @@ def recheck_unread(session, *, apply: bool = False) -> list[tuple[Company, str]]
         readable = sorted(set(feed.detected_vendors or []) & set(READERS))
         if readable:
             why = f"jobs on {', '.join(readable)} (reader now built)"
-        elif feed.careers_url:
+        elif feed.careers_url and not feed.detected_vendors:
             why = "custom careers page (may be a platform we now read)"
         else:
-            continue                                  # no careers page found: a new reader doesn't change that
+            continue          # no careers page, or one on a system still without a reader: a re-check won't help
         found.append((company, why))
         if apply:
             feed.needs_reactivation = True
