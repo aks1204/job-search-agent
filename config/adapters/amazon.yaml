@@ -1,0 +1,22 @@
+# Amazon's own careers site (amazon.jobs), linked as "Careers" from amazon.com.
+# Checked live 2026-11-01: the public search service behind amazon.jobs/en/search; robots.txt allows it.
+name: "Amazon"
+domain: "amazon.com"
+maintainer: "job-search-agent"
+request:
+  method: GET
+  url: "https://www.amazon.jobs/en/search.json"
+  params: {base_query: "{role}", result_limit: 100, sort: "recent"}   # searched once per target role
+items: "jobs"
+fields:
+  external_id: "id_icims"
+  title: "title"
+  location: "normalized_location"      # "Bengaluru, Karnataka, IND"
+  posted_at: "posted_date"
+  description: "description"
+  department: "job_category"
+url_template: "https://www.amazon.jobs/en/jobs/{external_id}"
+pagination:
+  param: "offset"
+  size: 100
+  max_pages: 5

@@ -12,7 +12,10 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from pydantic import BaseModel, Field
 
-from app.core.hosts import PLATFORMS, ats_hint, ats_hints_in, detect_vendors, is_ats_url, normalize_domain
+from app.core.hosts import (
+    PLATFORMS, PROFILE_SITES, ats_hint, ats_hints_in, detect_vendors, domain_label, is_ats_url, is_junk,
+    normalize_domain,
+)
 from app.core.http import PoliteClient, RobotsDisallowed
 from app.core.search import search_available, web_search
 
@@ -86,8 +89,34 @@ def fetch_html(http: PoliteClient, url: str) -> tuple[str, str] | None:
     return str(resp.url), resp.text
 
 
-def _on_domain(url: str, domain: str) -> bool:
-    return normalize_domain(url) == domain
+def _on_domain(url: str, domain: str | set[str]) -> bool:
+    """On the company's domain — or, given a set, on any of its own domains (the site plus its careers site)."""
+    found = normalize_domain(url)
+    return found in domain if isinstance(domain, set) else found == domain
+
+
+_GENERIC_LABELS = {"jobs", "job", "career", "careers", "work", "hire", "hiring", "talent", "join", "apply", "search"}
+
+
+def _careers_domain(url: str, company) -> str | None:
+    """A careers site on a domain of its own that carries the company's name: amazon.com → amazon.jobs,
+    meta.com → metacareers.com, citigroup.com (Citi) → jobs.citi.com, barclays.com → search.jobs.barclays.
+    Trusted only for a Careers/Jobs link on the company's own homepage — that link is what makes it theirs.
+    Only the domain itself is compared, never what's in front of it (barclays.csod.com is Cornerstone's)."""
+    from app.modules.m1_companies.identity import normalize_name
+
+    found = normalize_domain(url)
+    if not found or found == company.domain or is_junk(url) or found in PROFILE_SITES:
+        return None
+    words = normalize_name(company.name).split()
+    # A one-word name is a name ("Citi"); a longer one only as a whole — "Health Catalyst" ≠ healthecareers.com.
+    names = {n for n in {domain_label(company.domain), "".join(words)} if len(n) >= 4}
+    label = domain_label(found)
+    suffix = found[len(label) + 1:]                      # a brand's own ending: search.jobs.barclays
+    for part in (label, suffix):
+        if any(n in part or (len(part) >= 4 and part not in _GENERIC_LABELS and n.startswith(part)) for n in names):
+            return found
+    return None
 
 
 def _real_hints(scan: PageScan) -> list[dict]:
@@ -95,12 +124,16 @@ def _real_hints(scan: PageScan) -> list[dict]:
     return [h for h in scan.ats_hints if h["vendor"] not in PLATFORMS]
 
 
-def _check(http: PoliteClient, url: str, domain: str, how: str) -> tuple[Discovery | None, PageScan | None]:
+def _check(http: PoliteClient, url: str, domain: str | set[str],
+           how: str, company=None) -> tuple[Discovery | None, PageScan | None]:
     """(Discovery if this page lists jobs, the page scan if it was fetchable on-site)."""
     page = fetch_html(http, url)
     if page is None:
         return None, None
     final_url, raw = page
+    if (isinstance(domain, set) and company is not None and _on_domain(url, domain)
+            and not _on_domain(final_url, domain) and (careers_site := _careers_domain(final_url, company))):
+        domain.add(careers_site)   # their own page sent us to their careers site (citigroup.com/careers → jobs.citi.com)
     if not (_on_domain(final_url, domain) or is_ats_url(final_url)):
         return None, None  # redirected off-site (e.g. to LinkedIn) — not trustworthy
     scan = scan_page(raw, final_url)
@@ -119,7 +152,7 @@ _STRONG_JOB_TEXT = re.compile(
 DEEPER_LINKS = 3
 
 
-def _deeper_links(scan: PageScan | None, domain: str, tried: set[str]) -> list[tuple[str, str]]:
+def _deeper_links(scan: PageScan | None, domain: str | set[str], tried: set[str]) -> list[tuple[str, str]]:
     """The most promising next hops from a careers landing page, best first."""
     if scan is None:
         return []
@@ -153,7 +186,7 @@ def _get_text(http: PoliteClient, url: str) -> str | None:
     return resp.text if resp.status_code < 400 else None
 
 
-def _from_sitemaps(http: PoliteClient, hosts: list[str], domain: str, seen: set[str]) -> Discovery | None:
+def _from_sitemaps(http: PoliteClient, hosts: list[str], domain: str | set[str], seen: set[str]) -> Discovery | None:
     for host in hosts:
         robots = _get_text(http, f"{host}/robots.txt") or ""
         sitemaps = [u for u in _SITEMAP_LINE.findall(robots) if _on_domain(u, domain)][:3] or [f"{host}/sitemap.xml"]
@@ -202,12 +235,16 @@ def discover(
 
     # Rung 1b: nav links that say careers/jobs, then the usual URL guesses.
     candidates: list[tuple[str, str]] = []
+    own = {domain}   # the company's domains: its site, plus a careers site its homepage links to (amazon.jobs)
     if home_scan:
         for href, text in home_scan.links:
-            if (CAREER_WORDS.search(text) or CAREER_WORDS.search(urlsplit(href).path)) and (
-                _on_domain(href, domain) or is_ats_url(href)
-            ):
+            if not (CAREER_WORDS.search(text) or CAREER_WORDS.search(urlsplit(href).path)):
+                continue
+            if _on_domain(href, own) or is_ats_url(href):
                 candidates.append((href, f"homepage link “{text or href}”"))
+            elif CAREER_WORDS.search(text) and (careers_site := _careers_domain(href, company)):   # its text, too
+                own.add(careers_site)
+                candidates.append((href, f"homepage link “{text or href}” (their careers site)"))
     for guess in (f"https://{domain}/careers", f"https://{domain}/jobs",
                   f"https://careers.{domain}", f"https://jobs.{domain}"):
         candidates.append((guess, "URL guess"))
@@ -232,15 +269,15 @@ def discover(
         if url in tried or len(tried) >= MAX_CANDIDATES:
             continue
         tried.add(url)
-        found, scan = _check(http, url, domain, how)
+        found, scan = _check(http, url, own, how, company)
         if scan:
             seen |= scan.vendors
         if board := consider(found):
             return board
         # One level deeper: careers landing pages link on to "Jobs" / "Open roles" / a careers subdomain.
-        for href, text in _deeper_links(scan, domain, tried):
+        for href, text in _deeper_links(scan, own, tried):
             tried.add(href)
-            found, deeper = _check(http, href, domain, f"{how} → “{text}”")
+            found, deeper = _check(http, href, own, f"{how} → “{text}”", company)
             if deeper:
                 seen |= deeper.vendors
             if board := consider(found):
@@ -249,9 +286,9 @@ def discover(
     # Rung 1c: JavaScript careers sites (Phenom & co.) hide the board from the landing page, but publish
     # sitemaps for crawlers, and a job page's server-rendered "Apply" link names the exact board.
     hosts = [f"https://{domain}"] + [
-        f"{urlsplit(u).scheme}://{urlsplit(u).netloc}" for u in tried if _on_domain(u, domain)
+        f"{urlsplit(u).scheme}://{urlsplit(u).netloc}" for u in tried if _on_domain(u, own)
     ]
-    if board := consider(_from_sitemaps(http, list(dict.fromkeys(hosts))[:4], domain, seen)):
+    if board := consider(_from_sitemaps(http, list(dict.fromkeys(hosts))[:4], own, seen)):
         return board
 
     # Rung 2: web search, keeping only the company's own site or ATS boards (never LinkedIn/Glassdoor).
@@ -259,9 +296,9 @@ def discover(
         results = web_search(http, f'"{company.name}" careers jobs', purpose="careers",
                              monthly_budget=CAREERS_SEARCH_BUDGET) or []
         for r in results[:5]:
-            if (_on_domain(r.url, domain) or is_ats_url(r.url)) and r.url not in tried:
+            if (_on_domain(r.url, own) or is_ats_url(r.url)) and r.url not in tried:
                 tried.add(r.url)
-                found, _ = _check(http, r.url, domain, "web search")
+                found, _ = _check(http, r.url, own, "web search")
                 if board := consider(found):
                     return board
 
@@ -277,7 +314,7 @@ def discover(
         except Exception:
             pick = None
         if pick and pick.url != "none" and pick.url not in tried:
-            found, _ = _check(http, pick.url, domain, "AI-picked homepage link")
+            found, _ = _check(http, pick.url, own, "AI-picked homepage link")
             if board := consider(found):
                 return board
     # A careers-site platform with nothing better behind it (BCG); else an on-site page of job links with no

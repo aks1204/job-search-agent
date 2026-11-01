@@ -339,3 +339,5 @@ def test_recheck_unread_flags_only_fallback_companies_a_new_reader_could_help(db
     recheck_unread(db_session, apply=True)
     db_session.flush()
     assert flagged() == {phenom.domain, custom.domain}
+    # --include-no-page: also the one where no careers page was found (not the one on a system without a reader)
+    assert {c.domain for c, _ in recheck_unread(db_session, no_page=True) if c.domain in ours} == {"zznone-test.io"}

@@ -305,3 +305,94 @@ def test_sitemap_roles_of_only_seniority_words_and_the_size_cap(http, monkeypatc
     monkeypatch.setattr(readers, "SITEMAP_JOBS_LIMIT", 2)
     r = readers._talentbrew_sitemap(client, "careers.zzcap-test.io", [])
     assert [j.external_id for j in r.jobs] == ["9", "7"]               # the newest two, whatever the order
+
+
+# --- careers sites on a domain of their own; adapters searched per role ------------------------------------
+
+def test_a_careers_site_on_its_own_domain_is_recognised_by_the_company_name():
+    from types import SimpleNamespace
+
+    from app.modules.m1_companies.watch.careers import _careers_domain
+
+    def co(name, domain):
+        return SimpleNamespace(name=name, domain=domain)
+
+    assert _careers_domain("https://www.amazon.jobs/", co("Amazon", "amazon.com")) == "amazon.jobs"
+    assert _careers_domain("https://www.metacareers.com/jobs", co("Meta", "meta.com")) == "metacareers.com"
+    assert _careers_domain("https://jobs.citi.com/", co("Citi", "citigroup.com")) == "citi.com"
+    assert _careers_domain("https://search.jobs.barclays/", co("Barclays", "barclays.com")) == "jobs.barclays"
+    assert _careers_domain("https://www.linkedin.com/company/amazon/jobs", co("Amazon", "amazon.com")) is None
+    assert _careers_domain("https://www.indeed.com/cmp/Amazon", co("Amazon", "amazon.com")) is None
+    assert _careers_domain("https://jobs.example.org/", co("Amazon", "amazon.com")) is None
+
+
+def test_discovery_follows_the_homepage_careers_link_to_the_companys_careers_domain(http):
+    from types import SimpleNamespace
+
+    from app.modules.m1_companies.watch.careers import discover
+
+    client, mock = http
+    mock.get("https://zzshop-test.com").respond(
+        200, html='<a href="https://www.zzshop-test.jobs/">Careers</a><a href="https://www.linkedin.com/x">Jobs</a>')
+    mock.get("https://www.zzshop-test.jobs/").respond(
+        200, html='<a href="https://boards.greenhouse.io/zzshop">See open roles</a>')
+    mock.get(url__regex=r"https://(www\.|careers\.|jobs\.)?zzshop-test\.com/.*").respond(404)
+    found = discover(client, SimpleNamespace(domain="zzshop-test.com", name="Zzshop"))
+    assert found and found.scan.ats_hints == [{"vendor": "greenhouse", "slug": "zzshop"}]
+    assert "their careers site" in found.how and found.on_company_site
+
+
+def test_an_adapter_with_role_is_searched_once_per_role_without_seniority_words(http):
+    from app.modules.m1_companies.watch.readers import read_adapter
+
+    client, mock = http
+    route = mock.get("https://www.zzbig-test.jobs/en/search.json").mock(side_effect=lambda request: httpx.Response(
+        200, json={"jobs": [{"id_icims": "1", "title": "Data Analyst", "normalized_location": "Bengaluru, IND"},
+                            {"id_icims": "2" if "Product" in request.url.params["q"] else "1", "title": "Product Analyst"}]}))
+    adapter = {"name": "Zzbig", "request": {"method": "GET", "url": "https://www.zzbig-test.jobs/en/search.json",
+                                            "params": {"q": "{role}", "limit": 100}},
+               "items": "jobs", "fields": {"external_id": "id_icims", "title": "title", "location": "normalized_location"},
+               "url_template": "https://www.zzbig-test.jobs/en/jobs/{external_id}", "pagination": None}
+    r = read_adapter(client, adapter, ["Senior Data Analyst", "Product Analyst", "Data Analyst"])
+    assert [c.request.url.params["q"] for c in route.calls] == ["Data Analyst", "Product Analyst"]  # each once
+    assert [(j.external_id, j.url) for j in r.jobs] == [("1", "https://www.zzbig-test.jobs/en/jobs/1"),
+                                                         ("2", "https://www.zzbig-test.jobs/en/jobs/2")]
+
+
+def test_careers_domains_that_only_look_like_the_companys_are_not_trusted():
+    from types import SimpleNamespace
+
+    from app.modules.m1_companies.watch.careers import _careers_domain
+
+    def co(name, domain):
+        return SimpleNamespace(name=name, domain=domain)
+
+    assert _careers_domain("https://www.healthecareers.com/", co("Health Catalyst", "healthcatalyst.com")) is None
+    assert _careers_domain("https://barclays.csod.com/ux/ats", co("Barclays", "barclays.com")) is None  # Cornerstone's
+    assert _careers_domain("https://jobs.anything.com/", co("Jobsforher", "jobsforher.com")) is None
+
+
+def test_a_careers_link_that_redirects_to_the_companys_careers_domain_is_followed(http):
+    from types import SimpleNamespace
+
+    from app.modules.m1_companies.watch.careers import discover
+
+    client, mock = http
+    mock.get("https://zzciti-test.com/").respond(200, html='<a href="/careers">Careers</a>')
+    mock.get("https://zzciti-test.com/careers").mock(return_value=httpx.Response(
+        301, headers={"location": "https://jobs.zzciti-test.io/"}))
+    mock.get("https://jobs.zzciti-test.io/").respond(
+        200, html='<a href="https://jobs.lever.co/zzciti">Open roles</a>')
+    found = discover(client, SimpleNamespace(domain="zzciti-test.com", name="Zzciti"))
+    assert found and found.scan.ats_hints == [{"vendor": "lever", "slug": "zzciti"}]
+
+
+def test_dates_written_out_in_words_are_understood():
+    from datetime import datetime, timezone
+
+    from app.modules.m2_jobs.normalize import parse_posted
+
+    seen = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    assert parse_posted("October 29, 2026", seen) == datetime(2026, 10, 29, tzinfo=timezone.utc)
+    assert parse_posted("Oct 29, 2026", seen) == datetime(2026, 10, 29, tzinfo=timezone.utc)
+    assert parse_posted("sometime soon", seen) is None

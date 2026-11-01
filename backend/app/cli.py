@@ -17,7 +17,7 @@
     python -m app.cli report [--days N|--all-time] [--all]       # each source's funnel + warning signs
     python -m app.cli rename <site|number> "<name>" [--yes]       # correct a name: preview, then --yes
     python -m app.cli activate [--limit N] [--domain acme.com]   # set up job feeds for kept companies now
-    python -m app.cli activate --recheck-unread [--yes]          # after new readers: re-check fallback companies
+    python -m app.cli activate --recheck-unread [--yes] [--include-no-page]  # re-check fallback companies
     python -m app.cli sync [--limit N] [--domain acme.com]       # read due feeds now
     python -m app.cli feeds                                      # watchlist health
     python -m app.cli jobs --domain acme.com                     # a company's open postings
@@ -585,14 +585,14 @@ def _print_counts(result: dict) -> None:
         print("  nothing to do")
 
 
-def recheck_unread_cmd(yes: bool) -> int:
+def recheck_unread_cmd(yes: bool, no_page: bool = False) -> int:
     from collections import Counter
 
     from app.db import session_scope
     from app.modules.m1_companies.watch.queue import recheck_unread
 
     with session_scope() as s:
-        found = recheck_unread(s, apply=yes)
+        found = recheck_unread(s, apply=yes, no_page=no_page)
         if not found:
             print("No company on the job-site fallback has a careers page we could now read.")
             return 0
@@ -1763,6 +1763,8 @@ def main() -> None:
             p.add_argument("--recheck-unread", action="store_true",
                            help="flag job-site-fallback companies whose careers page we can now read (preview)")
             p.add_argument("--yes", action="store_true", help="with --recheck-unread: flag them")
+            p.add_argument("--include-no-page", action="store_true",
+                           help="with --recheck-unread: also companies where no careers page was found")
     sub.add_parser("feeds", help="watchlist health")
     p_jobs = sub.add_parser("jobs", help="a company's open postings")
     p_jobs.add_argument("--domain", required=True)
@@ -1917,7 +1919,7 @@ def main() -> None:
         sys.exit(override_cmd(args.domain, args.decision, args.reason, args.permanent))
     if args.command == "activate":
         if args.recheck_unread:
-            sys.exit(recheck_unread_cmd(args.yes))
+            sys.exit(recheck_unread_cmd(args.yes, args.include_no_page))
         sys.exit(activate_cmd(args.limit, args.domain))
     if args.command == "sync":
         sys.exit(sync_cmd(args.limit, args.domain))

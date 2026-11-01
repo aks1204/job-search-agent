@@ -147,7 +147,7 @@ def _try(http: PoliteClient, company: Company, cand: FeedCandidate) -> tuple[Fet
     roles = list(cfg.owner.target_roles) if cfg.owner else []
     try:
         if cand.spec.method == "adapter":
-            result = read_adapter(http, cfg.adapters[company.domain])
+            result = read_adapter(http, cfg.adapters[company.domain], roles)
         elif cand.spec.method == "workday":
             try:
                 result = read_workday(http, cand.spec, roles, pages_per_role=1)

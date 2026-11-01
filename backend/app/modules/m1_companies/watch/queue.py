@@ -25,10 +25,11 @@ def _llm():
     return LLM() if LLM.available() else None
 
 
-def recheck_unread(session, *, apply: bool = False) -> list[tuple[Company, str]]:
+def recheck_unread(session, *, apply: bool = False, no_page: bool = False) -> list[tuple[Company, str]]:
     """One-time, after new readers ship: companies on the job-site fallback whose careers page showed a system
     we can now read, or a careers page we couldn't place, are flagged so the next activation batch re-checks them
-    (otherwise they wait up to reverify_days). Returns (company, why); flags them only with apply=True."""
+    (otherwise they wait up to reverify_days). Returns (company, why); flags them only with apply=True. no_page adds
+    those where no careers page was found at all (worth one re-check after the careers-page search improves)."""
     from app.modules.m1_companies.watch.readers import READERS
 
     rows = session.execute(
@@ -44,8 +45,10 @@ def recheck_unread(session, *, apply: bool = False) -> list[tuple[Company, str]]
             why = f"jobs on {', '.join(readable)} (reader now built)"
         elif feed.careers_url and not feed.detected_vendors:
             why = "custom careers page (may be a platform we now read)"
+        elif no_page and not feed.careers_url and not feed.detected_vendors:
+            why = "no careers page found (the search for one has improved)"
         else:
-            continue          # no careers page, or one on a system still without a reader: a re-check won't help
+            continue          # a system still without a reader, or no page (without no_page): a re-check won't help
         found.append((company, why))
         if apply:
             feed.needs_reactivation = True

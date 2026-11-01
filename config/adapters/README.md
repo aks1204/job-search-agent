@@ -2,7 +2,7 @@
 
 Most companies use a standard applicant-tracking system (ATS): Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee or Workday. The agent reads those on its own.
 
-A few giants run their own careers site backed by a JSON endpoint, for example Google, Amazon or Uber. For those, drop a small YAML file here describing that endpoint. No adapters ship by default, because each one should be checked by hand against the live site before it's trusted. Contributions are welcome.
+A few giants run their own careers site backed by a JSON endpoint, for example Google, Amazon or Uber. For those, drop a small YAML file here describing that endpoint. Each one should be checked by hand against the live site before it's trusted; only `amazon.yaml` ships (checked 2026-11-01). Contributions are welcome.
 
 ```yaml
 # config/adapters/example.yaml
@@ -28,6 +28,8 @@ pagination:                      # optional
   size: 50
   max_pages: 5
 ```
+
+For a site with tens of thousands of jobs, put `{role}` in a request value (e.g. `params: {q: "{role}"}`): the endpoint is then searched once per target role in your profile, without seniority words ("Senior Data Analyst" is searched as "Data Analyst"; the filters judge seniority). `amazon.yaml` works this way.
 
 Files ending in `.example.yaml` are ignored. After adding a file, run `docker compose restart`, then:
 

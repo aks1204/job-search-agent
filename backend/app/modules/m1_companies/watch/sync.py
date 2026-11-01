@@ -109,7 +109,7 @@ def _site_jobs(session: Session, http: PoliteClient, feed: CompanyFeed, company:
         adapter = cfg.adapters.get(company.domain or "")
         if adapter is None:
             raise RuntimeError(f"adapter for {company.domain} no longer exists in config/adapters")
-        return read_adapter(http, adapter).jobs
+        return read_adapter(http, adapter, list(cfg.owner.target_roles) if cfg.owner else []).jobs
     spec = FeedSpec(feed.method, feed.slug, feed.site, feed.host)
     roles = list(cfg.owner.target_roles) if cfg.owner else []
     if feed.method == "workday":

@@ -352,34 +352,61 @@ def _dig(obj, path: str | None):
     return obj
 
 
-def read_adapter(http: PoliteClient, adapter: dict) -> FetchResult:
+def _fill(value, role: str):
+    """'{role}' in an adapter's request is replaced by each of the owner's target roles in turn."""
+    if isinstance(value, str):
+        return value.replace("{role}", role)
+    if isinstance(value, dict):
+        return {k: _fill(v, role) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_fill(v, role) for v in value]
+    return value
+
+
+def _search_text(role: str) -> str:
+    from app.modules.m2_jobs.filters import _STOP
+
+    words = role.split()
+    return " ".join(w for w in words if w.lower().strip(".,") not in _STOP) or role
+
+
+def read_adapter(http: PoliteClient, adapter: dict, roles: list[str] | None = None) -> FetchResult:
+    """A per-company JSON endpoint. With '{role}' in its request it's searched once per target role (giants with
+    tens of thousands of jobs); otherwise read once. Searched without seniority words ("Senior Data Analyst" → "Data
+    Analyst": Amazon finds 74, not 6); the filters judge seniority."""
     req, fields, pag = adapter["request"], adapter["fields"], adapter.get("pagination")
-    jobs: list[RawJob] = []
-    for page in range(pag["max_pages"] if pag else 1):
-        params, body = dict(req.get("params") or {}), dict(req.get("json_body") or {}) or None
-        if pag:
-            target = body if req["method"] == "POST" and body is not None else params
-            target[pag["param"]] = page * pag["size"]
-        resp = http.request(req["method"], req["url"], params=params, json=body)
-        resp.raise_for_status()
-        items = _dig(resp.json(), adapter["items"]) or []
-        for item in items:
-            ext = _dig(item, fields.get("external_id"))
-            if ext is None:
-                continue
-            url = _dig(item, fields.get("url"))
-            if not url and adapter.get("url_template"):
-                url = adapter["url_template"].format(external_id=ext)
-            jobs.append(RawJob(
-                external_id=str(ext), title=str(_dig(item, fields.get("title")) or ""),
-                location=_dig(item, fields.get("location")), url=url,
-                department=_dig(item, fields.get("department")),
-                posted_at=str(_dig(item, fields.get("posted_at")) or "") or None,
-                description=_text(str(_dig(item, fields.get("description")) or "")),
-            ))
-        if not pag or len(items) < pag["size"]:
-            break
-    return FetchResult(jobs, adapter.get("name"))
+    per_role = "{role}" in json.dumps([req.get("params"), req.get("json_body")])
+    searches = list(dict.fromkeys(_search_text(r) for r in roles or [""])) if per_role else [None]
+    seen: dict[str, RawJob] = {}
+    for role in searches:
+        for page in range(pag["max_pages"] if pag else 1):
+            params = dict(_fill(req.get("params") or {}, role) if role is not None else req.get("params") or {})
+            body = req.get("json_body")
+            body = dict(_fill(body, role) if role is not None else body) if body else None
+            if pag:
+                target = body if req["method"] == "POST" and body is not None else params
+                target[pag["param"]] = page * pag["size"]
+            resp = http.request(req["method"], req["url"], params=params, json=body)
+            resp.raise_for_status()
+            items = _dig(resp.json(), adapter["items"]) or []
+            for item in items:
+                ext = _dig(item, fields.get("external_id"))
+                if ext is None or str(ext) in seen:
+                    continue
+                url = _dig(item, fields.get("url"))
+                if not url and adapter.get("url_template"):
+                    url = adapter["url_template"].format(external_id=ext)
+                seen[str(ext)] = RawJob(
+                    external_id=str(ext), title=str(_dig(item, fields.get("title")) or ""),
+                    location=_dig(item, fields.get("location")), url=url,
+                    department=_dig(item, fields.get("department")),
+                    posted_at=str(_dig(item, fields.get("posted_at")) or "") or None,
+                    description=_text(str(_dig(item, fields.get("description")) or "")),
+                    payload={"query": role} if role else {},
+                )
+            if not pag or len(items) < pag["size"]:
+                break
+    return FetchResult(list(seen.values()), adapter.get("name"))
 
 
 # --- careers-site platforms (2026-11-01: checked live on Booking, Rivian, ICE, BCG, UHG, Axmed, Sun King,
