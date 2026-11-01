@@ -417,3 +417,188 @@ def test_dates_written_out_in_words_are_understood():
     assert parse_posted("October 29, 2026", seen) == datetime(2026, 10, 29, tzinfo=timezone.utc)
     assert parse_posted("Oct 29, 2026", seen) == datetime(2026, 10, 29, tzinfo=timezone.utc)
     assert parse_posted("sometime soon", seen) is None
+
+
+# --- robots.txt read as RFC 9309 says (checked live on careers.walmart.com, higher.gs.com, careers.ice.com) -----
+
+def test_robots_groups_wildcards_and_longest_match():
+    from app.core.http import Robots
+
+    walmart = Robots("User-agent: *\n\nDisallow: /api\nDisallow: /results\n")
+    assert not walmart.allowed("https://x/results?q=data") and not walmart.allowed("https://x/api/graphql")
+    assert walmart.allowed("https://x/us/en/home")
+    # Two `*` groups are one: the job pages stay open, everything else closed (Python's reader kept the last)
+    gs = Robots("# Allow crawlers on roles\nUser-agent: *\nAllow: /roles/\n\n# the rest\nUser-agent: *\nDisallow: /\n")
+    assert gs.allowed("https://x/roles/12345") and not gs.allowed("https://x/results?q=analyst")
+    wild = Robots("User-agent: *\nDisallow: /*/apply\nDisallow: /*.pdf$\nAllow: /jobs/apply\n")
+    assert not wild.allowed("https://x/jobs/123/apply") and wild.allowed("https://x/jobs/123")
+    assert not wild.allowed("https://x/files/a.pdf") and wild.allowed("https://x/files/a.pdf?v=2")
+    assert wild.allowed("https://x/jobs/apply")                                # the longer Allow wins
+    assert Robots("User-agent: *\nDisallow: /a\nAllow: /a\n").allowed("https://x/a")   # a tie: Allow
+    ours = Robots("User-agent: *\nDisallow: /\n\nUser-agent: JobAgent\nDisallow: /private\n")
+    assert ours.allowed("https://x/careers") and not ours.allowed("https://x/private/1")   # our own group rules
+    assert Robots("User-agent: *\nDisallow:\n").allowed("https://x/anything")            # empty = allow all
+    assert Robots("User-agent: *\nDisallow: /\n").allowed("https://x/robots.txt")
+
+
+def test_crawl_delay_slows_requests_to_that_host():
+    from app.core.http import Robots
+
+    assert Robots("User-agent: *\nAllow: /\ncrawl-delay: 5\n").crawl_delay == 5
+    assert Robots("User-agent: *\nCrawl-delay: 600\n").crawl_delay == 30           # capped
+    assert Robots("User-agent: other\nCrawl-delay: 9\n").crawl_delay is None        # not ours
+    with PoliteClient(default_interval=1.0, use_redis=False) as client, respx.mock(assert_all_called=False) as mock:
+        mock.get("https://careers.zzice-test.com/robots.txt").respond(
+            200, text="User-agent: *\nAllow: /\nSitemap: http://careers.zzice-test.com/sitemap.xml\ncrawl-delay: 5")
+        assert client._interval("careers.zzice-test.com") == 1.0
+        assert client._robots_allow("https://careers.zzice-test.com/jobs")
+        assert client._interval("careers.zzice-test.com") == 5.0
+        assert client._interval("other-test.com") == 1.0
+
+
+def test_jibe_is_recognised_by_any_of_its_asset_hosts():
+    ice = scan_page('<script src="//snowplowjs.jibecdn.com/2.18.2/x.js"></script>', "https://careers.zzice-test.com/jobs")
+    assert {"vendor": "jibe", "slug": "careers.zzice-test.com"} in ice.ats_hints
+
+
+# --- SuccessFactors Career Site Builder (careers.ey.com, careers.novonordisk.com) ------------------------------
+
+def _sf_row(ext, title, place, prefix="/ey"):
+    href = f"{prefix}/job/{place.split(',')[0]}-{title.replace(' ', '-')}/{ext}/"
+    return (f'<tr class="data-row"><td class="colTitle"><span class="jobTitle hidden-phone">'
+            f'<a href="{href}" class="jobTitle-link">{title}</a></span>'
+            f'<div class="jobdetail-phone visible-phone"><span class="jobTitle visible-phone">'
+            f'<a class="jobTitle-link" href="{href}">{title}</a></span></div></td>'
+            f'<td class="colLocation hidden-phone"><span class="jobLocation">\n {place}\n </span></td></tr>')
+
+
+def test_successfactors_is_found_on_the_companys_own_host():
+    page = scan_page('<script src="/platform/js/j2w/min/j2w.core.min.js?h=1"></script>', "https://careers.zzey-test.com/")
+    assert {"vendor": "successfactors", "slug": "careers.zzey-test.com"} in page.ats_hints
+    assert "successfactors" in page.vendors
+
+
+def test_successfactors_searches_each_role_as_a_phrase_page_by_page(http):
+    from app.modules.m1_companies.watch import readers
+    from app.modules.m1_companies.watch.readers import read_successfactors
+
+    client, mock = http
+    first = "".join(_sf_row(1000 + i, f"Data Analyst {i}", "Noida, UP, IN, 201301") for i in range(readers.SF_PAGE))
+    second = (_sf_row(2000, "Data Analyst &amp; Insights", "Indianapolis, IN, US, 46204")
+              + _sf_row(1000, "Data Analyst 0", "Noida, UP, IN"))
+    route = mock.get("https://careers.zzey-test.com/search/").mock(side_effect=lambda request: httpx.Response(
+        200, html=f"<table>{first if request.url.params['startrow'] == '0' else second}</table>"))
+    r = read_successfactors(client, FeedSpec("successfactors", "careers.zzey-test.com"), ["Senior Data Analyst"])
+    assert [c.request.url.params["q"] for c in route.calls] == ['"Data Analyst"', '"Data Analyst"']   # 2 pages
+    assert [c.request.url.params["startrow"] for c in route.calls] == ["0", "25"]
+    assert len(r.jobs) == 26
+    noida, indy = r.jobs[0], r.jobs[-1]
+    assert (noida.external_id, noida.location) == ("1000", "Noida, UP, India, 201301")
+    assert noida.url == "https://careers.zzey-test.com/ey/job/Noida-Data-Analyst-0/1000/"
+    assert (indy.title, indy.location) == ("Data Analyst & Insights", "Indianapolis, IN, US, 46204")   # Indiana stays
+
+
+def test_successfactors_job_page_gives_description_and_date():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from app.modules.m2_jobs import details
+    from app.modules.m2_jobs.normalize import parse_posted
+
+    page = ('<span itemprop="address"><meta itemprop="addressCountry" content="IN"></span>'
+            '<meta itemprop="datePosted" content="Thu Oct 08 00:00:00 UTC 2026">'
+            '<div class="col-xs-12"><span lang="en" itemprop="description" class="x"><span class="jobdescription">'
+            '<p>Build dashboards.</p><span>SQL</span></span></span></div><footer>Cookie settings</footer>')
+
+    class Http:
+        def get(self, url, **kw):
+            return httpx.Response(200, html=page, request=httpx.Request("GET", url))
+
+    desc, extra = details._job_page(Http(), SimpleNamespace(method="successfactors"),
+                                    SimpleNamespace(url="https://careers.zzey-test.com/job/x/1/"), {})
+    assert "Build dashboards." in desc and "SQL" in desc and "Cookie" not in desc
+    assert parse_posted(extra["posted"], datetime.now(timezone.utc)) == datetime(2026, 10, 8, tzinfo=timezone.utc)
+
+
+# --- Avature portals on the company's own host (careers.tesco.com) ---------------------------------------------
+
+def _av_item(ext, title, place, contract="Permanent"):
+    url = f"https://careers.zztesco-test.com/en_GB/careers/JobDetail/{title.replace(' ', '-')}/{ext}"
+    return (f'<article class="article article--result 1" id="article--1"><div class="article__header">'
+            f'<h3 class="article__header__text__title title title--04">\n <a class="link" href="{url}">\n {title}\n </a>'
+            f'</h3><div class="article__header__text__subtitle"><span class="list-item-legalEntity">Tesco</span>'
+            f'<span class="list-item-location">{place}</span><span class="list-item-contractType">{contract}</span>'
+            f'</div></div><a href="{url}" class="link">Read more</a></article>')
+
+
+def test_avature_is_found_on_the_companys_own_host():
+    page = scan_page('<meta name="avature.portal.id" content="21"/>', "https://careers.zztesco-test.com/en_GB/careers")
+    assert {"vendor": "avature", "slug": "careers.zztesco-test.com"} in page.ats_hints
+
+
+def test_avature_reads_the_portal_search_until_it_runs_out(http):
+    from app.modules.m1_companies.watch.readers import read_avature
+
+    client, mock = http
+    mock.get("https://careers.zztesco-test.com/").respond(200, html=(
+        '<a href="https://careers.zztesco-test.com/en_GB/careers/SearchJobs/feed/?jobRecordsPerPage=10&amp;">RSS</a>'
+        '<a href="https://careers.zztesco-test.com/en_GB/careers/SearchJobs">Search jobs</a>'))
+    pages = {"0": "".join(_av_item(100 + i, f"Data Analyst {i}", "Bengaluru") for i in range(10)),
+             "10": _av_item(200, "Decision Scientist", "Bengaluru") + _av_item(100, "Data Analyst 0", "Bengaluru")}
+    route = mock.get("https://careers.zztesco-test.com/en_GB/careers/SearchJobs/").mock(
+        side_effect=lambda request: httpx.Response(200, html=pages.get(request.url.params["jobOffset"], "")))
+    r = read_avature(client, FeedSpec("avature", "careers.zztesco-test.com"), ["Data Analyst"])
+    assert [c.request.url.params["jobOffset"] for c in route.calls] == ["0", "10"]
+    assert route.calls[0].request.url.params["semanticSearch"] == "Data Analyst"
+    assert len(r.jobs) == 11
+    j = r.jobs[-1]
+    assert (j.external_id, j.title, j.location, j.employment_type) == ("200", "Decision Scientist", "Bengaluru", "Permanent")
+    assert j.url == "https://careers.zztesco-test.com/en_GB/careers/JobDetail/Decision-Scientist/200"
+
+
+def test_avature_without_a_job_search_is_not_a_board(http):
+    from app.modules.m1_companies.watch.readers import read_avature
+
+    client, mock = http
+    mock.get("https://careers.zznope-test.com/").respond(200, html="<p>Welcome</p>")
+    with pytest.raises(FeedNotFound):
+        read_avature(client, FeedSpec("avature", "careers.zznope-test.com"), ["Data Analyst"])
+
+
+def test_robots_with_a_byte_order_mark_or_too_many_requests():
+    from app.core.http import Robots, RobotsDisallowed
+
+    assert not Robots("﻿User-agent: *\nDisallow: /search\n").allowed("https://x/search?q=1")
+    with PoliteClient(default_interval=0, use_redis=False) as client, respx.mock(assert_all_called=False) as mock:
+        mock.get("https://zzbusy-test.com/robots.txt").respond(429)
+        with pytest.raises(RobotsDisallowed):                    # "too many requests": stay away, like a 5xx
+            client.get("https://zzbusy-test.com/careers", scrape=True)
+
+
+def test_successfactors_rows_with_extra_classes_are_read(http):
+    from app.modules.m1_companies.watch.readers import read_successfactors
+
+    client, mock = http
+    row = ('<tr class="data-row clickable"><td><a href="/job/Pune-Data-Analyst/77/" class="jobTitle-link link">'
+           'Data Analyst</a></td><td><span class="jobLocation small">Pune, MH, IN, 411006</span></td></tr>')
+    mock.get("https://careers.zznovo-test.com/search/").respond(200, html=f"<table>{row}</table>")
+    r = read_successfactors(client, FeedSpec("successfactors", "careers.zznovo-test.com"), ["Data Analyst"])
+    assert [(j.external_id, j.title, j.location) for j in r.jobs] == [("77", "Data Analyst", "Pune, MH, India, 411006")]
+
+
+def test_a_careers_platform_found_first_stays_the_second_choice(http):
+    """ICE: its Jibe careers site, then a page naming another job system (there, an Oracle board that no longer
+    existed). Both are handed on: the real system is tried first, the Jibe site if that fails."""
+    from types import SimpleNamespace
+
+    from app.modules.m1_companies.watch.careers import discover
+
+    client, mock = http
+    mock.get("https://zzice-test.com/").respond(
+        200, html='<a href="https://careers.zzice-test.com/">Careers</a><a href="/jobs">Jobs</a>')
+    mock.get("https://careers.zzice-test.com/").respond(
+        200, html='<script src="//snowplowjs.jibecdn.com/2.18.2/x.js"></script><p>Life at Zzice</p>')
+    mock.get("https://zzice-test.com/jobs").respond(200, html='<a href="https://jobs.lever.co/zzice">Open roles</a>')
+    found = discover(client, SimpleNamespace(domain="zzice-test.com", name="Zzice"))
+    assert found and found.scan.ats_hints == [{"vendor": "lever", "slug": "zzice"},
+                                              {"vendor": "jibe", "slug": "careers.zzice-test.com"}]

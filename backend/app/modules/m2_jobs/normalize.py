@@ -30,7 +30,8 @@ def parse_posted(value, first_seen: datetime) -> datetime | None:
         dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         dt = None
-        for fmt in ("%B %d, %Y", "%b %d, %Y"):          # "October 29, 2026" (amazon.jobs), "Oct 29, 2026"
+        # "October 29, 2026" (amazon.jobs), "Oct 29, 2026", "Thu Oct 08 00:00:00 UTC 2026" (SuccessFactors)
+        for fmt in ("%B %d, %Y", "%b %d, %Y", "%a %b %d %H:%M:%S UTC %Y"):
             try:
                 dt = datetime.strptime(text, fmt)
                 break

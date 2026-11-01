@@ -133,11 +133,12 @@ VENDOR_SIGNATURES: dict[str, re.Pattern] = {name: re.compile(p, re.I) for name, 
     "recruitee": r"[\w-]+\.recruitee\.com",
     "workday": r"\.myworkdayjobs\.com",
     "oracle": r"(?:\.oraclecloud\.com/hcmUI/CandidateExperience|data-apibaseurl=\"https?://[\w.-]+\.oraclecloud\.com)",
-    "successfactors": r"(?:career\d*\.successfactors\.(?:com|eu)|jobs\.sap\.com|/sfcareer/)",
+    # Career Site Builder sites on the company's own host (careers.ey.com) load its "j2w" scripts from there.
+    "successfactors": r"(?:career\d*\.successfactors\.(?:com|eu)|jobs\.sap\.com|/sfcareer/|/platform/js/j2w/)",
     "icims": r"[\w-]+\.icims\.com",
     "taleo": r"[\w-]+\.taleo\.net",
     "eightfold": r"[\w-]+\.eightfold\.ai",
-    "avature": r"[\w-]+\.avature\.net",
+    "avature": r"[\w-]+\.avature\.net|name=\"avature\.portal\.id\"",   # (own-domain portals: careers.tesco.com)
     "jobvite": r"jobs\.jobvite\.com",
     "bamboohr": r"[\w-]+\.bamboohr\.com/(?:careers|jobs)",
     "personio": r"[\w-]+\.jobs\.personio\.(?:de|com)",
@@ -151,12 +152,20 @@ VENDOR_SIGNATURES: dict[str, re.Pattern] = {name: re.compile(p, re.I) for name, 
     "pinpoint": r"[\w-]+\.pinpointhq\.com",
     "rippling": r"ats\.rippling\.com",
     "phenom": r"cdn\.phenompeople\.com",  # a careers-site platform (usually fronting another ATS)
-    "jibe": r"cms\.jibecdn\.com",          # a careers-site platform in front of iCIMS (Booking, Rivian, ICE)
+    # A careers-site platform in front of iCIMS (Booking, Rivian, ICE). Its assets come from several hosts
+    # (cms., analytics., snowplowjs.jibecdn.com — ICE's page has no cms.).
+    "jibe": r"[\w-]+\.jibecdn\.com|data-jibe-search-version",
     "talentbrew": r"tbcdn\.talentbrew\.com",  # Radancy careers sites (UnitedHealth Group)
 }.items()}
 
 # Careers-site platforms: the page itself IS the job list's front door, so the hint is the page's own host.
 PLATFORMS = ("jibe", "phenom", "talentbrew")
+# Job systems served on the company's own host, where this page IS the board (read from its host too) —
+# but a real job system, not a front. Only their own pages carry these markers.
+SITE_BOARDS: dict[str, re.Pattern] = {
+    "successfactors": re.compile(r"/platform/js/j2w/", re.I),            # Career Site Builder (careers.ey.com)
+    "avature": re.compile(r'name="avature\.portal\.id"', re.I),          # an Avature portal (careers.tesco.com)
+}
 
 
 def _scannable(raw_html: str) -> str:

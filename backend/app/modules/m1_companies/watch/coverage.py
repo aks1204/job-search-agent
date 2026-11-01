@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.company import STATUS_DORMANT, STATUS_PASSED, STATUS_WATCHING, Company
 from app.models.feed import CompanyFeed
-from app.modules.m1_companies.watch.readers import READERS
+from app.modules.m1_companies.watch.readers import OWN_SITE_ONLY, READERS
 
 KEPT = (STATUS_PASSED, STATUS_WATCHING, STATUS_DORMANT)
 READABLE = set(READERS) | {"adapter"}
@@ -38,7 +38,7 @@ def coverage(session: Session) -> dict:
             if feed.open_jobs == 0:
                 direct_empty.append(label)  # readable board, just no matching openings right now
         else:
-            detected = set(feed.detected_vendors or []) - READABLE
+            detected = set(feed.detected_vendors or []) - (READABLE - OWN_SITE_ONLY)
             # Phenom is a careers-site platform that usually fronts another ATS; count it only when
             # nothing else was found behind it (BCG: Phenom search, no reachable ATS).
             unreadable = sorted(detected - {"phenom"}) or sorted(detected)

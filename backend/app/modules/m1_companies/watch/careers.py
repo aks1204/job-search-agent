@@ -13,7 +13,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.core.hosts import (
-    PLATFORMS, PROFILE_SITES, ats_hint, ats_hints_in, detect_vendors, domain_label, is_ats_url, is_junk,
+    PLATFORMS, PROFILE_SITES, SITE_BOARDS, ats_hint, ats_hints_in, detect_vendors, domain_label, is_ats_url, is_junk,
     normalize_domain,
 )
 from app.core.http import PoliteClient, RobotsDisallowed
@@ -75,6 +75,9 @@ def scan_page(raw_html: str, base_url: str) -> PageScan:
     for platform in PLATFORMS:   # Jibe / Phenom / TalentBrew: this page is the careers site, read from its host
         if platform in vendors and host and not any(h["vendor"] == platform for h in hints):
             hints.append({"vendor": platform, "slug": host})
+    for vendor, marker in SITE_BOARDS.items():   # SuccessFactors / Avature on the company's own host
+        if host and marker.search(raw_html) and not any(h["vendor"] == vendor for h in hints):
+            hints.append({"vendor": vendor, "slug": host})
     return PageScan(url=base_url, links=links, ats_hints=hints, job_links=job_links, vendors=vendors)
 
 
@@ -122,6 +125,15 @@ def _careers_domain(url: str, company) -> str | None:
 def _real_hints(scan: PageScan) -> list[dict]:
     """Job systems on the page other than a careers-site platform front (Phenom, Jibe, TalentBrew)."""
     return [h for h in scan.ats_hints if h["vendor"] not in PLATFORMS]
+
+
+def _with_platform(found: Discovery, platform: Discovery | None) -> Discovery:
+    """The real job system first, and a careers platform seen earlier on the way as the second choice — ICE:
+    its Jibe site, then a sitemap job page naming an Oracle board that no longer exists."""
+    if platform is not None:
+        found.scan.ats_hints += [h for h in platform.scan.ats_hints
+                                 if h["vendor"] in PLATFORMS and h not in found.scan.ats_hints]
+    return found
 
 
 def _check(http: PoliteClient, url: str, domain: str | set[str],
@@ -262,7 +274,7 @@ def discover(
     def consider(found: Discovery | None) -> Discovery | None:
         nonlocal fallback, platform_only
         if found and _real_hints(found.scan):
-            return found
+            return _with_platform(found, platform_only)
         if found and found.scan.ats_hints:          # only a careers-site platform: keep looking
             platform_only = platform_only or found
         elif found and fallback is None:

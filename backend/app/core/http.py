@@ -3,13 +3,14 @@
 - Honest user-agent pointing at the project.
 - Per-host rate limit shared across all worker processes (via Redis; falls back
   to in-process timing if Redis is unavailable).
-- robots.txt respected on scrape paths (`scrape=True`), at every redirect too; public APIs skip it.
+- robots.txt (read per RFC 9309, Crawl-delay included) respected on scrape paths (`scrape=True`), at every
+  redirect too; public APIs skip it.
 """
 
 import logging
+import re
 import time
 from urllib.parse import urlsplit
-from urllib.robotparser import RobotFileParser
 
 import httpx
 import redis
@@ -30,19 +31,71 @@ HOST_INTERVALS = {
 
 
 MAX_REDIRECTS = 10
+MAX_CRAWL_DELAY = 30.0  # a site asking for a longer Crawl-delay is waited on this long
 
 
 class RobotsDisallowed(Exception):
     pass
 
 
-def _robots_parser(text: str) -> RobotFileParser:
-    """Python's reader ends a group at a blank line, so `User-agent: *`, a blank line, then `Disallow: /api`
-    (careers.walmart.com) would allow everything. Crawlers group rules by their User-agent lines instead
-    (RFC 9309), so blank and comment-only lines are dropped first."""
-    parser = RobotFileParser()
-    parser.parse([line for line in text.splitlines() if line.split("#", 1)[0].strip()])
-    return parser
+def _rule_pattern(path: str) -> re.Pattern:
+    """A rule's path with its `*` (anything) and trailing `$` (end of address) wildcards."""
+    anchored = path.endswith("$")
+    body = path[:-1] if anchored else path
+    return re.compile(".*".join(re.escape(part) for part in body.split("*")) + ("$" if anchored else ""))
+
+
+class Robots:
+    """robots.txt read the way RFC 9309 says and Google does — Python's own reader does none of this:
+    - rules are grouped by their User-agent lines; a blank line doesn't end a group (careers.walmart.com has
+      one straight after `User-agent: *`, and Python's reader then dropped every rule);
+    - every group naming us is merged (higher.gs.com has two `*` groups; Python's reader kept only the last);
+    - the longest matching rule wins, Allow on a tie, with `*` and `$` wildcards (`Disallow: /*/apply`).
+    Also keeps the Crawl-delay those groups ask for."""
+
+    def __init__(self, text: str):
+        groups: list[tuple[set[str], list[tuple[bool, str]], float | None]] = []
+        agents: set[str] = set()
+        rules: list[tuple[bool, str]] = []
+        delay: float | None = None
+        in_rules = False
+        for raw in text.lstrip("﻿").splitlines():   # (a byte-order mark would hide the first User-agent)
+            key, sep, value = raw.split("#", 1)[0].partition(":")
+            if not sep:
+                continue
+            key, value = key.strip().lower(), value.strip()
+            if key == "user-agent":
+                if in_rules:                         # a User-agent line after rules starts the next group
+                    groups.append((agents, rules, delay))
+                    agents, rules, delay, in_rules = set(), [], None, False
+                agents.add(value.split("/")[0].strip().lower())
+            elif key in ("allow", "disallow") and agents:
+                in_rules = True
+                if value:                            # an empty Disallow allows everything: no rule
+                    rules.append((key == "allow", value))
+            elif key == "crawl-delay" and agents:
+                in_rules = True
+                try:
+                    delay = float(value)
+                except ValueError:
+                    pass
+        if agents:
+            groups.append((agents, rules, delay))
+        chosen = [g for g in groups if ROBOTS_AGENT.lower() in g[0]] or [g for g in groups if "*" in g[0]]
+        self._rules = [(allow, _rule_pattern(path), len(path)) for g in chosen for allow, path in g[1]]
+        delays = [g[2] for g in chosen if g[2] is not None and g[2] > 0]
+        self.crawl_delay = min(max(delays), MAX_CRAWL_DELAY) if delays else None
+
+    def allowed(self, url: str) -> bool:
+        parts = urlsplit(url)
+        path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        if path == "/robots.txt":
+            return True
+        best: tuple[int, bool] | None = None
+        for allow, pattern, length in self._rules:
+            if pattern.match(path) and (best is None or length > best[0] or (length == best[0] and allow)):
+                best = (length, allow)
+        return best is None or best[1]
 
 
 class PoliteClient:
@@ -51,7 +104,8 @@ class PoliteClient:
         self._default_interval = default_interval
         self._use_redis = use_redis
         self._last: dict[str, float] = {}
-        self._robots: dict[str, RobotFileParser | None] = {}
+        self._robots: dict[str, Robots | None] = {}
+        self._crawl_delay: dict[str, float] = {}   # host -> the Crawl-delay its robots.txt asks for
 
     def __enter__(self):
         return self
@@ -65,7 +119,7 @@ class PoliteClient:
     def _interval(self, host: str) -> float:
         if self._default_interval <= 0:
             return 0.0
-        return HOST_INTERVALS.get(host, self._default_interval)
+        return max(HOST_INTERVALS.get(host, self._default_interval), self._crawl_delay.get(host, 0.0))
 
     def _wait_turn(self, host: str) -> None:
         interval = self._interval(host)
@@ -92,20 +146,21 @@ class PoliteClient:
         parts = urlsplit(url)
         base = f"{parts.scheme}://{parts.netloc}"
         if base not in self._robots:
-            parser: RobotFileParser | None = None
+            robots: Robots | None = None
             try:
                 resp = self.request("GET", f"{base}/robots.txt")
-                if resp.status_code >= 500:
-                    parser = RobotFileParser()
-                    parser.parse(["User-agent: *", "Disallow: /"])  # server trouble: back off
+                if resp.status_code >= 500 or resp.status_code == 429:
+                    robots = Robots("User-agent: *\nDisallow: /")  # server trouble or "too many requests": back off
                 elif resp.status_code < 400:
-                    parser = _robots_parser(resp.text)
-                # 4xx: no robots.txt -> everything allowed (parser stays None)
+                    robots = Robots(resp.text)
+                # 4xx: no robots.txt -> everything allowed (stays None)
             except httpx.HTTPError:
-                parser = None
-            self._robots[base] = parser
-        parser = self._robots[base]
-        return parser is None or parser.can_fetch(ROBOTS_AGENT, url)
+                robots = None
+            self._robots[base] = robots
+            if robots and robots.crawl_delay and parts.hostname:
+                self._crawl_delay[parts.hostname] = robots.crawl_delay
+        robots = self._robots[base]
+        return robots is None or robots.allowed(url)
 
     def request(self, method: str, url: str, *, scrape: bool = False, **kwargs) -> httpx.Response:
         if not scrape:

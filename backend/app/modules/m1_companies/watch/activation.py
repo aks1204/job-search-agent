@@ -24,7 +24,7 @@ from app.modules.m1_companies.identity import normalize_name
 from app.modules.m1_companies.watch.careers import Discovery, discover
 from app.modules.m1_companies.watch.ownership import verify_ownership
 from app.modules.m1_companies.watch.readers import (
-    READERS, FeedNotFound, FeedSpec, FetchResult, find_workday_host, read_adapter, read_workday,
+    OWN_SITE_ONLY, READERS, FeedNotFound, FeedSpec, FetchResult, find_workday_host, read_adapter, read_workday,
 )
 from app.modules.m1_companies.watch.sync import SyncResult, aggregator_jobs, sync_feed
 
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 # The ladder: public ATS endpoints → Workday / Oracle → per-company adapters → aggregator floor.
 LADDER = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "teamtailor", "pinpoint", "jazzhr",
-          "workday", "oracle", "eightfold", "jibe", "phenom", "talentbrew", "adapter")
+          "workday", "oracle", "eightfold", "successfactors", "avature", "jibe", "phenom", "talentbrew", "adapter")
 GUESSABLE = ("greenhouse", "lever", "ashby", "smartrecruiters")
 KEEP_IF_WORKED = timedelta(days=7)   # an unreachable previous board is kept only if it worked this recently
 
@@ -231,7 +231,7 @@ def activate(session: Session, company: Company, http: PoliteClient, *, llm=None
     else:
         feed.method, feed.slug, feed.site, feed.host = "aggregator", None, None, None
         n = len(aggregator_jobs(session, company.id))
-        unreadable = sorted(vendors - set(READERS))
+        unreadable = sorted(vendors - (set(READERS) - OWN_SITE_ONLY))
         if unreadable:
             note = f"jobs are on {', '.join(unreadable)} (no reader yet)"
         elif not company.domain:

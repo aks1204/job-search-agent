@@ -87,6 +87,10 @@ def _smartrecruiters(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cac
 
 
 _LD_JSON = re.compile(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', re.I | re.S)
+# SuccessFactors job pages: <meta itemprop="datePosted" content="Thu Oct 08 00:00:00 UTC 2026">, and the
+# description inside <span itemprop="description" …><span class="jobdescription">…</span></span>.
+_SF_POSTED = re.compile(r'itemprop="datePosted"\s+content="([^"]+)"', re.I)
+_SF_DESCRIPTION = re.compile(r'class="jobdescription"[^>]*>(.*?)</span>\s*</span>\s*</div>', re.I | re.S)
 
 
 def _ld_job_description(page: str) -> str | None:
@@ -137,7 +141,8 @@ def _ld_job(page: str) -> dict | None:
 
 
 def _job_page(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cache: dict) -> tuple[str | None, dict]:
-    """Phenom, TalentBrew and JazzHR lists give titles only: read the role's own public job page."""
+    """Phenom, TalentBrew, JazzHR, SuccessFactors and Avature lists give titles only: read the role's own public
+    job page."""
     if not job.url:
         raise ValueError("no job page")
     resp = http.get(job.url, scrape=True)
@@ -150,6 +155,10 @@ def _job_page(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cache: dic
             extra = {"title": html.unescape(title).strip() if isinstance(title, str) else None,
                      "location": _ld_place(ld)}
         return _text(ld["description"]), {k: v for k, v in extra.items() if v}
+    if feed.method == "successfactors":               # schema.org microdata, not JSON-LD
+        desc = _SF_DESCRIPTION.search(page)
+        posted = _SF_POSTED.search(page)
+        return _text(desc.group(1) if desc else page), {"posted": posted.group(1)} if posted else {}
     if feed.method == "phenom":                       # the job page's embedded phApp.ddo.jobDetail
         from app.modules.m1_companies.watch.readers import _PHENOM_DDO
 
@@ -168,7 +177,8 @@ def _job_page(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cache: dic
 
 
 FETCHERS = {"workday": _workday, "oracle": _oracle, "eightfold": _eightfold, "smartrecruiters": _smartrecruiters,
-            "phenom": _job_page, "talentbrew": _job_page, "jazzhr": _job_page}
+            "phenom": _job_page, "talentbrew": _job_page, "jazzhr": _job_page, "successfactors": _job_page,
+            "avature": _job_page}
 
 
 def fetch_description(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cache: dict) -> tuple[str | None, dict]:

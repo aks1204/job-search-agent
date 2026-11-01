@@ -442,7 +442,7 @@ def read_jibe(http: PoliteClient, spec: FeedSpec, roles: list[str], *, max_pages
                          "location_type": d.get("location_type"), "query": query},
             )
 
-    first = _get_json(http, f"https://{host}/api/jobs", params={"page": 1, "limit": 100})
+    first = _get_json(http, f"https://{host}/api/jobs", scrape=True, params={"page": 1, "limit": 100})
     if not isinstance(first, dict) or "jobs" not in first:
         raise FeedNotFound(f"{host}: not a Jibe job list")
     total = int(first.get("totalCount") or 0)            # 0 = the site doesn't say: read pages until empty
@@ -453,12 +453,12 @@ def read_jibe(http: PoliteClient, spec: FeedSpec, roles: list[str], *, max_pages
         for page in range(2, max_pages + 1):
             if not size or len(items) < size or (total and len(seen) >= total):
                 break
-            body = _get_json(http, f"https://{host}/api/jobs", params={"page": page, "limit": 100})
+            body = _get_json(http, f"https://{host}/api/jobs", scrape=True, params={"page": page, "limit": 100})
             items = (body.get("jobs") or []) if isinstance(body, dict) else []
             take(items, "")
     else:                                                # too big to read whole: the site's own search
         for query in roles or [""]:
-            take(_get_json(http, f"https://{host}/api/jobs",
+            take(_get_json(http, f"https://{host}/api/jobs", scrape=True,
                            params={"page": 1, "limit": 100, "keywords": query}).get("jobs") or [], query)
     return FetchResult(list(seen.values()))
 
@@ -696,6 +696,119 @@ def read_jazzhr(http: PoliteClient, spec: FeedSpec, roles: list[str]) -> FetchRe
     return FetchResult(jobs, name)
 
 
+# --- job sites on the company's own host (2026-11-01: checked live on careers.ey.com, careers.novonordisk.com,
+# careers.tesco.com; robots.txt allows the search and job pages on all three)
+
+def _clean(fragment: str | None) -> str | None:
+    if not fragment:
+        return None
+    return " ".join(html.unescape(_TAG.sub("", fragment)).split()) or None
+
+
+def _sf_place(text: str | None) -> str | None:
+    """'Noida, UP, IN, 201301' — city, region, country code, postcode. The code is spelled out for India:
+    a bare ', IN' elsewhere means Indiana, so it isn't read as India by itself."""
+    parts = [p.strip() for p in (text or "").split(",")]
+    if len(parts) >= 3 and parts[2] == "IN":
+        parts[2] = "India"
+    return ", ".join(p for p in parts if p) or None
+
+
+def _role_queries(roles: list[str]) -> list[str]:
+    """One search per distinct role, seniority words dropped ("Senior Data Analyst" → "Data Analyst")."""
+    return list(dict.fromkeys(q for r in roles if (q := _search_text(r)))) or [""]
+
+
+# (class names matched anywhere in the class list: a site may add its own, class="data-row clickable")
+_SF_ROW = re.compile(r'<tr\b[^>]*class="[^"]*\bdata-row\b[^"]*"[^>]*>(.*?)</tr>', re.I | re.S)
+_SF_LINK = re.compile(r'<a\b[^>]*href="([^"]*/job/[^"]*?/(\d+)/?)"[^>]*class="[^"]*\bjobTitle-link\b[^"]*"[^>]*>(.*?)</a>',
+                      re.I | re.S)
+_SF_LOCATION = re.compile(r'<span\b[^>]*class="[^"]*\bjobLocation\b[^"]*"[^>]*>(.*?)</span>', re.I | re.S)
+_SF_DATE = re.compile(r'<span\b[^>]*class="[^"]*\bjobDate\b[^"]*"[^>]*>(.*?)</span>', re.I | re.S)
+SF_PAGE = 25
+
+
+def read_successfactors(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_per_role: int = 4) -> FetchResult:
+    """SuccessFactors Career Site Builder sites (EY, Novo Nordisk): the search page lists 25 jobs a page in its
+    own HTML (/search/?q=…&startrow=N). Each role is searched as a phrase — unquoted, "data analyst" matches
+    any job with either word (2,000+ at EY). The job page carries the description and posting date."""
+    host = spec.slug
+    seen: dict[str, RawJob] = {}
+    for query in _role_queries(roles):
+        for page in range(pages_per_role):
+            resp = http.get(f"https://{host}/search/", scrape=True,
+                            params={"q": f'"{query}"' if query else "", "startrow": page * SF_PAGE})
+            if resp.status_code == 404:
+                raise FeedNotFound(host)
+            resp.raise_for_status()
+            rows = _SF_ROW.findall(resp.text)
+            if not rows and page == 0 and "data-row" not in resp.text and "/platform/js/j2w/" not in resp.text:
+                raise FeedNotFound(f"{host}: not a SuccessFactors careers site")
+            for row in rows:
+                link = _SF_LINK.search(row)
+                if not link:
+                    continue
+                path, ext, title = link.groups()
+                if ext in seen:
+                    continue
+                loc, date = _SF_LOCATION.search(row), _SF_DATE.search(row)
+                seen[ext] = RawJob(
+                    external_id=ext, title=_clean(title) or "", location=_sf_place(_clean(loc.group(1))) if loc else None,
+                    url=f"https://{host}{html.unescape(path)}" if path.startswith("/") else html.unescape(path),
+                    posted_at=_clean(date.group(1)) if date else None, payload={"query": query},
+                )
+            if len(rows) < SF_PAGE:
+                break
+    return FetchResult(list(seen.values()))
+
+
+_AV_SEARCH = re.compile(r'href="(?:https?://[^/"]+)?(/[^"]*?)/SearchJobs/?["?]', re.I)
+_AV_ITEM = re.compile(r'<article\b[^>]*class="[^"]*article--result[^"]*"[^>]*>(.*?)</article>', re.I | re.S)
+_AV_LINK = re.compile(r'<h3\b[^>]*>\s*<a\b[^>]*href="([^"]*/JobDetail/[^"]*?/(\d+))"[^>]*>(.*?)</a>', re.I | re.S)
+_AV_FIELD = re.compile(r'<span class="list-item-(location|contractType)"[^>]*>(.*?)</span>', re.I | re.S)
+AV_PAGE = 10
+
+
+def read_avature(http: PoliteClient, spec: FeedSpec, roles: list[str], *, pages_per_role: int = 3) -> FetchResult:
+    """Avature portals on the company's own host (Tesco): the search page lists 10 jobs a page in its own HTML
+    (…/SearchJobs/?semanticSearch=…&jobOffset=N). The portal's path ('/en_GB/careers') is read from the
+    homepage's search link; the job page carries the description (schema.org JobPosting)."""
+    host = spec.slug
+    home = http.get(f"https://{host}/", scrape=True)
+    if home.status_code == 404:
+        raise FeedNotFound(host)
+    home.raise_for_status()
+    portal = _AV_SEARCH.search(home.text)
+    if not portal:
+        raise FeedNotFound(f"{host}: no Avature job search on the homepage")
+    base = f"https://{host}{portal.group(1)}"
+    seen: dict[str, RawJob] = {}
+    for query in _role_queries(roles):
+        for page in range(pages_per_role):
+            resp = http.get(f"{base}/SearchJobs/", scrape=True,
+                            params={"semanticSearch": query, "jobOffset": page * AV_PAGE})
+            resp.raise_for_status()
+            items = _AV_ITEM.findall(resp.text)
+            new = 0
+            for item in items:
+                link = _AV_LINK.search(item)
+                if not link:
+                    continue
+                url, ext, title = link.groups()
+                if ext in seen:
+                    continue
+                new += 1
+                fields = {k: _clean(v) for k, v in _AV_FIELD.findall(item)}
+                seen[ext] = RawJob(
+                    external_id=ext, title=_clean(title) or "", location=fields.get("location"),
+                    url=html.unescape(url) if url.startswith("http") else f"https://{host}{html.unescape(url)}",
+                    employment_type=fields.get("contractType"), payload={"query": query},
+                )
+            if len(items) < AV_PAGE or not new:      # the last page, or a site that ignores the offset
+                break
+    return FetchResult(list(seen.values()))
+
+
 READERS = {
     "greenhouse": read_greenhouse,
     "lever": read_lever,
@@ -712,4 +825,11 @@ READERS = {
     "teamtailor": read_teamtailor,
     "pinpoint": read_pinpoint,
     "jazzhr": read_jazzhr,
+    "successfactors": read_successfactors,
+    "avature": read_avature,
 }
+
+# Read only where the jobs are on the company's own careers site (careers.ey.com, careers.tesco.com). Their boards
+# hosted on the vendor's domain (career5.successfactors.com, x.avature.net) still have no reader, so on a company
+# left on the job-site fallback these two still count as "no reader yet".
+OWN_SITE_ONLY = {"successfactors", "avature"}
