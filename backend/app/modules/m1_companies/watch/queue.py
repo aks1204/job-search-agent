@@ -25,6 +25,33 @@ def _llm():
     return LLM() if LLM.available() else None
 
 
+def recheck_unread(session, *, apply: bool = False) -> list[tuple[Company, str]]:
+    """One-time, after new readers ship: companies on the job-site fallback whose careers page showed a system
+    we can now read, or a careers page we couldn't place, are flagged so the next activation batch re-checks them
+    (otherwise they wait up to reverify_days). Returns (company, why); flags them only with apply=True."""
+    from app.modules.m1_companies.watch.readers import READERS
+
+    rows = session.execute(
+        select(Company, CompanyFeed).join(CompanyFeed, CompanyFeed.company_id == Company.id).where(
+            CompanyFeed.method == "aggregator", CompanyFeed.needs_reactivation.is_(False),
+            Company.domain.is_not(None), Company.status.in_((STATUS_PASSED, STATUS_WATCHING, STATUS_DORMANT)),
+        ).order_by(Company.name)
+    ).all()
+    found: list[tuple[Company, str]] = []
+    for company, feed in rows:
+        readable = sorted(set(feed.detected_vendors or []) & set(READERS))
+        if readable:
+            why = f"jobs on {', '.join(readable)} (reader now built)"
+        elif feed.careers_url:
+            why = "custom careers page (may be a platform we now read)"
+        else:
+            continue                                  # no careers page found: a new reader doesn't change that
+        found.append((company, why))
+        if apply:
+            feed.needs_reactivation = True
+    return found
+
+
 def run_activation_batch(*, limit: int | None = None, company_ids: list[int] | None = None) -> dict:
     """Kept companies without a feed, plus feeds gardening flagged for re-activation."""
     n = limit or get_config().watch.activation_batch

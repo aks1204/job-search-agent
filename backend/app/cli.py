@@ -17,6 +17,7 @@
     python -m app.cli report [--days N|--all-time] [--all]       # each source's funnel + warning signs
     python -m app.cli rename <site|number> "<name>" [--yes]       # correct a name: preview, then --yes
     python -m app.cli activate [--limit N] [--domain acme.com]   # set up job feeds for kept companies now
+    python -m app.cli activate --recheck-unread [--yes]          # after new readers: re-check fallback companies
     python -m app.cli sync [--limit N] [--domain acme.com]       # read due feeds now
     python -m app.cli feeds                                      # watchlist health
     python -m app.cli jobs --domain acme.com                     # a company's open postings
@@ -582,6 +583,30 @@ def _print_counts(result: dict) -> None:
         print(f"  {k}: {v}")
     if not result:
         print("  nothing to do")
+
+
+def recheck_unread_cmd(yes: bool) -> int:
+    from collections import Counter
+
+    from app.db import session_scope
+    from app.modules.m1_companies.watch.queue import recheck_unread
+
+    with session_scope() as s:
+        found = recheck_unread(s, apply=yes)
+        if not found:
+            print("No company on the job-site fallback has a careers page we could now read.")
+            return 0
+        for why, n in Counter(w for _, w in found).most_common():
+            print(f"  {n:>4}  {why}")
+        for c, why in found[:15]:
+            print(f"        e.g. {c.name} ({c.domain}) — {why}")
+        if yes:
+            print(f"Flagged {len(found)} companies. They're re-checked a batch at a time by the scheduler, "
+                  "or now with: python -m app.cli activate --limit 50")
+        else:
+            print(f"{len(found)} companies would be re-checked. Nothing changed yet. "
+                  "To do it, run the same command with --yes")
+    return 0
 
 
 def activate_cmd(limit: int | None, domain: str | None) -> int:
@@ -1734,6 +1759,10 @@ def main() -> None:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--limit", type=int)
         p.add_argument("--domain")
+        if name == "activate":
+            p.add_argument("--recheck-unread", action="store_true",
+                           help="flag job-site-fallback companies whose careers page we can now read (preview)")
+            p.add_argument("--yes", action="store_true", help="with --recheck-unread: flag them")
     sub.add_parser("feeds", help="watchlist health")
     p_jobs = sub.add_parser("jobs", help="a company's open postings")
     p_jobs.add_argument("--domain", required=True)
@@ -1887,6 +1916,8 @@ def main() -> None:
     if args.command == "override":
         sys.exit(override_cmd(args.domain, args.decision, args.reason, args.permanent))
     if args.command == "activate":
+        if args.recheck_unread:
+            sys.exit(recheck_unread_cmd(args.yes))
         sys.exit(activate_cmd(args.limit, args.domain))
     if args.command == "sync":
         sys.exit(sync_cmd(args.limit, args.domain))

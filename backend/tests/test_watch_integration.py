@@ -313,3 +313,29 @@ def test_a_board_unreachable_for_over_a_week_is_let_go(db_session, mock, http):
     mock.get(url__regex=r"https://(www\.|careers\.|jobs\.)?zentest-co\.io/.*").respond(503)
     feed, _ = activate(db_session, company, http)
     assert feed.method == "aggregator"
+
+
+def test_recheck_unread_flags_only_fallback_companies_a_new_reader_could_help(db_session):
+    from app.modules.m1_companies.watch.queue import recheck_unread
+
+    def on_fallback(name, domain, **kw):
+        c = _company(db_session, name=name, domain=domain, status="watching")
+        db_session.flush()
+        db_session.add(CompanyFeed(company_id=c.id, method="aggregator", **kw))
+        return c
+
+    phenom = on_fallback("Zzphen", "zzphen-test.io", detected_vendors=["phenom"], careers_url="https://careers.zzphen-test.io/")
+    custom = on_fallback("Zzcust", "zzcust-test.io", detected_vendors=[], careers_url="https://zzcust-test.io/careers")
+    on_fallback("Zznone", "zznone-test.io", detected_vendors=[])                       # no careers page at all
+    on_fallback("Zzicims", "zzicims-test.io", detected_vendors=["icims"], careers_url="https://zzicims-test.io/jobs")
+    db_session.flush()
+    ours = {"zzphen-test.io", "zzcust-test.io", "zznone-test.io", "zzicims-test.io"}
+
+    preview = {c.domain for c, _ in recheck_unread(db_session) if c.domain in ours}
+    assert preview == {"zzphen-test.io", "zzcust-test.io"}
+    flagged = lambda: set(db_session.scalars(select(Company.domain).join(CompanyFeed).where(  # noqa: E731
+        CompanyFeed.needs_reactivation.is_(True), Company.domain.in_(ours))))
+    assert flagged() == set()                                                          # a preview changes nothing
+    recheck_unread(db_session, apply=True)
+    db_session.flush()
+    assert flagged() == {phenom.domain, custom.domain}
