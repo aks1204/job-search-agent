@@ -849,7 +849,9 @@ def shortlist_cmd(band: str | None, limit: int) -> int:
              .join(JobCluster, JobCluster.id == JobScore.cluster_id))
         q = q.where(JobScore.band == band) if band else q.where(JobScore.band != "archive")
         q = q.where(Company.status.not_in(("blocked", "rejected")))   # e.g. your employer; a dropped company
-        rows = s.execute(q.order_by(JobScore.score.desc()).limit(limit)).all()
+        from app.modules.m3_outreach.reopening import visible
+
+        rows = visible(s, s.execute(q.order_by(JobScore.score.desc())).all(), limit)
         for sc, a, j, c, cl in rows:
             graded = "AI-graded" if sc.graded else "similarity only"
             siblings = f" · {cl.size} req IDs" if cl.size > 1 else ""

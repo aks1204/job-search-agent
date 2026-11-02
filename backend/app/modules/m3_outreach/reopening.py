@@ -3,9 +3,10 @@ quiet, what may be sent next — and what the draft is told about it.
 
 - Silence: the same posting is never emailed again (that would be a follow-up). A role whose campaign went
   silent gets one new campaign when it opens again: a new posting (new job ID) or a repost.
-- Rejection: outreach for SIMILAR roles (same role family) at that company waits 30 days, or 90 days if you
-  had reached interviews. Only the outreach waits — the role still shows with its apply link. Other families
-  aren't held. Only roles the agent tracked count: an application made outside the agent starts no wait.
+- Rejection: SIMILAR roles (same role family) at that company wait 30 days, or 90 days if you had reached
+  interviews. While waiting they're hidden — no card, no apply link, no outreach (revised 2026-11-03) — and
+  appear as a new match when the wait ends. Other families aren't held. Only roles the agent tracked count:
+  an application made outside the agent starts no wait.
 - Drafts never mention the past — not the earlier email, the rejection or the interview.
 """
 
@@ -82,6 +83,26 @@ def outreach_wait(session: Session, cluster_id: int, now: datetime | None = None
             stage = " after an interview" if r.interviewed else ""
             longest = (until, f"turned down{stage} for a similar role ({family}) on {r.at:%d %b %Y}")
     return longest
+
+
+def visible(session: Session, rows: list, limit: int | None = None) -> list:
+    """Your matches without the roles hidden by a wait (owner decision 2026-11-03: a similar role at a company
+    that just turned you down is hidden until the wait ends, then appears as a new match). `rows` start with a
+    JobScore; at most `limit` are kept."""
+    out = []
+    for row in rows:
+        if limit is not None and len(out) >= limit:
+            break
+        if hidden_until(session, row[0].cluster_id) is None:
+            out.append(row)
+    return out
+
+
+def hidden_until(session: Session, cluster_id: int, now: datetime | None = None) -> datetime | None:
+    """When a role hidden by a wait reappears; None if it isn't hidden. (The role you were turned down for
+    yourself isn't hidden — it just gets no new outreach; its application shows as rejected.)"""
+    wait = outreach_wait(session, cluster_id, now)
+    return wait[0] if wait and wait[0].year != 9999 else None
 
 
 def new_opening_since(session: Session, cluster_id: int, since: datetime) -> bool:

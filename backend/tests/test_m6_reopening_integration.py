@@ -225,7 +225,7 @@ def test_the_roles_story_says_when_outreach_resumes(db_session, roles):
     company, data, manager, _ = roles
     _rejected(db_session, company, data, NOW - timedelta(days=10))
     last = [t for _, _, t in T.story(db_session, manager)][-1]
-    assert last.startswith("outreach waits until") and "similar role" in last
+    assert last.startswith("hidden until") and "similar role" in last
     assert [t for _, _, t in T.story(db_session, data)][-1].startswith("no new outreach")
 
 
@@ -285,3 +285,68 @@ def test_finished_outreach_is_not_redrafted(db_session, roles):
     first.status, first.outcome = "done", "interested"
     db_session.flush()
     assert data not in due_drafts(db_session, t, [data])           # its outreach has run: a rewrite would never go
+
+
+def _pursued(db_session, cluster_id, band="fast_lane"):
+    from app.models import JobScore
+
+    a = db_session.scalars(select(JobAssessment).where(JobAssessment.cluster_id == cluster_id)).one()
+    db_session.add(JobScore(cluster_id=cluster_id, assessment_id=a.id, similarity=0.8, similarity_version="t",
+                            score=90 if band == "fast_lane" else 70, band=band, graded=True))
+    db_session.flush()
+
+
+def _on_list(db_session, cluster_id):
+    app = db_session.scalars(select(Application).where(Application.cluster_id == cluster_id)).one_or_none()
+    return app is not None and app.status == "queued" and app.on_list
+
+
+def test_a_similar_role_is_hidden_until_the_wait_ends(db_session, roles, monkeypatch):
+    from app.models import Notification
+    from app.modules.m3_outreach import reopening
+
+    company, data, manager, product = roles
+    for cluster_id in (manager, product):
+        _pursued(db_session, cluster_id)
+    at = NOW - timedelta(days=10)
+    _rejected(db_session, company, data, at)
+    T.queue_roles(db_session)
+    assert not _on_list(db_session, manager) and _on_list(db_session, product)   # hidden; another family isn't
+    from app.models import JobScore
+    scores = [(s,) for s in db_session.scalars(select(JobScore).where(JobScore.cluster_id.in_((manager, product))))]
+    assert [r[0].cluster_id for r in reopening.visible(db_session, scores)] == [product]   # not in your matches
+
+    later = at + timedelta(days=31)                                 # the wait is over
+    real = reopening.outreach_wait
+    monkeypatch.setattr(reopening, "outreach_wait", lambda s, c, now=None: real(s, c, now or later))
+    T.queue_roles(db_session)
+    assert _on_list(db_session, manager)                            # appears as a new match …
+    assert db_session.scalars(select(Notification).where(Notification.title.like("Apply: Analytics Manager%"))).first()
+
+
+def test_a_role_already_on_the_list_comes_off_for_the_wait_and_back_after(db_session, roles, monkeypatch):
+    from app.modules.m3_outreach import reopening
+
+    company, data, manager, _ = roles
+    _pursued(db_session, manager)
+    T.queue_roles(db_session)
+    assert _on_list(db_session, manager)
+    at = NOW - timedelta(days=1)
+    _rejected(db_session, company, data, at)
+    T.queue_roles(db_session)
+    assert not _on_list(db_session, manager)                        # off the list while hidden
+    real = reopening.outreach_wait
+    monkeypatch.setattr(reopening, "outreach_wait", lambda s, c, now=None: real(s, c, now or at + timedelta(days=31)))
+    T.queue_roles(db_session)
+    assert _on_list(db_session, manager)                            # back when the wait ends
+
+
+def test_a_role_you_already_applied_to_stays_as_it_is(db_session, roles):
+    company, data, manager, _ = roles
+    _pursued(db_session, manager)
+    T.queue_roles(db_session)
+    T.mark_applied(db_session, manager)
+    _rejected(db_session, company, data, NOW - timedelta(days=1))
+    T.queue_roles(db_session)
+    app = db_session.scalars(select(Application).where(Application.cluster_id == manager)).one()
+    assert app.status == "applied"

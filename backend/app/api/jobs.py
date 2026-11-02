@@ -60,7 +60,9 @@ def shortlist(
          .join(JobCluster, JobCluster.id == JobScore.cluster_id))
     q = q.where(JobScore.band == band) if band else q.where(JobScore.band != "archive")
     q = q.where(Company.status.not_in(("blocked", "rejected")))   # e.g. your employer; a dropped company
-    rows = session.execute(q.order_by(JobScore.score.desc()).limit(limit)).all()
+    from app.modules.m3_outreach.reopening import visible
+
+    rows = visible(session, session.execute(q.order_by(JobScore.score.desc())).all(), limit)
     return [
         {"cluster_id": cl.id, "score": sc.score, "band": sc.band, "graded": sc.graded,
          "company": c.name, "title": j.title, "location": j.location, "url": j.url, "req_ids": cl.size,

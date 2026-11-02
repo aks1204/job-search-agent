@@ -130,8 +130,17 @@ def queue_roles(session: Session) -> Counter:
                or_(JobScore.owner_action.is_(None), JobScore.owner_action.not_in(("skip", "thumbs_down"))))
         .order_by(JobScore.score.desc())
     ).all()
+    from app.modules.m3_outreach.reopening import hidden_until
+
     for score, job, company in rows:
         app = session.scalar(select(Application).where(Application.cluster_id == score.cluster_id))
+        if hidden_until(session, score.cluster_id):
+            # Turned down for a similar role here recently (owner decision 2026-11-03): hidden until the wait
+            # ends — off the list if it was on it; then it comes (back) as a new match. Applied stays applied.
+            if app is not None and app.status == "queued" and app.on_list:
+                app.on_list = False
+                counts["held"] += 1
+            continue
         if app is None:
             app = get_or_create(session, score.cluster_id, on_list=True)
             app.links = role_links(session, score.cluster_id)
@@ -142,6 +151,9 @@ def queue_roles(session: Session) -> Counter:
         elif not app.on_list and app.status == "queued":
             app.on_list, app.queued_at = True, _now()
             counts["queued"] += 1
+            notify(session, "needs_you", "needs_you", f"Apply: {job.title} at {company.name}",
+                   detail=" · ".join(l["url"] for l in (app.links or [])[:3]) or "no link found yet",
+                   link=app.links[0]["url"] if app.links else None, subject=("job_cluster", str(score.cluster_id)))
     # Off the list: the posting closed, or you skipped the role.
     for app in session.scalars(select(Application).where(Application.status == "queued")).all():
         still_open = session.scalar(select(JobPosting.id).where(JobPosting.cluster_id == app.cluster_id,
@@ -270,7 +282,7 @@ def story(session: Session, cluster_id: int) -> list[tuple[datetime, str, str]]:
     if wait := outreach_wait(session, cluster_id):   # where it stands now, after the history
         until, why = wait
         out.append((_now(), "outreach", f"no new outreach: {why}" if until.year == 9999
-                    else f"outreach waits until {until:%d %b %Y} ({why})"))
+                    else f"hidden until {until:%d %b %Y} — no apply link or outreach before then ({why})"))
     return out
 
 
