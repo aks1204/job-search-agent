@@ -65,6 +65,8 @@ class OutreachEmail(Base):
     to_name: Mapped[str | None] = mapped_column(String(255))
     confidence: Mapped[str] = mapped_column(String(10))              # address confidence when prepared
     vouched: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # emailed about this same role in an earlier (silent) campaign: labelled on the Review screen, sent last
+    previously_emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     decision: Mapped[str] = mapped_column(String(10), default="pending")
     allow_low: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))  # your go-ahead
     status: Mapped[str] = mapped_column(String(12), default="queued")

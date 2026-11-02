@@ -537,11 +537,19 @@ class ReplyRules(Strict):
     silent_after_days: int = Field(7, ge=1)          # waves done + no human reply this long = silent
 
 
+class ReopeningRules(Strict):
+    """Owner decision (2026-11-01): after a rejection, outreach for similar roles (same family) at that company
+    waits this long; the role itself still shows with its apply link."""
+    wait_days: int = Field(30, ge=0)                  # turned down before any interview
+    wait_days_after_interview: int = Field(90, ge=0)  # turned down after an interview
+
+
 class OutreachConfig(Strict):
     contacts: ContactRules = Field(default_factory=ContactRules)
     drafts: DraftRules = Field(default_factory=DraftRules)
     sending: SendingRules = Field(default_factory=SendingRules)
     replies: ReplyRules = Field(default_factory=ReplyRules)
+    reopening: ReopeningRules = Field(default_factory=ReopeningRules)
 
 
 # --- apply.yaml (Module 4) ------------------------------------------------------

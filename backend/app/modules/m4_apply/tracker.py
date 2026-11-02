@@ -71,6 +71,10 @@ def set_status(session: Session, app: Application, status: str, *, source: str, 
         app.applied_at, app.applied_how = at, "email" if source == "email" else "you"
     app.status, app.status_at = status, at
     _event(session, app, status, source, at, summary, link, message_id)
+    if status == "rejected" and not app.outside:   # the reopening matrix: no more outreach for this role
+        from app.modules.m3_outreach.campaigns import stop_role
+
+        stop_role(session, app.cluster_id, "you were turned down for this role")
     return True
 
 
@@ -260,7 +264,14 @@ def story(session: Session, cluster_id: int) -> list[tuple[datetime, str, str]]:
     if app is not None:
         for ev in session.scalars(select(ApplicationEvent).where(ApplicationEvent.application_id == app.id)).all():
             out.append((ev.at, "application", f"{ev.kind.replace('_', ' ')}" + (f": {ev.summary}" if ev.summary else "")))
-    return sorted(out, key=lambda x: x[0])
+    out.sort(key=lambda x: x[0])
+    from app.modules.m3_outreach.reopening import outreach_wait
+
+    if wait := outreach_wait(session, cluster_id):   # where it stands now, after the history
+        until, why = wait
+        out.append((_now(), "outreach", f"no new outreach: {why}" if until.year == 9999
+                    else f"outreach waits until {until:%d %b %Y} ({why})"))
+    return out
 
 
 def run_tracking(*, scan: bool = True) -> dict:

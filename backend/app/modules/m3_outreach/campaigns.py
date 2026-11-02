@@ -23,6 +23,7 @@ from app.models.draft import OutreachDraft
 from app.models.outreach import DraftEdit, OutreachCampaign, OutreachEmail
 from app.modules.m3_outreach.bench import usable_members
 from app.modules.m3_outreach.drafting import greeting_name
+from app.modules.m3_outreach.reopening import may_start_again, outreach_wait, previously_emailed
 from app.modules.m3_outreach.template import Template, fill
 
 ACTIVE = ("pending_review", "scheduled", "running", "paused")
@@ -97,11 +98,21 @@ def prepare_campaigns(session: Session, cluster_ids: list[int] | None = None) ->
                 e.decision, e.allow_low = "pending", False   # you approved the old text, not this one
             counts["refreshed"] += 1
             continue
-        if current is not None:
-            continue  # one campaign per role; a later reopening scenario starts a new one (Part 3d / Module 4)
+        if current is not None and not may_start_again(session, current):
+            continue  # one campaign per posting; after a silent one, one more only when the role opens again
+        if current is not None and draft.version <= current.draft_version:
+            continue  # opened again, but not yet redrafted: never resend the text those people already got
+        if outreach_wait(session, draft.cluster_id):
+            continue  # drafted before a rejection for a similar role came in: waits like any other
         recipients = _recipients(session, channel)
         if not recipients:
             continue
+        # A new campaign after a silent one: everyone is included and you choose; people emailed about this
+        # role before are labelled and go last, so new people are emailed first.
+        before = previously_emailed(session, draft.cluster_id) if current is not None else {}
+        for r in recipients:
+            r["previously_emailed_at"] = before.get(r["to_email"].lower())
+        recipients.sort(key=lambda r: r["previously_emailed_at"] is not None)
         campaign = OutreachCampaign(cluster_id=draft.cluster_id, company_id=channel.company_id, draft_id=draft.id,
                                     draft_version=draft.version, subject=draft.subject, body=draft.body,
                                     attach_resume=draft.attach_resume, status="pending_review")
@@ -111,8 +122,9 @@ def prepare_campaigns(session: Session, cluster_ids: list[int] | None = None) ->
             session.add(OutreachEmail(campaign_id=campaign.id, position=i + 1, wave=wave_for(i), decision="pending",
                                       status="queued", **r))
         counts["prepared"] += 1
+        again = " (the role opened again)" if current is not None else ""
         audit.record(session, "m3", "campaign_prepared",
-                     f"Outreach for role {draft.cluster_id} is ready for your review ({len(recipients)} email(s))",
+                     f"Outreach for role {draft.cluster_id} is ready for your review ({len(recipients)} email(s)){again}",
                      subject_type="job_cluster", subject_id=str(draft.cluster_id))
     session.flush()
     return counts
@@ -145,6 +157,10 @@ def decide(session: Session, campaign: OutreachCampaign, email: OutreachEmail, a
     if not late:
         _editable(campaign)
     if action == "approve":
+        if wait := outreach_wait(session, campaign.cluster_id):
+            until, why = wait
+            raise ReviewError(f"no new outreach for this role: {why}" if until.year == 9999
+                              else f"outreach for this role waits until {until:%d %b %Y}: {why}")
         if email.confidence == "invalid":
             raise ReviewError(f"the mail server says {email.to_email} doesn't exist; it can't be approved")
         if needs_go_ahead(email) and not allow_low:
@@ -235,6 +251,24 @@ def stop_company(session: Session, company_id: int, reason: str, *, pause: bool 
         c.status, c.status_reason, c.ended_at = "cancelled", reason, _now()
         if outcome and not c.outcome:
             c.outcome, c.outcome_at = outcome, _now()
+    return n
+
+
+def stop_role(session: Session, cluster_id: int, reason: str) -> int:
+    """You were turned down for this role (seen by the apply tracker): its unsent outreach is cancelled —
+    no new outreach for a role that has said no. Returns how many emails were cancelled."""
+    n = 0
+    for c in session.scalars(select(OutreachCampaign).where(OutreachCampaign.cluster_id == cluster_id,
+                                                            OutreachCampaign.status.in_(ACTIVE))).all():
+        for e in emails(session, c):
+            if e.status == "queued":
+                e.status, e.status_reason = "cancelled", reason
+                n += 1
+        c.status, c.status_reason, c.ended_at = "cancelled", reason, _now()
+        if not c.outcome:
+            c.outcome, c.outcome_at = "rejected", _now()
+        audit.record(session, "m3", "campaign_stopped", f"Outreach for role {cluster_id} stopped: {reason}",
+                     subject_type="campaign", subject_id=str(c.id))
     return n
 
 

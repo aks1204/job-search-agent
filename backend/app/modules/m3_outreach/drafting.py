@@ -106,17 +106,23 @@ def sibling_req_ids(session: Session, cluster_id: int) -> list[str]:
 
 
 def scenario_for(session: Session, cluster_id: int, req_ids: list[str]) -> str:
-    """fresh | multi_req today. Reopening-after-silence, post-rejection and post-interview need the
-    outreach/application history from Parts 3c-3d and Module 4; they plug in here."""
-    return "multi_req" if len(req_ids) > 1 else "fresh"
+    """The company's history with you (post_interview > post_rejection > reopening), else multi_req | fresh.
+    Several openings' job IDs are listed by the template whatever the scenario."""
+    from app.modules.m3_outreach.reopening import history_scenario
+
+    return history_scenario(session, cluster_id) or ("multi_req" if len(req_ids) > 1 else "fresh")
 
 
+# Owner decision (2026-11-01): a draft never mentions the past — not an earlier email, rejection or interview.
 SCENARIO_NOTES = {
     "fresh": "First contact about this opening.",
     "multi_req": "The company has several openings for this same role; the fixed text lists their job IDs.",
-    "reopening": "The candidate wrote about this role before and heard nothing; don't mention that.",
-    "post_rejection": "The candidate was turned down for a similar role earlier; never open with or mention it.",
-    "post_interview": "The candidate interviewed here before; mention it once, briefly and positively.",
+    "reopening": "An earlier email to this company went unanswered. Write a fresh, confident note; never mention "
+                 "or hint at the earlier email.",
+    "post_rejection": "The candidate was turned down here earlier. Write a fresh note; never mention or hint at "
+                      "the earlier application or its outcome.",
+    "post_interview": "The candidate interviewed here earlier and wasn't chosen. Write a fresh note; never mention "
+                      "or hint at the interview or its outcome.",
 }
 
 
@@ -318,12 +324,20 @@ def drafts_today(session: Session) -> int:
 
 def due_drafts(session: Session, t: Template, cluster_ids: list[int] | None = None, force: bool = False):
     from app.modules.m3_outreach.pipeline import pursued_roles
+    from app.models.outreach import OutreachCampaign
+    from app.modules.m3_outreach.reopening import may_start_again, outreach_wait
 
     out = []
     for score, a, job, company in pursued_roles(session, cluster_ids):
         channel = session.get(RoleChannel, score.cluster_id)
         if channel is None or channel.mode not in DRAFTABLE:
             continue
+        if outreach_wait(session, score.cluster_id):
+            continue      # turned down for a similar role here recently: drafted when the wait ends
+        latest = session.scalar(select(OutreachCampaign).where(OutreachCampaign.cluster_id == score.cluster_id)
+                                .order_by(OutreachCampaign.id.desc()).limit(1))
+        if latest is not None and latest.status != "pending_review" and not may_start_again(session, latest):
+            continue      # its outreach has run and can't start again: a rewrite would never be sent
         draft = session.scalar(select(OutreachDraft).where(OutreachDraft.cluster_id == score.cluster_id))
         if force or draft is None:
             out.append(score.cluster_id)

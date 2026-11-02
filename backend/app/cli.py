@@ -1189,7 +1189,8 @@ def _campaign_or_exit(s, campaign_id: int):
     return c
 
 
-def review_cmd(action: str, campaign_id: int | None, email_pos: int | None, all_: bool, allow_low: bool) -> int:
+def review_cmd(action: str, campaign_id: int | None, email_pos: int | None, all_: bool, allow_low: bool,
+               previous: bool = False) -> int:
     from pathlib import Path
 
     from sqlalchemy import select
@@ -1227,6 +1228,8 @@ def review_cmd(action: str, campaign_id: int | None, email_pos: int | None, all_
                 flag = " · NEEDS YOUR GO-AHEAD (--allow-low)" if C.needs_go_ahead(e) and e.decision == "pending" else ""
                 print("=" * 72)
                 print(f"Email {e.position} of {len(es)} · day {e.wave + 1} · {e.decision.upper()} · {e.status}{flag}")
+                if e.previously_emailed_at:
+                    print(f"Note:    emailed about this role on {e.previously_emailed_at:%d %b %Y}, no reply")
                 print(f"To:      {e.to_name + ' <' + e.to_email + '>' if e.to_name else e.to_email}"
                       f"   (address: {e.confidence}{', provider vouches' if e.vouched else ''})")
                 print(f"Subject: {subject}")
@@ -1238,9 +1241,18 @@ def review_cmd(action: str, campaign_id: int | None, email_pos: int | None, all_
             print("Next: review approve|skip <campaign> --email N (or --all); review export <campaign> to edit.")
             return 0
         if action in ("approve", "skip"):
-            targets = es if all_ else [e for e in es if e.position == email_pos]
+            if previous and (action != "skip" or all_ or email_pos is not None):
+                print("--previous goes with skip on its own (not with approve, --all or --email)")
+                return 1
+            if previous:
+                targets = [e for e in es if e.previously_emailed_at]
+                if not targets:
+                    print("Nobody in this campaign was emailed about this role before.")
+                    return 0
+            else:
+                targets = es if all_ else [e for e in es if e.position == email_pos]
             if not targets:
-                print("Say which email: --email N, or --all")
+                print("Say which email: --email N, or --all" + (" (or, to skip, --previous)" if action == "skip" else ""))
                 return 1
             for e in targets:
                 if e.decision != "pending":
@@ -1836,6 +1848,8 @@ def main() -> None:
     p_rv.add_argument("--email", type=int, help="which email in the campaign (1, 2, ...)")
     p_rv.add_argument("--all", action="store_true", help="every email still waiting in the campaign")
     p_rv.add_argument("--allow-low", action="store_true", help="your go-ahead for addresses that couldn't be proven")
+    p_rv.add_argument("--previous", action="store_true",
+                      help="with skip: everyone emailed about this role in an earlier campaign")
     p_ou = sub.add_parser("outreach", help="Module 3: sending status; pause / unpause; hold / release / stop a company")
     p_ou.add_argument("action", choices=["status", "pause", "unpause", "hold", "release", "stop", "reset-breaker"])
     p_ou.add_argument("domain", nargs="?")
@@ -1974,7 +1988,7 @@ def main() -> None:
     if args.command == "review":
         if args.action != "list" and args.campaign is None:
             parser.error("review show|approve|skip|export|import|redraft needs a campaign number")
-        sys.exit(review_cmd(args.action, args.campaign, args.email, args.all, args.allow_low))
+        sys.exit(review_cmd(args.action, args.campaign, args.email, args.all, args.allow_low, args.previous))
     if args.command == "outreach":
         sys.exit(outreach_cmd(args.action, args.domain))
     if args.command == "replies":

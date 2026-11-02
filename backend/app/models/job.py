@@ -66,3 +66,4 @@ class JobPosting(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # closed, then came back

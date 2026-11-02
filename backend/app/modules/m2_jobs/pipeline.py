@@ -6,7 +6,7 @@ posting, marks it changed (so Part 2c re-scores it once) and re-runs the filters
 
 import logging
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ from app.settings import redact
 log = logging.getLogger(__name__)
 
 INTAKE_BATCH = 2000
+REPOST_AFTER = timedelta(days=3)   # a closed posting back after this long counts as a repost
 MIN_DESCRIPTION = 200  # shorter than this isn't a real description (aggregator snippets, titles)
 
 
@@ -130,6 +131,10 @@ def intake(session: Session, now: datetime | None = None, company_ids: list[int]
             job.status, job.closed_at = "closed", raw.closed_at
             counts["closed"] += 1
         elif raw.closed_at is None and job.status == "closed":
+            # A repost (may start outreach again after a silence) only when it was gone a while — a feed that
+            # missed it for one check isn't a repost.
+            if job.closed_at is not None and now - job.closed_at >= REPOST_AFTER:
+                job.reopened_at = now
             job.status, job.closed_at = "open", None
             counts["reopened"] += 1
 

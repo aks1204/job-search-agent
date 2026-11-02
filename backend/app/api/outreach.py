@@ -55,7 +55,8 @@ def _campaign_out(session: Session, c: OutreachCampaign) -> dict:
         out["emails"].append({"id": e.id, "position": e.position, "wave": e.wave + 1, "to": e.to_email,
                               "to_name": e.to_name, "confidence": e.confidence, "vouched": e.vouched,
                               "needs_go_ahead": C.needs_go_ahead(e), "decision": e.decision, "status": e.status,
-                              "status_reason": e.status_reason, "sent_at": e.sent_at, "subject": subject, "body": body})
+                              "status_reason": e.status_reason, "sent_at": e.sent_at, "subject": subject, "body": body,
+                              "previously_emailed_at": e.previously_emailed_at})
     return out
 
 
