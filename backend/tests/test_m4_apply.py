@@ -16,16 +16,22 @@ class FakeSession:
 
 
 def app(status):
-    return SimpleNamespace(id=1, status=status, applied_at=None, applied_how=None, status_at=None, last_heard_at=None)
+    return SimpleNamespace(id=1, cluster_id=7, outside=False, status=status, applied_at=None, applied_how=None,
+                           status_at=None, last_heard_at=None)
 
 
-def test_statuses_only_move_forward():
+def test_statuses_only_move_forward(monkeypatch):
+    stopped = []   # (no database here: the outreach stop itself is tested in test_m6_reopening_integration)
+    monkeypatch.setattr("app.modules.m3_outreach.campaigns.stop_role",
+                        lambda session, cluster_id, reason: stopped.append(cluster_id))
     s, a = FakeSession(), app("queued")
     assert T.set_status(s, a, "applied", source="you") and a.applied_how == "you"
     assert T.set_status(s, a, "confirmed", source="email")
     assert not T.set_status(s, a, "applied", source="you")          # never backwards
     assert T.set_status(s, a, "interviewing", source="email")
+    assert stopped == []
     assert T.set_status(s, a, "rejected", source="email")
+    assert stopped == [7]                                           # a rejection stops the role's outreach
     assert not T.set_status(s, a, "interviewing", source="email")   # rejected is final
     assert [e.kind for e in s.added] == ["applied", "confirmed", "interviewing", "rejected"]
 
