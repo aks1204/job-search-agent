@@ -43,6 +43,11 @@ class Card:
     color: str = "gray"                       # the stripe and the chip
     buttons: list[tuple[str, str]] = field(default_factory=list)   # (label, address) — at most two
     lines: list[tuple[str, str | None]] = field(default_factory=list)   # events under a role: (text, link)
+    role: int | None = None                   # the role it's about: a role is on one card in the whole mail
+
+    def add_button(self, label: str, href: str) -> None:
+        if len(self.buttons) < 2 and all(h != href for _, h in self.buttons):
+            self.buttons.append((label, href))
 
 
 @dataclass
@@ -103,10 +108,10 @@ def _match_card(sc, a, j, c, cl) -> Card:
     if fast and _web(j.url):
         buttons.insert(0, ("Open apply link →", j.url))
     return Card(f"{cl.title} · {c.name}", detail, f"{sc.score} · {'fast lane' if fast else 'inbox'}",
-                "blue", buttons[:2])
+                "blue", buttons[:2], role=cl.id)
 
 
-def _needs_you(session: Session, shown: set[int], now: datetime) -> tuple[list[Card], int, list[datetime]]:
+def _needs_you(session: Session, now: datetime) -> tuple[list[Card], int, list[datetime]]:
     """(cards, older apply links only counted, when each item came up — for "anything new?")."""
     from app.modules.m3_outreach.reopening import hidden_until
     from app.modules.m4_apply.tracker import apply_list, role_links
@@ -123,7 +128,7 @@ def _needs_you(session: Session, shown: set[int], now: datetime) -> tuple[list[C
         n = session.scalar(select(func.count()).select_from(OutreachEmail).where(
             OutreachEmail.campaign_id == c.id, OutreachEmail.decision == "pending")) or 0
         per_role[cl.id] = Card(f"{cl.title} · {co.name}", f"Outreach ready: {n} email(s) for you to approve, then Begin outreach",
-                               "approval", "red", [("Review drafts →", url(f"/review#c{c.id}"))])
+                               "approval", "red", [("Review drafts →", url(f"/review#c{c.id}"))], role=cl.id)
         cards.append(per_role[cl.id])
         born.append(c.created_at)
     full, _older = apply_list(session, now)
@@ -139,8 +144,6 @@ def _needs_you(session: Session, shown: set[int], now: datetime) -> tuple[list[C
         if card is None and cl.id not in full_ids:
             older += 1                                 # older ones: only counted
             continue
-        if card is None and cl.id in shown:
-            continue                                   # on its card under New matches
         links = [x for x in role_links(session, cl.id) if _web(x["url"])]
         many = f" · {len(links)} openings" if len(links) > 1 else ""
         if card is not None:                           # its outreach card: the apply link joins it
@@ -151,7 +154,9 @@ def _needs_you(session: Session, shown: set[int], now: datetime) -> tuple[list[C
             continue
         buttons = [("Open apply link →", links[0]["url"])] if links else []
         buttons.append(("Pursuing", url(f"/jobs?tab=pursuing#c{cl.id}")))
-        cards.append(Card(f"{cl.title} · {co.name}", f"Apply manually on their site{many}", "apply", "red", buttons))
+        per_role[cl.id] = Card(f"{cl.title} · {co.name}", f"Apply manually on their site{many}", "apply", "red", buttons,
+                               role=cl.id)
+        cards.append(per_role[cl.id])
         born.append(app.queued_at)
     open_q = session.scalars(select(DirectionSuggestion.created_at).where(DirectionSuggestion.status == "open")).all()
     if open_q:
@@ -163,9 +168,16 @@ def _needs_you(session: Session, shown: set[int], now: datetime) -> tuple[list[C
             ~Notification.title.startswith("Apply:"), ~Notification.title.startswith("Your career direction"))
             .order_by(Notification.created_at.desc())).all():
         lines = _ping_lines(n.detail)
-        cards.append(Card(_private(n.title), lines[0] if lines else "", "for you", "red",
-                          [("Open →", url(ping_target(session, n) or "/pings"))]))
+        role, href = _role_of(session, n), url(ping_target(session, n) or "/pings")
         born.append(n.created_at)
+        if role in per_role:                           # about a role already here: it joins that card
+            per_role[role].lines.append((_private(n.title), _web(n.link)))
+            per_role[role].add_button("Open →", href)
+            continue
+        card = Card(_private(n.title), lines[0] if lines else "", "for you", "red", [("Open →", href)], role=role)
+        if role is not None:
+            per_role[role] = card
+        cards.append(card)
     return cards, older, [b for b in born if b]
 
 
@@ -213,7 +225,7 @@ def _happened(session: Session, since: datetime) -> tuple[list[Card], list[str],
             continue
         cl, co = row
         cards.append(Card(f"{cl.title} · {co.name}", "", f"{len(events)} update(s)", "green",
-                          [("Open role →", url(f"/roles/{cl.id}"))], lines=events))
+                          [("Open role →", url(f"/roles/{cl.id}"))], lines=events, role=cl.id))
     return cards, elsewhere, sum(len(e) for e in groups.values()) + len(elsewhere)
 
 
@@ -241,7 +253,7 @@ def _pipeline(session: Session) -> tuple[list[Card], int]:
             color, chip = "blue", "tracking"
         what = "to apply" if r["to_apply"] else status.replace("_", " ")
         cards.append(Card(f"{r['title']} · {r['company']}", f"{what} · outreach: {outreach}", chip, color,
-                          [("Open role →", url(f"/roles/{r['cluster_id']}"))]))
+                          [("Open role →", url(f"/roles/{r['cluster_id']}"))], role=r["cluster_id"]))
     cards.sort(key=lambda c: ORDER[c.color])
     return cards, sum(1 for c in cards if c.color != "gray")
 
@@ -282,25 +294,45 @@ def build(session: Session, now: datetime | None = None, since: datetime | None 
         if on is not None:
             since = max(since, on - FIRST_LOOKBACK)
     rows, maybe = _new_matches(session, since)
-    shown = {cl.id for *_, cl in rows[:TOP]}
-    needs, older, born = _needs_you(session, shown, now)
+    needs, older, born = _needs_you(session, now)
     happened, elsewhere, events = _happened(session, since)
     pipeline, in_flight = _pipeline(session)
 
+    # Each role once, in the first group where it matters (owner 2026-11-04): Needs you → New matches →
+    # What happened → Pipeline, which shows only the rest.
     s_needs = _top(Section("needs_you", "⚡ Needs you"), needs, "/pings")
     if older:
         s_needs.note = f"+{older} older apply link(s) still waiting on your Pursuing tab."
-    s_new = _top(Section("new", "📥 New matches"), [_match_card(*r) for r in rows], "/jobs")
+    above = {c.role: c for c in s_needs.cards if c.role is not None}
+    new_cards = []
+    for r in rows:
+        card = above.get(r[4].id)
+        if card is not None:                  # new, and it already needs you: "new" goes on that card
+            card.chip = f"new · {card.chip}"
+        else:
+            new_cards.append(_match_card(*r))
+    s_new = _top(Section("new", "📥 New matches"), new_cards, "/jobs")
     if maybe:
         s_new.note = f"Maybe: {maybe} more, in the app."
-    s_happened = _top(Section("happened", "📤 What happened"), happened, "/audit")
+    above.update({c.role: c for c in s_new.cards})
+    rest = []
+    for c in happened:
+        if c.role in above:                   # its news goes on the card above
+            above[c.role].lines += c.lines
+        else:
+            rest.append(c)
+    s_happened = _top(Section("happened", "📤 What happened"), rest, "/audit")
     if elsewhere:
         extra = f" (+{len(elsewhere) - 3} more)" if len(elsewhere) > 3 else ""
         s_happened.note = "Elsewhere: " + "; ".join(elsewhere[:3]) + extra
-    s_pipe = _top(Section("pipeline", "📊 Pipeline"), pipeline, "/jobs?tab=pursuing")
+    shown = set(above) | {c.role for c in s_happened.cards}
+    s_pipe = _top(Section("pipeline", "📊 Pipeline"), [c for c in pipeline if c.role not in shown], "/jobs?tab=pursuing")
+    also = sum(1 for c in pipeline if c.role in shown and c.color != "gray")
+    if also:
+        s_pipe.note = f"Also in flight: the {also} role{'s' if also != 1 else ''} above."
     sections = [s for s in (s_needs, s_new, s_happened, s_pipe) if s.cards or s.note]
 
-    counts = {"need_you": len(needs) + older, "new": len(rows), "maybe": maybe, "updates": events,
+    counts = {"need_you": len(needs) + older, "new": len(new_cards), "maybe": maybe, "updates": events,
               "in_flight": in_flight}
     parts = [f"{counts['need_you']} need you" if counts["need_you"] else "",
              f"{counts['new']} new match{'es' if counts['new'] != 1 else ''}" if counts["new"] else "",

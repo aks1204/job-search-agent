@@ -166,7 +166,36 @@ def test_a_role_with_a_draft_and_an_apply_link_is_one_card(db_session, roles):
     db_session.add(Application(cluster_id=manager, company_id=company.id, status="queued", on_list=True,
                                queued_at=NOW))
     db_session.flush()
-    cards, _older, _born = M._needs_you(db_session, set(), NOW)          # all of them (the mail shows the top 5)
+    cards, _older, _born = M._needs_you(db_session, NOW)          # all of them (the mail shows the top 5)
     mine = [c for c in cards if c.title.startswith("Analytics Manager · Web Co")]
     assert len(mine) == 1 and mine[0].chip == "approval · apply"
     assert [label for label, _ in mine[0].buttons] == ["Review drafts →", "Open apply link →"]
+
+
+def test_each_role_is_on_one_card_in_the_whole_mail(db_session, roles):
+    from app.models import Application, JobScore, OutreachCampaign, OutreachDraft
+    from sqlalchemy import select
+
+    company, _data, manager = roles
+    d = OutreachDraft(cluster_id=manager, version=1, scenario="fresh", role_name="Analytics Manager", subject="Hello",
+                      body="{greeting}\n\nHi.", intro="i", points=[], req_ids=[], attach_resume=False, status="ready",
+                      truth={}, inputs_version="x")
+    db_session.add(d)
+    db_session.flush()
+    db_session.add(OutreachCampaign(cluster_id=manager, company_id=company.id, draft_id=d.id, draft_version=1,
+                                    subject="Hello", body=d.body, status="pending_review"))
+    db_session.add(Application(cluster_id=manager, company_id=company.id, status="queued", on_list=True, queued_at=NOW))
+    db_session.add(Notification(kind="update", section="happened", title="Web Co: a new opening for this role",
+                                subject_type="job_cluster", subject_id=str(manager)))
+    db_session.scalars(select(JobScore).where(JobScore.cluster_id == manager)).one().owner_action = "act"
+    db_session.flush()
+    s = M.build(db_session, now=NOW + timedelta(seconds=1), since=NOW - timedelta(seconds=1))
+    needs = next(sec for sec in s.sections if sec.key == "needs_you")
+    mine = [c for c in needs.cards if c.role == manager]
+    if not mine:
+        pytest.skip("your real items fill the top of Needs you")
+    _, html = M.render(s)
+    assert html.count("Analytics Manager · Web Co") == 1                     # not again in New matches / Pipeline
+    assert ("Web Co: a new opening for this role", None) in mine[0].lines    # its news is on that card
+    pipeline = next((sec for sec in s.sections if sec.key == "pipeline"), None)
+    assert pipeline is not None and "Also in flight" in pipeline.note
