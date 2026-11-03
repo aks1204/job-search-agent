@@ -559,6 +559,18 @@ async def ping_read(notification_id: int, request: Request, session: Session = D
     return await _run(request, session, do, fallback="/pings")
 
 
+@router.post("/ping-unread/{notification_id}")
+async def ping_unread(notification_id: int, request: Request, session: Session = Depends(get_session)):
+    def do(form):
+        n = session.get(Notification, notification_id)
+        if n is None:
+            raise NotFound("no such ping")
+        n.read_at = None
+        return "Marked unread."
+
+    return await _run(request, session, do, fallback="/pings")
+
+
 @router.post("/pings-read")
 async def pings_read(request: Request, session: Session = Depends(get_session)):
     def do(form):

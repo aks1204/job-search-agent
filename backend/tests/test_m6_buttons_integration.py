@@ -193,6 +193,8 @@ def test_pings_can_be_read(client, db_session):
     assert "m6 test ping" in client.get("/pings").text
     press(client, f"/do/ping-read/{n.id}")
     assert n.read_at is not None and "m6 test ping" not in client.get("/pings").text
+    press(client, f"/do/ping-unread/{n.id}")
+    assert n.read_at is None                                         # back among the unread
 
 
 def test_every_screen_has_its_buttons(client, roles):
