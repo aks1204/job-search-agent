@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block title %}Edit your profile{% endblock %}
+{% block content %}
+{#- One labelled box. `field` names the form value; `key` the profile part your new résumé may have changed. -#}
+{% macro err(name) -%}{% if errors[name] %}<span class="ferr" role="alert">{{ errors[name] }}</span>{% endif %}{%- endmacro %}
+{% macro mark(key) -%}{% if key in marked %}<span class="chip ch-amber">from your new résumé</span>{% endif %}{%- endmacro %}
+{% macro text(name, label, help='', key='', type='text', placeholder='') -%}
+<label class="field{{ ' bad' if errors[name] }}"><span class="flabel">{{ label }} {{ mark(key) }}</span>
+  <input type="{{ type }}" name="{{ name }}" value="{{ v[name] }}" placeholder="{{ placeholder }}"{% if errors[name] %} aria-invalid="true"{% endif %}>
+  {% if help %}<span class="fhelp">{{ help }}</span>{% endif %}{{ err(name) }}</label>
+{%- endmacro %}
+{% macro area(name, label, help='', key='', rows=4) -%}
+<label class="field{{ ' bad' if errors[name] }}"><span class="flabel">{{ label }} {{ mark(key) }}</span>
+  <textarea name="{{ name }}" rows="{{ rows }}"{% if errors[name] %} aria-invalid="true"{% endif %}>{{ v[name] }}</textarea>
+  {% if help %}<span class="fhelp">{{ help }}</span>{% endif %}{{ err(name) }}</label>
+{%- endmacro %}
+{% macro check(name, label) -%}
+<label class="pick big"><input type="checkbox" name="{{ name }}"{% if v[name] %} checked{% endif %}> {{ label }}</label>
+{%- endmacro %}
+
+<h1>{{ 'Check your new résumé reading' if draft else 'Edit your profile' }}</h1>
+<div class="sub">{% if draft %}What changed is marked <span class="chip ch-amber">from your new résumé</span>. Fix anything, then Save: that confirms it.{% else %}Everything the agent knows about you. Save applies it at once.{% endif %} <a href="/profile">Back without saving</a></div>
+
+{% if errors.form %}<div class="flash bad" role="alert">! {{ errors.form }}</div>
+{% elif errors %}<div class="flash bad" role="alert">! Nothing was saved yet. Please fix what's marked below.</div>{% endif %}
+
+<form method="post" action="/profile/edit" class="pform" novalidate>{{ ui.hidden() }}
+<button type="submit" class="enterkey" tabindex="-1" aria-hidden="true">Save</button>{# Enter in a box: a plain Save, never "Add a row" #}
+{% if cost %}
+<div class="sect costbox" role="alert"><h3>BEFORE YOU SAVE</h3>
+  <p>You changed <b>{{ cost.fields | join(', ') }}</b>. The AI is given these, so saving means:</p>
+  <ul class="points">
+    {% if cost.reads %}<li>about <b>{{ cost.reads }}</b> open roles read again</li>{% endif %}
+    {% if cost.grades %}<li>about <b>{{ cost.grades }}</b> roles graded again</li>{% endif %}
+    {% if cost.drafts %}<li>about <b>{{ cost.drafts }}</b> outreach drafts written again (drafts you edited yourself are kept)</li>{% endif %}
+  </ul>
+  <p>About <b>${{ '%.2f' | format(cost.usd) }}</b> in all, spread over the next days by your daily limits.</p>
+  <div class="act"><button type="submit" name="confirmed" value="1" class="primary">Save anyway</button><a href="/profile">Cancel</a></div>
+</div>
+{% endif %}
+
+<div class="sect"><h3>ABOUT YOU</h3>
+  <div class="fgrid">
+    {{ text('name', 'Name', key='name') }}
+    {{ text('location', 'Where you live', key='location', placeholder='e.g. Gurgaon') }}
+    {{ text('mobile', 'Mobile', 'Goes in your email signature only.', key='mobile') }}
+    {{ text('linkedin_url', 'LinkedIn', key='linkedin_url', placeholder='https://www.linkedin.com/in/…') }}
+    {{ text('career_field', 'Your field', 'A few words, e.g. business analytics.', key='career_field') }}
+  </div>
+</div>
+
+<div class="sect" id="pay"><h3>PAY & NOTICE · PRIVATE: NEVER SENT TO THE AI</h3>
+  <div class="fgrid">
+    {{ text('pay_amount', 'Current pay, a year', "Saving here re-confirms it; you're reminded again in 6 months.", key='current_compensation', placeholder='e.g. 24,00,000') }}
+    <label class="field"><span class="flabel">Currency</span>
+      <select name="pay_currency">{% set currencies = ['INR', 'USD', 'EUR', 'GBP', 'SGD', 'AED'] %}{% for c in currencies + ([v.pay_currency] if v.pay_currency and v.pay_currency not in currencies else []) %}<option{% if v.pay_currency == c %} selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+    {{ text('pay_floor', "Lowest pay you'd take, a year", 'Leave empty for "more than now".', key='pay_floor_annual') }}
+    {{ text('notice_days', 'Notice period, days', key='notice_period_days', placeholder='e.g. 60') }}
+  </div>
+  <div class="checks">{{ check('pay_variable', 'My pay figure includes variable / bonus') }}</div>
+</div>
+
+<div class="sect"><h3>WORK HISTORY {{ mark('employment_history') }}</h3>
+  <div class="fhelp">Newest first. A promotion is a new row at the same company. Leave the end empty on your current job. Months as 2021-03.</div>
+  {% if errors.jobs %}<div class="ferr" role="alert">{{ errors.jobs }}</div>{% endif %}
+  <input type="hidden" name="job_count" value="{{ v.jobs | length }}">
+  <div class="jobrows">
+    <div class="jobrow head" aria-hidden="true"><span>Company</span><span>Title</span><span>From</span><span>To</span><span></span></div>
+    {% for j in v.jobs %}{% set i = loop.index0 %}
+    <div class="jobrow{{ ' bad' if errors['job-' ~ i] }}">
+      <input name="job-{{ i }}-company" value="{{ j.company }}" placeholder="{{ 'Add a job: company' if not j.company }}" aria-label="Company">
+      <input name="job-{{ i }}-title" value="{{ j.title }}" placeholder="{{ 'Title' if not j.company }}" aria-label="Title">
+      <input name="job-{{ i }}-start" value="{{ j.start }}" placeholder="2021-03" aria-label="From (month)">
+      <input name="job-{{ i }}-end" value="{{ j.end }}" placeholder="empty = now" aria-label="To (month), empty for now">
+      {% if j.company or j.title %}<label class="pick" title="Take this row out"><input type="checkbox" name="job-{{ i }}-remove"{% if j.remove %} checked{% endif %}> Remove</label>{% else %}<span></span>{% endif %}
+      {% if errors['job-' ~ i] %}<span class="ferr full" role="alert">{{ errors['job-' ~ i] }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="act"><button type="submit" name="add_row" value="1">Add another row</button><span class="note">(keeps what you typed; nothing is saved)</span></div>
+  <div class="fgrid two">
+    {{ area('level_ladder', 'Level ladder at your company, lowest first', 'One level per line.', key='level_ladder', rows=5) }}
+    {{ text('current_level', 'Your level', "One of the ladder's levels.", key='current_level') }}
+  </div>
+</div>
+
+<div class="sect"><h3>WHERE & HOW</h3>
+  <div class="fgrid">
+    {{ text('cities', "Cities you'd work in", 'Separate with commas. Empty: anywhere in India.', key='preferred_locations_india') }}
+    {{ text('citizenship', 'Citizenship', key='work_authorization') }}
+    {{ text('visas', 'Visas you hold', 'Separate with commas.', key='work_authorization') }}
+  </div>
+  <div class="checks">{{ check('remote_ok', 'Remote is fine') }}{{ check('hybrid_ok', 'Hybrid is fine') }}{{ check('open_to_relocation', 'Open to relocating') }}</div>
+</div>
+
+<div class="sect"><h3>CAREER DIRECTION</h3>
+  <div class="fhelp">One per line. The agent's suggestions still come to you as Yes / No; what you write here is your choice and stays.</div>
+  <div class="fgrid">
+    {{ area('progression', 'Step-up families', key='role_families') }}
+    {{ area('lateral', 'Sideways families', key='role_families') }}
+    {{ area('excluded', 'Never these', key='role_families') }}
+    {{ area('target_roles', 'Job titles to search for', key='target_roles') }}
+  </div>
+  <div class="fgrid">
+    <label class="field"><span class="flabel">Openness to sideways moves</span>
+      <select name="lateral_appetite">{% for k, label in appetites.items() %}<option value="{{ k }}"{% if v.lateral_appetite == k %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="field"><span class="flabel">Track</span>
+      <select name="track">{% for k, label in tracks.items() %}<option value="{{ k }}"{% if v.track == k %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  </div>
+  <div class="checks">{{ check('open_to_management_track', 'Open to managing people') }}</div>
+</div>
+
+<div class="sect"><h3>SKILLS {{ mark('skills') }}</h3>
+  <div class="fgrid">
+    {{ area('must_have', 'Your core skills', 'One per line.', rows=6) }}
+    {{ area('nice_to_have', 'Also good at', 'One per line.', rows=6) }}
+  </div>
+</div>
+
+<div class="savebar">
+  <button type="submit" class="primary">{{ 'Save and confirm' if draft else 'Save' }}</button>
+  <a href="/profile">Cancel</a>
+  <span class="note">Checked before anything is saved. The Audit log records which parts changed, never the values.</span>
+</div>
+</form>
+{% endblock %}

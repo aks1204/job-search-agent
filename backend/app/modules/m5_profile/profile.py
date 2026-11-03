@@ -311,8 +311,8 @@ def check(session: Session, llm=None) -> dict:
         out["draft"] = row.id
         what = "Your resume changed" if current else "Your profile is ready to check"
         notify(session, "needs_you", "needs_you", f"{what}: please confirm it",
-               detail="Check review/profile.yaml in your project folder, then press Confirm profile on the "
-                      "Profile screen "
+               detail="Check it on the Profile screen: Review and confirm opens it as a form, with what your new "
+                      "résumé changed marked "
                       "(or: profile export, then profile confirm). "
                       "Until then the agent keeps using " + ("your last confirmed profile." if current else "owner_stub.yaml."),
                subject=("profile", "draft"))
@@ -320,8 +320,8 @@ def check(session: Session, llm=None) -> dict:
         if not _asked_recently(session, f):
             label = {"current_compensation": "your current pay", "notice_period_days": "your notice period"}[f]
             notify(session, "needs_you", "needs_you", f"Is {label} still right?",
-                   detail="It was last confirmed over 6 months ago. To update or re-confirm it, for now in the "
-                          "terminal: profile edit, then profile confirm.", subject=("profile", f))
+                   detail="It was last confirmed over 6 months ago. Update it on the Profile screen (Edit profile); "
+                          "saving there re-confirms it (or: profile edit, then profile confirm).", subject=("profile", f))
             out.setdefault("reminders", []).append(f)
     return out
 
@@ -354,6 +354,91 @@ def _remember_time_sensitive(session: Session, data: dict) -> None:
         if nested is not None and nested.is_active:
             nested.rollback()
         log.warning("couldn't remember pay / notice: %r", e)
+
+
+# --- the Profile screen's form (6b-2) --------------------------------------------------------------------
+
+# What each part of your profile is called on screen (the Audit log names these, never the values).
+LABELS = {
+    "name": "name", "location": "location", "mobile": "mobile", "linkedin_url": "LinkedIn",
+    "career_field": "career field", "current_compensation": "pay", "pay_floor_annual": "lowest pay",
+    "notice_period_days": "notice period", "employment_history": "work history", "current_role": "current role",
+    "level_ladder": "level ladder", "current_level": "level",
+    "preferred_locations_india": "preferred cities", "remote_ok": "remote", "hybrid_ok": "hybrid",
+    "work_authorization": "work authorization", "role_families": "role families", "target_roles": "target roles",
+    "lateral_appetite": "openness to sideways moves", "track": "track",
+    "open_to_management_track": "open to managing", "skills": "skills",
+}   # (years of experience: always worked out from your job dates, so it follows "work history")
+
+
+def _owner(data: dict | None) -> OwnerStub | None:
+    """A profile as every module sees it: defaults filled in, years from the job dates (store.as_owner)."""
+    d = dict(data or {})
+    years = store.experience_years(d.get("employment_history"))
+    if years is not None:
+        d["total_experience_years"] = years
+    try:
+        return OwnerStub.model_validate(d)
+    except ValidationError:
+        return None
+
+
+def changed_fields(old: dict, new: dict) -> list[str]:
+    a, b = _owner(old), _owner(new)
+    old = a.model_dump(mode="json") if a else (old or {})
+    new = b.model_dump(mode="json") if b else (new or {})
+    return [k for k in LABELS if old.get(k) != new.get(k)]
+
+
+def ai_changes(old: dict, new: dict) -> tuple[bool, bool, bool]:
+    """(jobs read again, jobs graded again, outreach drafts written again): whether what the AI is told about
+    you changed — exactly what each is given (reader.candidate_brief; profile_text.profile_summary for the
+    grade; drafting.inputs_version's profile part for drafts), so a change only to pay or cities is free."""
+    from app.modules.m2_jobs.profile_text import profile_summary
+    from app.modules.m2_jobs.reader import candidate_brief, profile_brief
+
+    a, b = _owner(old), _owner(new)
+    if a is None or b is None:
+        return True, True, True
+    read = candidate_brief(a) != candidate_brief(b)
+    grade = read or profile_summary(a) != profile_summary(b)
+    drafts = ([profile_brief(a), a.name, a.mobile, a.linkedin_url, a.total_experience_years]
+              != [profile_brief(b), b.name, b.mobile, b.linkedin_url, b.total_experience_years])
+    return read, grade, drafts
+
+
+def resume_draft(session: Session) -> OwnerProfile | None:
+    """A new reading of your résumé waiting for your check — not a leftover `profile edit` copy (that one would
+    make Save start a new profile version, and the daily check re-work your direction with the AI)."""
+    draft = store.latest_draft(session)
+    if draft is not None and draft.data and (draft.resume_read or (draft.notes or {}).get("from_resume")):
+        return draft
+    return None
+
+
+def save_edit(session: Session, data: dict) -> tuple[OwnerProfile, list[str]]:
+    """The Profile screen's Save: the form becomes your confirmed profile at once (a waiting résumé draft is
+    confirmed with it). Saving counts as re-confirming pay and notice period. The Audit log gets the names of
+    what changed, never the values."""
+    current = store.load_confirmed(session)
+    before = dict(current.data) if current else _base(session)
+    # No résumé draft waiting: the confirmed profile is changed in place, like your direction edits — a new
+    # version would have the daily check re-work your career direction (an AI call) for a form save.
+    row = resume_draft(session)
+    if row is None:
+        for stray in session.scalars(select(OwnerProfile).where(OwnerProfile.status == "draft")).all():
+            stray.status = "superseded"          # an unconfirmed `profile edit` copy: this Save replaces it
+        row = current
+    if row is None:
+        row = OwnerProfile(status="draft", data={}, notes={}, confirmed_fields={}, resume_hash=None)
+        session.add(row)
+        session.flush()
+    row = confirm(session, data, row=row)
+    changed = changed_fields(before, row.data)
+    what = ", ".join(LABELS[k] for k in changed) or "nothing changed (pay and notice period re-confirmed)"
+    audit.record(session, "m5", "profile_edited", f"You edited your profile: {what}",
+                 subject_type="profile", subject_id=str(row.id), detail={"fields": changed})
+    return row, changed
 
 
 def confirm_review_file(session: Session, path: Path = REVIEW_FILE) -> OwnerProfile:

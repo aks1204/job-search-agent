@@ -5,53 +5,98 @@
 {% set cr = data.current_role or {} %}
 {% macro chip(field) -%}
   {%- set when = ((prof.confirmed or {}).confirmed_fields or {}).get(field) -%}
-  {%- if prof.confirmed and field in prof.confirmed.stale -%}<span class="chip ch-red">confirm — last {{ when or "never" }}</span>
-  {%- elif when -%}<span class="chip ch-blue">confirmed {{ when }}</span>{%- endif -%}
+  {%- if prof.confirmed and field in prof.confirmed.stale -%}<span class="chip ch-red">please re-confirm · last {{ when or "never" }}</span>
+  {%- elif when -%}<span class="chip ch-gray">confirmed {{ when }}</span>{%- endif -%}
 {%- endmacro %}
-<h1>{{ data.name or 'Your profile' }}</h1>
-<div class="sub">{{ data.location or '' }}{% if data.mobile %} · {{ data.mobile }}{% endif %}{% if data.linkedin_url %} · <a href="{{ data.linkedin_url | href }}" target="_blank" rel="noopener noreferrer">LinkedIn</a>{% endif %}
-  {% if prof.confirmed %} · confirmed {{ prof.confirmed.confirmed_at | day }}{% else %} · not confirmed yet — the agent uses config/owner_stub.yaml{% endif %}</div>
-{% if prof.draft %}<div class="card s-red"><div class="ttl">A new reading of your résumé is waiting for you</div><div class="det">From {{ prof.draft.created_at | day }} · check review/profile.yaml in your project folder (Notepad is fine), fix anything, save, then:</div>
-  <div class="act">{{ ui.button('/do/profile-confirm', 'Confirm profile', cls='primary') }}</div></div>{% endif %}
-
-<div class="sect"><h3>RÉSUMÉ</h3>
-  <div class="kv"><span><b>{{ resume.name }}</b></span><span>{% if resume.exists %}updated {{ resume.updated | day }}{% else %}missing — add config/resume.pdf{% endif %}</span></div>
-  {% if resume.exists %}<div class="act">{{ ui.button('/do/run/resume', 'Read my résumé again', title='An AI read (a few cents) unless it already read this file; you check the result before anything changes') }}</div>{% endif %}
+<div class="pagehead">
+  <div><h1>{{ data.name or 'Your profile' }}</h1>
+    <div class="sub">{% if data.career_field %}{{ data.career_field }} · {% endif %}{% if prof.confirmed %}confirmed {{ prof.confirmed.confirmed_at | day }}{% else %}not confirmed yet: the agent uses config/owner_stub.yaml{% endif %}</div></div>
+  <a class="btnlike primary" href="/profile/edit">Edit profile</a>
 </div>
 
-<div class="sect"><h3>EMPLOYMENT HISTORY · DRIVES BRAND & LEVEL RULES</h3>
-  {% for j in data.employment_history or [] %}
-  <div class="kv"><span><b>{{ j.company }}</b> — {{ j.title }}</span>
-    <span>{{ j.start }} – {{ j.end or 'now' }}{% if not j.end and j.company == cr.company %} · <b>current level since {{ cr.started }}</b>{% endif %}{% if loop.index0 + 1 < (data.employment_history | length) and data.employment_history[loop.index0 + 1].company == j.company %} · promoted ↑{% endif %}</span></div>
-  {% endfor %}
-  <div class="note">{% if years %}{{ years }} years of experience (from your job dates){% endif %}{% if data.current_level %} · level: {{ data.current_level }}{% endif %}</div>
+{% if prof.draft %}
+<div class="card s-red"><div class="ttl">A new reading of your résumé is waiting for you</div>
+  <div class="det">From {{ prof.draft.created_at | day }}. Until you confirm it, the agent keeps using your current profile.</div>
+  <div class="act"><a class="btnlike primary" href="/profile/edit">Review and confirm</a>
+    <details class="pop"><summary class="btnlike">Or confirm review/profile.yaml</summary>
+      <div class="popbody"><div class="note">If you edited the file in your project folder instead:</div>{{ ui.button('/do/profile-confirm', 'Confirm the file', cls='primary') }}</div></details></div></div>
+{% endif %}
+
+<div class="sect"><h3>ABOUT YOU</h3>
+  <dl class="facts">
+    <dt>Lives in</dt><dd>{{ data.location or '—' }}</dd>
+    <dt>Mobile</dt><dd>{{ data.mobile or '—' }} <span class="note inline">(email signature only)</span></dd>
+    <dt>LinkedIn</dt><dd>{% if data.linkedin_url %}<a href="{{ data.linkedin_url | href }}" target="_blank" rel="noopener noreferrer">{{ data.linkedin_url }}</a>{% else %}—{% endif %}</dd>
+    <dt>Experience</dt><dd>{% if years %}{{ years }} years, from your job dates{% else %}—{% endif %}{% if data.current_level %} · level <b>{{ data.current_level }}</b>{% endif %}</dd>
+  </dl>
 </div>
 
-<div class="sect"><h3>POWERS YOUR RULES</h3>
+<div class="sect" id="pay"><h3>PAY & NOTICE · PRIVATE: NEVER SENT TO THE AI</h3>
   {% set comp = data.current_compensation %}
-  <div class="kv"><span class="k">Current pay</span><span>{% if comp %}{{ comp.currency }} {{ '{:,}'.format(comp.annual_ctc) }} a year{% if comp.includes_variable %} (incl. variable){% endif %}{% else %}not set{% endif %}
-    {{ chip('current_compensation') }}</span></div>
-  {% if data.pay_floor_annual %}<div class="kv"><span class="k">Lowest pay you'd take</span><span>{{ '{:,}'.format(data.pay_floor_annual) }} a year</span></div>{% endif %}
-  <div class="kv"><span class="k">Notice period</span><span>{{ data.notice_period_days ~ ' days' if data.notice_period_days else 'not set' }} {{ chip('notice_period_days') }}</span></div>
-  {% set wa = data.work_authorization or {} %}
-  <div class="kv"><span class="k">Work authorization</span><span>{{ wa.citizenship or '—' }} citizen{% if wa.visas_held %} · visas: {{ wa.visas_held | join(', ') }}{% endif %} · {{ 'open to relocating' if wa.open_to_relocation else 'not relocating' }}</span></div>
-  <div class="kv"><span class="k">Where</span><span>{{ (data.preferred_locations_india or []) | join(', ') or 'anywhere in India' }}{% if data.remote_ok %} · remote ok{% endif %}</span></div>
+  <dl class="facts">
+    <dt>Current pay</dt><dd>{% if comp %}<b>{{ comp.currency }} {{ '{:,}'.format(comp.annual_ctc) }}</b> a year{% if comp.includes_variable %}, including variable{% endif %}{% else %}not set{% endif %} {{ chip('current_compensation') }}</dd>
+    <dt>Lowest you'd take</dt><dd>{% if data.pay_floor_annual %}{{ '{:,}'.format(data.pay_floor_annual) }} a year{% else %}more than now{% endif %}</dd>
+    <dt>Notice period</dt><dd>{{ data.notice_period_days ~ ' days' if data.notice_period_days else 'not set' }} {{ chip('notice_period_days') }}</dd>
+  </dl>
+  <div class="act"><a href="/profile/edit#pay">Update or re-confirm</a></div>
 </div>
 
-<div class="sect" id="direction"><h3>CAREER DIRECTION · DERIVED, YOUR CHOICES PERSIST</h3>
+<div class="sect"><h3>WORK HISTORY · USED FOR BRAND AND LEVEL RULES</h3>
+  <div class="history">
+  {% for j in data.employment_history or [] %}
+    {% set now = not j.end %}
+    <div class="hrow{{ ' now' if now }}">
+      <div><b>{{ j.title }}</b><div class="det">{{ j.company }}{% if loop.index0 + 1 < (data.employment_history | length) and data.employment_history[loop.index0 + 1].company == j.company %} · promoted{% endif %}</div></div>
+      <div class="when">{{ j.start }} – {{ j.end or 'now' }}{% if now %} <span class="chip ch-green">current</span>{% endif %}</div>
+    </div>
+  {% else %}<div class="note">No jobs yet: add them with Edit profile.</div>{% endfor %}
+  </div>
+  {% if data.level_ladder %}<div class="k sublabel">Level ladder</div>
+  <div class="ladder">{% for l in data.level_ladder %}<span class="chip {{ 'ch-blue' if l == data.current_level else 'ch-gray' }}">{{ l }}</span>{% if not loop.last %}<span class="arrow">→</span>{% endif %}{% endfor %}</div>{% endif %}
+</div>
+
+<div class="sect"><h3>WHERE & HOW</h3>
+  {% set wa = data.work_authorization or {} %}
+  <dl class="facts">
+    <dt>Cities</dt><dd>{% for c in data.preferred_locations_india or [] %}<span class="chip ch-gray">{{ c }}</span> {% else %}anywhere in India{% endfor %}</dd>
+    <dt>Ways of working</dt><dd>{{ 'Remote fine' if data.remote_ok else 'No remote' }} · {{ 'hybrid fine' if data.hybrid_ok else 'no hybrid' }} · {{ 'open to relocating' if wa.open_to_relocation else 'not relocating' }}</dd>
+    <dt>Work authorization</dt><dd>{{ wa.citizenship or '—' }} citizen{% if wa.visas_held %} · visas: {{ wa.visas_held | join(', ') }}{% endif %}</dd>
+  </dl>
+</div>
+
+<div class="sect" id="direction"><h3>CAREER DIRECTION · WHAT THE AGENT LOOKS FOR</h3>
   {% if direction %}
-  {% if direction.position %}<div class="kv"><span class="k">Where you are</span><span>{{ direction.position }}</span></div>{% endif %}
-  {% if direction.trajectory %}<div class="kv"><span class="k">Heading</span><span>{{ direction.trajectory }}</span></div>{% endif %}
-  {% for lst, label in [('progression', 'Step-up families'), ('lateral', 'Sideways families'), ('excluded', 'Excluded')] %}
-  <div class="kv"><span class="k">{{ label }}</span><span>{% for f in direction[lst] %}{{ f.family }}{% if f.condition %} ({{ f.condition }}){% endif %}{{ ', ' if not loop.last }}{% else %}—{% endfor %}</span></div>
+  {% if direction.position %}<p class="lead">{{ direction.position }}</p>{% endif %}
+  {% if direction.trajectory %}<p class="lead sub2">Heading: {{ direction.trajectory }}</p>{% endif %}
+  {% for lst, label, cls in [('progression', 'Step-up families', 'ch-green'), ('lateral', 'Sideways families', 'ch-blue'), ('excluded', 'Never these', 'ch-gray')] %}
+  <div class="k sublabel">{{ label }}</div>
+  <div class="fams">{% for f in direction[lst] %}<span class="fam"><span class="chip {{ cls }}">{{ f.family }}</span>{% if f.condition %}<span class="note inline">{{ f.condition }}</span>{% endif %}</span>{% else %}<span class="note inline">none</span>{% endfor %}</div>
   {% endfor %}
-  <div class="kv"><span class="k">Target roles</span><span>{% for t in direction.target_roles %}{{ t.title }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}</span></div>
-  <div class="kv"><span class="k">Openness to sideways moves</span><span>{{ direction.lateral_appetite }}</span></div>
+  <div class="k sublabel">Job titles it searches for</div>
+  <div class="fams">{% for t in direction.target_roles %}<span class="chip ch-gray">{{ t.title }}</span>{% else %}<span class="note inline">none</span>{% endfor %}</div>
+  <dl class="facts tight">
+    <dt>Sideways moves</dt><dd>{{ {'low': 'never', 'medium': 'only at a step-up brand', 'high': "anywhere that isn't a step down"}.get(direction.lateral_appetite, direction.lateral_appetite) }}</dd>
+    <dt>Track</dt><dd>{{ {'individual_contributor': 'individual contributor', 'people_manager': 'people manager'}.get(direction.track, direction.track) }}{% if direction.open_to_management_track %} · open to managing{% endif %}</dd>
+  </dl>
+  {% if direction.suggestions %}<div class="k sublabel">The agent suggests</div>{% endif %}
   {% for s in direction.suggestions %}
-  <div class="card s-red"><div class="ttl">Suggestion</div><div class="det">{{ s.text }}</div>
+  <div class="card s-red"><div class="det strong">{{ s.text }}</div>
     <div class="act">{{ ui.button('/do/direction/' ~ s.id, 'Yes', {'answer': 'yes'}, 'primary') }}{{ ui.button('/do/direction/' ~ s.id, 'No', {'answer': 'no'}) }}</div></div>
   {% endfor %}
   <div class="act">{{ ui.button('/do/run/direction', 'Re-work my career direction', title='About 3 cents; only suggests — nothing changes without your yes') }}</div>
   {% else %}<div class="note">No career direction yet.</div>{% endif %}
+</div>
+
+<div class="sect"><h3>SKILLS</h3>
+  {% set sk = data.skills or {} %}
+  <div class="k sublabel">Core</div>
+  <div class="fams">{% for s in sk.must_have or [] %}<span class="chip ch-blue">{{ s }}</span>{% else %}<span class="note inline">none</span>{% endfor %}</div>
+  {% if sk.nice_to_have %}<div class="k sublabel">Also good at</div>
+  <div class="fams">{% for s in sk.nice_to_have %}<span class="chip ch-gray">{{ s }}</span>{% endfor %}</div>{% endif %}
+</div>
+
+<div class="sect"><h3>RÉSUMÉ</h3>
+  <dl class="facts"><dt>{{ resume.name }}</dt><dd>{% if resume.exists %}updated {{ resume.updated | day }}{% else %}missing: add config/resume.pdf{% endif %}</dd></dl>
+  {% if resume.exists %}<div class="act">{{ ui.button('/do/run/resume', 'Read my résumé again', title='An AI read (a few cents) unless it already read this file; you check the result before anything changes') }}</div>{% endif %}
 </div>
 {% endblock %}

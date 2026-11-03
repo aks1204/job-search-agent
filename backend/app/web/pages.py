@@ -502,6 +502,10 @@ def ping_target(session: Session, n: Notification) -> str | None:
     kind, sid = n.subject_type or "", n.subject_id or ""
     if kind == "direction" or (kind == "profile" and sid == "direction"):
         return "/profile#direction"
+    if kind == "profile" and sid == "draft":
+        return "/profile/edit"                           # your new résumé reading, as a form to check
+    if kind == "profile" and sid in ("current_compensation", "notice_period_days"):
+        return "/profile/edit#pay"
     if kind == "profile":
         return "/profile"
     if kind == "job_cluster" and sid.isdigit():
