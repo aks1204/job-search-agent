@@ -1,23 +1,145 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Review{% endblock %}
 {% block content %}
-<h1>Review</h1>
-<div class="sub">Every email needs your approval before it sends · Approve / Edit / Skip arrive in the next update (for now: <code>review</code> in the CLI)</div>
-{% for c in campaigns %}
-<div id="camp{{ c.id }}" class="card {{ 's-red' if c.status == 'pending_review' else 's-none' }}">
-  <div class="top"><span class="ttl"><a href="/roles/{{ c.cluster_id }}">Role {{ c.cluster_id }}</a> · {{ c.company }} — campaign {{ c.id }}</span>
-    <span class="chip {{ 'ch-red' if c.status == 'pending_review' else 'ch-blue' }}">{{ c.status.replace('_', ' ') }}</span></div>
-  <div class="det">{{ c.emails | length }} email(s){% if c.edited %} · edited by you{% endif %}{% if c.status_reason %} · {{ c.status_reason }}{% endif %}{% if c.attach_resume %} · résumé: {{ attachment or 'missing — add config/resume.pdf' }}{% endif %}</div>
+<div class="pagehead">
+  <div><h1>Review</h1>
+    <div class="sub">Every outreach email waits for you · approve or skip each person, then press Begin outreach</div></div>
+  <a href="/settings" class="chip {{ 'ch-green' if sending_on else 'ch-gray' }}" title="The Sending switch is in Settings">{{ 'Sending is on' if sending_on else 'Sending is off' }}</a>
 </div>
-{% for e in c.emails %}
-<div class="draftbox">
-  <div class="hdr">Email {{ e.position }} · day {{ e.wave }} · {{ e.decision }} · {{ e.status }}
-    · To: {{ e.to_name ~ ' <' ~ e.to ~ '>' if e.to_name else e.to }} ({{ e.confidence }}{% if e.vouched %}, provider vouches{% endif %})
-    {% if e.needs_go_ahead and e.decision == 'pending' %} · <b>needs your go-ahead</b>{% endif %}
-    {% if e.previously_emailed_at %} · emailed about this role on {{ e.previously_emailed_at | day }}, no reply{% endif %}
-    <br>Subject: {{ e.subject }}</div>
-  <div class="body-text">{{ e.body }}</div>
+
+{% macro result(id) -%}
+{%- if flash and flash.card == id %}
+<div class="cardflash {{ 'ok' if flash.ok else 'bad' }}" role="status"><span>{{ '✓' if flash.ok else '!' }} {{ flash.text }}</span>
+  {%- if flash.undo %}<form class="inline" method="post" action="{{ flash.undo }}">{{ ui.hidden() }}<button type="submit" class="mailbtn">Undo</button></form>{% endif %}</div>
+{%- endif %}
+{%- endmacro %}
+
+{% macro email(c) -%}
+<div class="mail">
+  <div class="mhead">
+    <div class="mrow"><span class="k">Subject</span><b>{{ c.subject }}</b></div>
+    {% if c.attach_resume %}<div class="mrow"><span class="k">Attached</span>{% if attachment %}{{ attachment }}{% else %}<span class="chip ch-red">your résumé is missing: add config/resume.pdf</span>{% endif %}</div>{% endif %}
+  </div>
+  <div class="mbody">{{ c.body }}</div>
+</div>
+{%- endmacro %}
+
+{% macro person_tags(p) -%}
+<span class="chip {{ p.conf_cls }}">{{ p.conf }}</span>
+{%- if p.before %} <span class="chip ch-amber" title="Emailed about this role in an earlier campaign that got no reply">emailed {{ p.before | day }}, no reply</span>{% endif %}
+{%- if p.decision == 'approved' %} <span class="chip ch-green">approved{% if p.allow_low and p.go_ahead %} anyway{% endif %}</span>{% endif %}
+{%- if p.decision == 'skipped' %} <span class="chip ch-gray">skipped{% if p.skip_reason %} · {{ p.skip_reason }}{% endif %}</span>{% endif %}
+{%- if p.state %} <span class="chip {{ 'ch-red' if p.state == 'bounced' else 'ch-blue' }}">{{ p.state }}</span>{% endif %}
+{%- if p.reply %} <span class="chip ch-green">{{ p.reply }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro decide(p) -%}
+<div class="pact">
+  {%- if p.invalid %}<span class="note inline">can't be approved</span> {{ ui.reasons('/do/email/' ~ p.id, 'skip', 'Skip', skip_reasons, note='Optional: why, for your own record.') }}
+  {%- elif p.go_ahead %}
+  <details class="pop"><summary class="btnlike">Approve anyway</summary>
+    <div class="popbody"><div class="note">This address couldn't be proven to work ({{ p.conf }}). If it bounces, that counts against your Gmail; two bounces pause all sending until the queue is checked again.</div>
+      {{ ui.button('/do/email/' ~ p.id, 'Approve anyway', {'action': 'approve_low'}, 'primary') }}</div></details>
+  {{ ui.reasons('/do/email/' ~ p.id, 'skip', 'Skip', skip_reasons, note='Optional: why, for your own record.') }}
+  {%- else %}
+  {{ ui.button('/do/email/' ~ p.id, 'Approve', {'action': 'approve'}, 'primary') }}
+  {{ ui.reasons('/do/email/' ~ p.id, 'skip', 'Skip', skip_reasons, note='Optional: why, for your own record.') }}
+  {%- endif %}
+</div>
+{%- endmacro %}
+
+{% if waiting %}
+<h3 class="grouphead">WAITING FOR YOU · {{ waiting | length }}</h3>
+{% endif %}
+{% for c in waiting %}
+<div id="c{{ c.id }}" class="card s-red rcard">
+  <div class="top"><span class="ttl"><a href="/roles/{{ c.cluster_id }}">{{ c.title }} · {{ c.company }}</a></span>
+    <span class="chip {{ c.status_chip[0] }}">{{ c.status_chip[1] }}</span></div>
+  <div class="det">
+    {%- if c.tally.pending %}<b>{{ c.tally.pending }} of {{ c.people | length }} still to decide</b>{% else %}<b>Everyone decided</b>{% endif %}
+    {%- if c.tally.approved %} · {{ c.tally.approved }} approved{% endif %}{% if c.tally.skipped %} · {{ c.tally.skipped }} skipped{% endif %}
+    {%- if c.edited %} · <span class="chip ch-blue">edited by you</span>{% endif %}
+    {%- if c.status_reason %} · {{ c.status_reason }}{% endif %}</div>
+  {{ result(c.id) }}
+
+  {% if c.flagged or c.cut %}
+  <div class="notebox">
+    <b>{{ 'Read this one closely.' if c.flagged else 'The fact check made changes.' }}</b>
+    {% if c.cut %} It took out what it couldn't trace to your résumé or profile:
+    <ul class="lines">{% for s in c.cut %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}
+    {% if c.flagged %}<div>Some of it couldn't be fixed cleanly, or too few points were left. Edit it, or ask for a fresh draft.</div>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="k sublabel">THE EMAIL · THE SAME FOR EVERYONE, WITH THEIR OWN FIRST NAME</div>
+  {{ email(c) }}
+  <div class="act">
+    <a class="btnlike" href="/review/{{ c.id }}/edit">Edit draft</a>
+    {{ ui.button('/do/campaign/' ~ c.id, 'Fresh draft', {'action': 'redraft'}, title='The AI writes it again from your current résumé and profile (about ' ~ draft_cents ~ ' cents)') }}
+  </div>
+
+  <div class="k sublabel">WHO IT GOES TO</div>
+  {% for wave, people in c.days %}
+  <div class="dayhead">{{ days[wave] }}{% if wave %} · if nobody has replied by then{% endif %}</div>
+  {% for p in people %}
+  <div class="person {{ p.decision }}">
+    <div class="who"><b>{{ p.name or p.email }}</b>{% if p.name %}<div class="note">{{ p.email }}</div>{% endif %}</div>
+    <div class="tags">{{ person_tags(p) }}</div>
+    {% if p.decision == 'pending' %}{{ decide(p) }}{% else %}<div class="pact">{{ ui.button('/do/email-undo/' ~ p.id, 'Undo') }}</div>{% endif %}
+  </div>
+  {% endfor %}
+  {% endfor %}
+  {% if c.days | length > 1 %}<div class="note">The days are set again from the people you approve: the first two approved go on day 1.</div>{% endif %}
+
+  <div class="reviewbar">
+    {% if c.approvable | length > 1 %}{{ ui.button('/do/campaign/' ~ c.id, 'Approve all ' ~ (c.approvable | length), {'action': 'approve_all'}, title='Everyone still waiting whose address is proven; unproven ones stay for you') }}{% endif %}
+    {% if c.before %}{{ ui.button('/do/campaign/' ~ c.id, 'Skip everyone emailed before', {'action': 'skip_before'}) }}{% endif %}
+    <span class="grow"></span>
+    {% if c.tally.pending %}
+    <span class="note">Decide everyone to begin</span><button type="button" class="primary" disabled>Begin outreach</button>
+    {% elif c.tally.approved %}
+    {{ ui.button('/do/campaign/' ~ c.id, 'Begin outreach · ' ~ c.tally.approved ~ ' email' ~ ('s' if c.tally.approved > 1 else ''), {'action': 'begin'}, 'primary') }}
+    {% else %}
+    {{ ui.button('/do/campaign/' ~ c.id, 'Close: nobody to email', {'action': 'begin'}) }}
+    {% endif %}
+  </div>
 </div>
 {% endfor %}
-{% else %}<div class="empty">Nothing waiting for review.</div>{% endfor %}
+
+{% if under_way %}
+<h3 class="grouphead">UNDER WAY · {{ under_way | length }}</h3>
+{% for c in under_way %}
+<div id="c{{ c.id }}" class="card {{ 's-blue' if c.status != 'paused' else 's-red' }} rcard">
+  <div class="top"><span class="ttl"><a href="/roles/{{ c.cluster_id }}">{{ c.title }} · {{ c.company }}</a></span>
+    <span class="chip {{ c.status_chip[0] }}">{{ c.status_chip[1] }}</span></div>
+  {%- set sent = c.people | selectattr('status', 'in', ['sent', 'bounced']) | list %}
+  <div class="det">{% if c.armed_at %}Begun {{ c.armed_at | day }} · {{ sent | length }} of {{ c.tally.approved }} sent{% else %}Held before outreach began{% endif %}
+    {%- if c.status_reason %} · {{ c.status_reason }}{% endif %}</div>
+  {{ result(c.id) }}
+  {% if c.status == 'paused' %}<div class="notebox">{% if c.armed_at %}Someone at {{ c.company }} replied, so the rest is on hold. Read the reply in Gmail, then release or stop.{% else %}On hold before outreach began. Release it to review it again.{% endif %}</div>{% endif %}
+  {% for wave, people in c.days %}
+  {% set shown = people | rejectattr('decision', 'equalto', 'skipped') | list %}
+  {% if shown %}<div class="dayhead">{{ days[wave] }}{% if c.day_dates %} · {{ c.day_dates[wave] | day }}{% endif %}</div>{% endif %}
+  {% for p in shown %}
+  <div class="person {{ p.decision }}">
+    <div class="who"><b>{{ p.name or p.email }}</b>{% if p.name %}<div class="note">{{ p.email }}</div>{% endif %}</div>
+    <div class="tags">{{ person_tags(p) }}{% if p.decision == 'pending' and c.status in ('scheduled', 'running') %} <span class="chip ch-red">new: needs your choice</span>{% endif %}</div>
+    {% if p.decision == 'pending' and c.status in ('scheduled', 'running') %}{{ decide(p) }}{% endif %}
+  </div>
+  {% endfor %}
+  {% endfor %}
+  <details class="more"><summary>Show the email</summary>{{ email(c) }}</details>
+  <div class="reviewbar"><span class="grow"></span>
+    {% if c.status == 'paused' %}{{ ui.button('/do/outreach/' ~ c.company_id, 'Release ' ~ c.company, {'action': 'release'}, 'primary') }}
+    {% else %}{{ ui.button('/do/outreach/' ~ c.company_id, 'Hold', {'action': 'hold'}, title='Pause every unsent email to ' ~ c.company ~ '; Release continues it') }}{% endif %}
+    {{ ui.button('/do/outreach/' ~ c.company_id, 'Stop', {'action': 'stop'}, title='Cancel every unsent email to ' ~ c.company) }}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if not waiting and not under_way %}
+<div class="empty">Nothing waiting for review. When a role you pursue has people to email and a draft, it shows up here.</div>
+{% endif %}
 {% endblock %}

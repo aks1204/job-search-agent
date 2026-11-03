@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import Company, JobScore, Notification
+from app.models import Company, JobScore, Notification, OutreachCampaign
 from app.web.safety import check_token, safe_next
 
 router = APIRouter(prefix="/do", include_in_schema=False)
@@ -454,6 +454,167 @@ async def memory_undo(batch: str, request: Request, session: Session = Depends(g
         return f"Undone: {n} earlier skip(s) are used as examples again."
 
     return await _run(request, session, do, fallback="/pings")
+
+
+# --- Review (6c): Approve / Skip each person, then Begin outreach -----------------------------------
+
+def _email(session: Session, email_id: int):
+    from app.models import OutreachEmail
+
+    e = session.get(OutreachEmail, email_id)
+    c = session.get(OutreachCampaign, e.campaign_id) if e else None
+    if c is None:
+        raise NotFound("that email is gone (the campaign was replaced or removed)")
+    return c, e
+
+
+def _review_error(err) -> ValueError:
+    """The terminal's wording, said the screen's way."""
+    return ValueError(str(err).replace("approve it with --allow-low if you're sure", "use Approve anyway if you're sure"))
+
+
+@router.post("/email/{email_id}")
+async def email_decision(email_id: int, request: Request, session: Session = Depends(get_session)):
+    from app.modules.m3_outreach import campaigns as C
+    from app.web.review import SKIP_REASONS
+
+    def do(form):
+        c, e = _email(session, email_id)
+        action = _text(form, "action")
+        if action not in ("approve", "approve_low", "skip"):
+            raise ValueError("unknown button")
+        if e.decision != "pending":
+            raise ValueError(f"{e.to_email} is already {e.decision}; use Undo to change it")
+        reasons = [SKIP_REASONS[k] for k in form.getlist("chips") if k in SKIP_REASONS]
+        reason = "; ".join(reasons + ([_text(form, "reason")] if _text(form, "reason") else [])) or None
+        try:
+            C.decide(session, c, e, "skip" if action == "skip" else "approve", allow_low=action == "approve_low",
+                     reason=reason)
+        except C.ReviewError as err:
+            raise _review_error(err) from None
+        who = e.to_name or e.to_email
+        left = C.tally(C.emails(session, c))["pending"]
+        then = f" {left} still to decide." if left else " Everyone is decided: press Begin outreach when you're ready."
+        if c.status != "pending_review":
+            then = " They join the outreach already under way."
+        undo = f"/do/email-undo/{e.id}" if c.status == "pending_review" else None
+        return f"{'Skipped' if action == 'skip' else 'Approved'}: {who}.{then}", undo, None, c.id
+
+    return await _run(request, session, do, fallback="/review")
+
+
+@router.post("/email-undo/{email_id}")
+async def email_undo(email_id: int, request: Request, session: Session = Depends(get_session)):
+    from app.modules.m3_outreach import campaigns as C
+
+    def do(form):
+        c, e = _email(session, email_id)
+        try:
+            C.undecide(session, c, e)
+        except C.ReviewError:
+            why = "outreach has begun" if c.armed_at else f"this campaign is {c.status.replace('_', ' ')}"
+            raise ValueError(f"{why}, so choices can't be taken back now") from None
+        return f"Undone: {e.to_name or e.to_email} is waiting for your choice again.", None, None, c.id
+
+    return await _run(request, session, do, fallback="/review")
+
+
+@router.post("/campaign/{campaign_id}")
+async def campaign_action(campaign_id: int, request: Request, session: Session = Depends(get_session)):
+    from app.core.llm import LLM
+    from app.modules.m3_outreach import campaigns as C
+    from app.modules.m3_outreach import sender as S
+    from app.web.review import DAYS, draft_cost
+
+    def sending_off() -> bool:
+        try:
+            return S.paused()
+        except Exception:                    # Redis down: it can't send either
+            return True
+
+    def do(form):
+        return act(form), None, None, campaign_id       # the result line sits on the campaign's card
+
+    def act(form):
+        c = session.get(OutreachCampaign, campaign_id)
+        if c is None:
+            raise NotFound("no such campaign")
+        action = _text(form, "action")
+        es = C.emails(session, c)
+        if action in ("begin", "redraft"):
+            try:
+                C._editable(c)                 # an old tab: told now, not after a Confirm step
+            except C.ReviewError as err:
+                raise _review_error(err) from None
+        if action == "approve_all":
+            done = 0
+            for e in es:
+                if e.decision == "pending" and not C.needs_go_ahead(e) and e.confidence != "invalid":
+                    try:
+                        C.decide(session, c, e, "approve")
+                    except C.ReviewError as err:
+                        raise _review_error(err) from None
+                    done += 1
+            if not done:
+                raise ValueError("nobody left that can be approved in one go (unproven addresses need Approve anyway, "
+                                 "one by one)")
+            left = C.tally(es)["pending"]
+            return f"Approved {done}." + (f" {left} left for you to decide one by one." if left
+                                          else " Everyone is decided: press Begin outreach when you're ready.")
+        if action == "skip_before":
+            done = 0
+            for e in es:
+                if e.decision == "pending" and e.previously_emailed_at:
+                    C.decide(session, c, e, "skip", reason="emailed about this role before")
+                    done += 1
+            if not done:
+                raise ValueError("nobody here was emailed about this role before")
+            return f"Skipped {done} who were emailed about this role before."
+        if action == "begin":
+            counts = C.tally(es)
+            if counts["pending"]:
+                raise ValueError(f"{counts['pending']} still need your Approve or Skip first")
+            approved = [e for e in es if e.decision == "approved"]
+            if not _confirmed(form):
+                if not approved:
+                    raise Confirm("Close this campaign?", ["You skipped everyone, so nobody is emailed about this role.",
+                                                           "It leaves the Review screen."], "Close it")
+                lines = []
+                for i, e in enumerate(approved):
+                    lines.append(f"{DAYS[C.wave_for(i)]}: {e.to_name + ' · ' if e.to_name else ''}{e.to_email}")
+                lines.append("Each day's emails go only while nobody at the company has replied; daily limits, "
+                             "spacing and quiet hours apply.")
+                if sending_off():
+                    lines.append("Sending is off, so nothing goes out until you turn it on in Settings.")
+                raise Confirm(f"Begin outreach: {len(approved)} email(s)?", lines, "Begin outreach")
+            try:
+                n = C.begin(session, c)
+            except C.ReviewError as err:
+                raise _review_error(err) from None
+            if not n:
+                return "Closed: you skipped everyone."
+            off = " Sending is off, so nothing goes out until you turn it on in Settings." if sending_off() else ""
+            return f"Outreach begun: {n} email(s), day by day.{off}"
+        if action == "redraft":
+            if not LLM.available():
+                raise ValueError("a fresh draft needs ANTHROPIC_API_KEY in .env")
+            if not _confirmed(form):
+                cents = max(1, round(draft_cost(session) * 100))
+                raise Confirm("Write a fresh draft?", [
+                    f"The AI writes this email again from your current résumé and profile (about {cents} cents).",
+                    "It replaces the text here" + (", including your edit (kept as a style example)" if c.edited else "")
+                    + ". Approvals so far are reset; skips stay.",
+                    "It takes up to a minute."], "Write a fresh draft")
+            try:
+                C.redraft(session, c, LLM())
+            except C.ReviewError as err:
+                raise _review_error(err) from None
+            except Exception as err:           # the AI call failed (network, limits): told, the old text stays
+                raise ValueError(f"the AI couldn't write it just now ({type(err).__name__}); try again later") from None
+            return "A fresh draft is in. Read it, then approve each person again."
+        raise ValueError("unknown button")
+
+    return await _run(request, session, do, fallback="/review")
 
 
 # --- Settings ---------------------------------------------------------------------------------------

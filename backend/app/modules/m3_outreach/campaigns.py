@@ -1,8 +1,9 @@
 """Campaigns and the approval flow (spec §3.3, owner-specified).
 
 For each drafted role a campaign is prepared: every recipient's final email (recipient, subject, body,
-resume) → you step through them → Approve / Edit / Skip each → once all are reviewed, the wave
-scheduler starts. Human gate is permanent: there is no auto-send mode.
+resume) → you step through them → Approve / Edit / Skip each → once all are reviewed, you press Begin
+outreach and the wave scheduler starts (owner 2026-11-04: never from the last click alone). Human gate is
+permanent: there is no auto-send mode.
 
 Waves: day 0 = the first two people, day 1 = the next two, day 2 = the rest — each wave only while
 nobody at the company has replied. A designated address (or hiring mailbox) is a one-email campaign.
@@ -95,7 +96,8 @@ def prepare_campaigns(session: Session, cluster_ids: list[int] | None = None) ->
             _load_draft(current, draft)
             current.edited = False
             for e in session.scalars(select(OutreachEmail).where(OutreachEmail.campaign_id == current.id)).all():
-                e.decision, e.allow_low = "pending", False   # you approved the old text, not this one
+                if e.decision == "approved":                 # you approved the old text, not this one
+                    e.decision, e.allow_low = "pending", False   # (skips stay, as with an edit or a fresh draft)
             counts["refreshed"] += 1
             continue
         if current is not None and not may_start_again(session, current):
@@ -149,18 +151,24 @@ def _editable(campaign: OutreachCampaign) -> None:
         raise ReviewError(f"campaign {campaign.id} is {campaign.status}; only campaigns waiting for review can change")
 
 
+def _wait_check(session: Session, campaign: OutreachCampaign) -> None:
+    if wait := outreach_wait(session, campaign.cluster_id):
+        until, why = wait
+        raise ReviewError(f"no new outreach for this role: {why}" if until.year == 9999
+                          else f"outreach for this role waits until {until:%d %b %Y}: {why}")
+
+
 def decide(session: Session, campaign: OutreachCampaign, email: OutreachEmail, action: str, *,
-           allow_low: bool = False) -> None:
+           allow_low: bool = False, reason: str | None = None) -> None:
     """Approve or skip one email. Low-confidence addresses need allow_low (your explicit go-ahead).
-    In a campaign already under way, only newly added emails (e.g. the person a redirect named) can be decided."""
+    Nothing starts here: once everyone is decided, `begin` starts the waves.
+    In a campaign already under way, only newly added emails (e.g. the person a redirect named) can be decided;
+    they just join their wave."""
     late = campaign.status in ("scheduled", "running") and email.decision == "pending"
     if not late:
         _editable(campaign)
     if action == "approve":
-        if wait := outreach_wait(session, campaign.cluster_id):
-            until, why = wait
-            raise ReviewError(f"no new outreach for this role: {why}" if until.year == 9999
-                              else f"outreach for this role waits until {until:%d %b %Y}: {why}")
+        _wait_check(session, campaign)
         if email.confidence == "invalid":
             raise ReviewError(f"the mail server says {email.to_email} doesn't exist; it can't be approved")
         if needs_go_ahead(email) and not allow_low:
@@ -169,31 +177,54 @@ def decide(session: Session, campaign: OutreachCampaign, email: OutreachEmail, a
         email.decision, email.allow_low = "approved", allow_low or not needs_go_ahead(email)
     elif action == "skip":
         email.decision = "skipped"
-        email.status, email.status_reason = "cancelled", "skipped by you"
+        email.status = "cancelled"
+        email.status_reason = f"skipped by you: {reason}" if reason else "skipped by you"
     else:
         raise ReviewError("action must be approve or skip")
     audit.record(session, "m3", f"email_{action}", f"You chose {action} for {email.to_email} (campaign {campaign.id})",
                  subject_type="campaign", subject_id=str(campaign.id))
-    if not late:  # a late addition just joins its wave; the campaign's schedule stays as it is
-        _maybe_arm(session, campaign)
 
 
-def _maybe_arm(session: Session, campaign: OutreachCampaign) -> None:
-    """All reviewed → the wave scheduler starts (or the campaign ends if everything was skipped)."""
-    all_emails = emails(session, campaign)
-    if any(e.decision == "pending" for e in all_emails):
+def undecide(session: Session, campaign: OutreachCampaign, email: OutreachEmail) -> None:
+    """Undo an Approve or Skip — until outreach has begun."""
+    _editable(campaign)
+    if email.decision == "pending":
         return
+    if email.decision == "skipped" and email.status == "cancelled" and (email.status_reason or "").startswith("skipped by you"):
+        email.status, email.status_reason = "queued", None
+    email.decision, email.allow_low = "pending", False
+    audit.record(session, "m3", "email_undecided", f"You took back your choice for {email.to_email} (campaign {campaign.id})",
+                 subject_type="campaign", subject_id=str(campaign.id))
+
+
+def tally(all_emails: list[OutreachEmail]) -> dict:
+    """How far your review of a campaign is: {pending, approved, skipped}."""
+    return {k: sum(e.decision == k for e in all_emails) for k in ("pending", "approved", "skipped")}
+
+
+def begin(session: Session, campaign: OutreachCampaign) -> int:
+    """Your Begin outreach: everyone is decided → the wave scheduler starts (or, if you skipped everyone, the
+    campaign closes). Returns how many emails will go out. Sending itself still waits for the Sending switch."""
+    _editable(campaign)
+    all_emails = emails(session, campaign)
+    counts = tally(all_emails)
+    if counts["pending"]:
+        raise ReviewError(f"{counts['pending']} email(s) still need your Approve or Skip first")
     approved = [e for e in all_emails if e.decision == "approved"]
     if not approved:
         campaign.status, campaign.status_reason, campaign.ended_at = "cancelled", "every email skipped", _now()
-        return
+        audit.record(session, "m3", "campaign_closed", f"Campaign {campaign.id} closed: you skipped everyone",
+                     subject_type="campaign", subject_id=str(campaign.id))
+        return 0
+    _wait_check(session, campaign)          # a rejection may have come in since you approved
     # Re-number waves over the approved emails only, so day 0 always has the first two approved.
     for i, e in enumerate(approved):
         e.wave = wave_for(i)
     campaign.status, campaign.armed_at = "scheduled", _now()
     audit.record(session, "m3", "campaign_armed",
-                 f"Campaign {campaign.id} approved: {len(approved)} email(s) will go out in waves",
+                 f"You began outreach for campaign {campaign.id}: {len(approved)} email(s) will go out in waves",
                  subject_type="campaign", subject_id=str(campaign.id))
+    return len(approved)
 
 
 def edit(session: Session, campaign: OutreachCampaign, subject: str, body: str) -> None:

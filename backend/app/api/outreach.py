@@ -94,6 +94,19 @@ def decide_email(campaign_id: int, email_id: int, body: DecisionIn, session: Ses
     return _campaign_out(session, c)
 
 
+@router.post("/campaigns/{campaign_id}/begin")
+def begin_campaign(campaign_id: int, session: Session = Depends(get_session)) -> dict:
+    """Begin outreach: everyone is decided → the waves start (sending still waits for the Sending switch)."""
+    c = session.get(OutreachCampaign, campaign_id)
+    if c is None:
+        raise HTTPException(404, "no such campaign")
+    try:
+        C.begin(session, c)
+    except C.ReviewError as err:
+        raise HTTPException(422, str(err)) from err
+    return _campaign_out(session, c)
+
+
 class EditIn(BaseModel):
     subject: str
     body: str

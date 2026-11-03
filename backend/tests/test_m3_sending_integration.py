@@ -93,7 +93,25 @@ def test_review_is_per_email_and_low_confidence_needs_your_go_ahead(db_session, 
     C.decide(db_session, campaign, es[2], "skip")
     assert campaign.status == "pending_review"                            # one still waiting
     C.decide(db_session, campaign, es[3], "approve")
+    assert campaign.status == "pending_review"                            # everyone decided: still nothing starts
+    C.begin(db_session, campaign)                                         # your Begin outreach
     assert campaign.status == "scheduled" and [e.wave for e in es if e.decision == "approved"] == [0, 0, 1]
+
+
+def test_begin_needs_everyone_decided_and_choices_can_be_undone_until_then(db_session, campaign):
+    es = C.emails(db_session, campaign)
+    C.decide(db_session, campaign, es[0], "skip", reason="Not the right person")
+    assert es[0].status == "cancelled" and es[0].status_reason == "skipped by you: Not the right person"
+    with pytest.raises(C.ReviewError, match="still need"):
+        C.begin(db_session, campaign)
+    C.undecide(db_session, campaign, es[0])
+    assert es[0].decision == "pending" and es[0].status == "queued" and es[0].status_reason is None
+    for e in es:
+        C.decide(db_session, campaign, e, "skip")
+    assert C.tally(es) == {"pending": 0, "approved": 0, "skipped": 4}
+    assert C.begin(db_session, campaign) == 0 and campaign.status == "cancelled"   # skipped everyone: closed
+    with pytest.raises(C.ReviewError):
+        C.undecide(db_session, campaign, es[0])                           # too late once it's over
 
 
 def test_your_edit_resets_approvals_and_becomes_a_style_example(db_session, campaign):
@@ -111,6 +129,7 @@ def test_your_edit_resets_approvals_and_becomes_a_style_example(db_session, camp
 def _approve_all(db_session, campaign):
     for e in C.emails(db_session, campaign):
         C.decide(db_session, campaign, e, "approve", allow_low=True)
+    C.begin(db_session, campaign)
 
 
 def test_waves_send_day_zero_first_and_a_reply_holds_the_company(db_session, campaign):

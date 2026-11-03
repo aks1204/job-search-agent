@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block title %}Edit draft · {{ c.company }}{% endblock %}
+{% block content %}
+<h1>Edit the email</h1>
+<div class="sub"><a href="/roles/{{ c.cluster_id }}">{{ c.title }} · {{ c.company }}</a> · {{ c.people | length }} recipient(s) · <a href="/review#c{{ c.id }}">Back without saving</a></div>
+
+{% if error %}<div class="flash bad" role="alert">! {{ error }}</div>{% endif %}
+
+<form method="post" action="/review/{{ c.id }}/edit" novalidate>{{ ui.hidden() }}
+<div class="sect"><h3>THE EMAIL</h3>
+  <label class="field{{ ' bad' if error and not subject.strip() }}"><span class="flabel">Subject</span>
+    <input type="text" name="subject" value="{{ subject }}"></label>
+  <label class="field{{ ' bad' if error and '{greeting}' not in body }}"><span class="flabel">Text</span>
+    <textarea name="body" rows="22" class="mailedit" spellcheck="true">{{ body }}</textarea>
+    <span class="fhelp">Keep the <code>{greeting}</code> line: each person gets their own "Hi first name," there. Everything else goes to everyone as you write it.</span></label>
+</div>
+<div class="savebar">
+  <button type="submit" class="primary">Save</button>
+  <a href="/review#c{{ c.id }}">Cancel</a>
+  <span class="note">Saving resets approvals, so you approve the exact final text. Your edit is kept as a style example for future drafts.</span>
+</div>
+</form>
+{% endblock %}

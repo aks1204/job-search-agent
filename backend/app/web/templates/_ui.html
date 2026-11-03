@@ -9,13 +9,13 @@
 {%- endmacro %}
 
 {#- Skip / 👎 with one-tap reasons: a small panel that opens on click (no JavaScript needed). -#}
-{% macro reasons(url, action, label, chips) -%}
+{% macro reasons(url, action, label, chips, note='No reason? The agent guesses one from the role and marks it "probably".') -%}
 <details class="pop"><summary class="btnlike">{{ label }}</summary>
   <form method="post" action="{{ url }}" class="popbody">{{ hidden({'action': action}) }}
     <div class="chips">{% for key, text in chips.items() %}<label class="pick"><input type="checkbox" name="chips" value="{{ key }}"> {{ text }}</label>{% endfor %}</div>
     <input name="reason" placeholder="In your words (optional)" aria-label="Reason in your words">
     <button type="submit" class="primary">{{ label }}</button>
-    <div class="note">No reason? The agent guesses one from the role and marks it "probably".</div>
+    <div class="note">{{ note }}</div>
   </form>
 </details>
 {%- endmacro %}

@@ -1237,7 +1237,7 @@ def review_cmd(action: str, campaign_id: int | None, email_pos: int | None, all_
                 print("-" * 72)
                 print(body)
             print("=" * 72)
-            print("Next: review approve|skip <campaign> --email N (or --all); review export <campaign> to edit.")
+            print("Next: review approve|skip <campaign> --email N (or --all), then review begin <campaign>; review export <campaign> to edit.")
             return 0
         if action in ("approve", "skip"):
             if previous and (action != "skip" or all_ or email_pos is not None):
@@ -1261,8 +1261,23 @@ def review_cmd(action: str, campaign_id: int | None, email_pos: int | None, all_
                     print(f"  {action}d: {e.to_email}")
                 except C.ReviewError as err:
                     print(f"  not {action}d: {err}")
-            print(f"Campaign {c.id}: {c.status}" + (" — the waves start now (within sending hours and limits)"
-                                                   if c.status == "scheduled" else ""))
+            left = C.tally(C.emails(s, c))["pending"]
+            if c.status != "pending_review":
+                print(f"Campaign {c.id}: {c.status}")
+            elif left:
+                print(f"Campaign {c.id}: {left} email(s) still to decide")
+            else:
+                print(f"Campaign {c.id}: everyone decided. Start the waves with: review begin {c.id}")
+            return 0
+        if action == "begin":
+            try:
+                n = C.begin(s, c)
+            except C.ReviewError as err:
+                print(f"Not begun: {err}")
+                return 1
+            print(f"Campaign {c.id}: " + (f"outreach begun: {n} email(s) go out in waves (within sending hours "
+                                          "and limits, and only while sending is on)" if n
+                                          else "you skipped everyone, so it's closed"))
             return 0
         if action == "redraft":
             from app.core.llm import LLM
@@ -1842,7 +1857,7 @@ def main() -> None:
     p_gm = sub.add_parser("gmail", help="Module 3: connect your Gmail (Google sign-in), check it, send yourself a test")
     p_gm.add_argument("action", choices=["connect", "status", "test"])
     p_rv = sub.add_parser("review", help="Module 3: review outreach emails: approve / edit / skip each one")
-    p_rv.add_argument("action", nargs="?", default="list", choices=["list", "show", "approve", "skip", "export", "import", "redraft"])
+    p_rv.add_argument("action", nargs="?", default="list", choices=["list", "show", "approve", "skip", "begin", "export", "import", "redraft"])
     p_rv.add_argument("campaign", nargs="?", type=int)
     p_rv.add_argument("--email", type=int, help="which email in the campaign (1, 2, ...)")
     p_rv.add_argument("--all", action="store_true", help="every email still waiting in the campaign")

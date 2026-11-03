@@ -202,3 +202,33 @@ p.lead.sub2{color:var(--sub);font-size:13px}
 .savebar{position:sticky;bottom:0;z-index:4;display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:var(--paper);border-top:1px solid var(--line);padding:12px 2px;margin-top:4px}
 .savebar .note{margin:0}
 .enterkey{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+/* 6c: the Review screen — the email as it will arrive, who it goes to, and Begin outreach */
+.grouphead{font-size:12px;font-weight:600;color:var(--faint);letter-spacing:.05em;margin:18px 0 8px}
+.rcard{padding:16px 18px 12px;margin-bottom:16px}
+.rcard .top .ttl{font-size:15px}
+.rcard .sublabel{letter-spacing:.05em;color:var(--faint);font-weight:600;font-size:11.5px;margin:16px 0 6px}
+.notebox{margin-top:10px;padding:10px 12px;border-radius:8px;background:var(--amber-bg);border:1px solid #EADBB8;font-size:13px;line-height:1.55}
+.notebox ul.lines{margin:6px 0}
+.mail{border:1px solid var(--line);border-radius:var(--r);background:#FBFCFA;overflow:hidden}
+.mhead{padding:10px 16px;border-bottom:1px solid var(--line);background:#fff;display:flex;flex-direction:column;gap:4px}
+.mrow{display:flex;gap:12px;align-items:baseline;font-size:13px}
+.mrow .k{width:64px;flex-shrink:0;color:var(--faint);font-size:12px}
+.mbody{padding:16px 18px;white-space:pre-wrap;font-size:14px;line-height:1.7;color:var(--ink);overflow-wrap:anywhere}
+.greet{background:var(--blue-bg);color:var(--blue);border-radius:5px;padding:1px 6px;font-weight:500}
+.rcard .act{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.dayhead{font-size:12px;font-weight:600;color:var(--sub);margin:10px 0 2px}
+.person{display:grid;grid-template-columns:minmax(180px,1.2fr) 2fr auto;gap:12px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.person .who{font-size:13.5px;line-height:1.35}
+.person .who .note{margin:0;overflow-wrap:anywhere}
+.person .tags{display:flex;gap:6px;flex-wrap:wrap}
+.person.skipped .who{color:var(--faint)}
+.person.skipped .who b{font-weight:500;text-decoration:line-through}
+.pact{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.pact .popbody{left:auto;right:0}
+.reviewbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.reviewbar .grow{flex:1}
+.reviewbar .note{margin:0}
+button[disabled],button[disabled]:hover{opacity:.45;cursor:not-allowed}
+button.primary[disabled]:hover{background:var(--ink)}
+.mailedit{font-size:14px !important;line-height:1.65 !important;min-height:360px}
+@media (max-width:760px){.person{grid-template-columns:1fr}.pact{justify-content:flex-start}}

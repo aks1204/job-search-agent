@@ -23,7 +23,7 @@ class MailAccount(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-# Campaign status: pending_review → scheduled (all reviewed, at least one approved) → running → done
+# Campaign status: pending_review → scheduled (all reviewed, at least one approved, you pressed Begin outreach) → running → done
 #                  | cancelled (all skipped / you stopped it) | paused (a reply came in: your call)
 class OutreachCampaign(Base):
     __tablename__ = "outreach_campaigns"

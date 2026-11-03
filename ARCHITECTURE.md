@@ -131,7 +131,7 @@ Answers: *who to email and how — with the owner's voice protected.* **Human ga
 
 ### 3.3 Send + safety
 - Identity: owner's Gmail OAuth (see Platform). Sent mail appears in their Sent folder.
-- **Approval flow (owner-specified):** campaign drafts (all recipients) prepared → summary mail flags "approval pending → [Review in app]" → Review screen: step through each final email exactly as it will send (recipient, subject, body, resume attachment visible) → **per-email Approve / Edit / Skip** → all reviewed → wave scheduler starts.
+- **Approval flow (owner-specified):** campaign drafts (all recipients) prepared → summary mail flags "approval pending → [Review in app]" → Review screen: step through each final email exactly as it will send (recipient, subject, body, resume attachment visible) → **per-email Approve / Edit / Skip** → all reviewed → you press **Begin outreach** (owner 2026-11-04) → wave scheduler starts.
 - **Waves: day 0 (primary + one more) → day 1 (next two) → day 2 (rest)**, each wave only on continued silence.
 - Throttle stack (unbypassable, in order): quiet hours (recipient-local best-effort) → global cap 12/day → per-company cap 2/day → stagger 30–60 min → **kill-switch**.
 - **Kill-switch:** ENGAGED human replies (interest, questions, forwarded-to-team) and REJECTIONS cancel all pending sends for that company instantly, even approved ones. **OOO/auto-replies do NOT cancel** (log, shift that contact past return date). **Redirects/"not the right person" do NOT cancel** (owner's decision) — wrong-target contact marked responsive-but-wrong, named right person joins bench at front of next wave. Ambiguous → pause that company, show owner the raw email.

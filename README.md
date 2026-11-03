@@ -327,7 +327,7 @@ Your sign-in is stored encrypted with `APP_SECRET_KEY`. To revoke access anytime
 - **Approve or skip each email.** An address that couldn't be proven (a catch-all domain, or one that couldn't be checked) needs your explicit `--allow-low`, unless a lookup service vouches for it.
 - **Edit:** your text replaces the shared email for every recipient. Earlier approvals are reset, so you approve the final text.
 - **Learning from your edits:** each edit is kept as a style example. Future drafts see your latest edits (5 by default) and follow your preferences. Facts still come only from your resume and still pass the truth check.
-- **Start:** once every email is approved or skipped, the waves start.
+- **Start:** once every email is approved or skipped, you press **Begin outreach** on the Review screen (or `review begin` in the terminal), and only then do the waves start.
 
 #### Waves and limits
 
@@ -357,6 +357,7 @@ docker compose exec api python -m app.cli review                         # what'
 docker compose exec api python -m app.cli review show <campaign>         # every email exactly as it will go out
 docker compose exec api python -m app.cli review approve <campaign> --email 1     # or --all; add --allow-low if asked
 docker compose exec api python -m app.cli review skip <campaign> --email 3
+docker compose exec api python -m app.cli review begin <campaign>         # everyone decided: start the waves
 docker compose exec api python -m app.cli review export <campaign>       # edit review/campaign-N.txt in any editor…
 docker compose exec api python -m app.cli review import <campaign>       # …then load your edit
 docker compose exec api python -m app.cli outreach status

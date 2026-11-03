@@ -277,15 +277,13 @@ def role(request: Request, cluster_id: int, session: Session = Depends(get_sessi
 
 @router.get("/review", response_class=HTMLResponse)
 def review(request: Request, session: Session = Depends(get_session)):
-    from app.api.outreach import _campaign_out
-    from app.modules.m3_outreach.campaigns import ACTIVE
-    from app.modules.m3_outreach.drafting import attachment
+    from app.web.actions import read_flash
+    from app.web.review import page_context
 
-    rows = session.scalars(select(OutreachCampaign).where(OutreachCampaign.status.in_(ACTIVE))
-                           .order_by(OutreachCampaign.status != "pending_review", OutreachCampaign.id)).all()
-    att = attachment()
-    return _page(request, session, "review.html", "review", campaigns=[_campaign_out(session, c) for c in rows],
-                 attachment=att[0] if att else None)
+    ctx = page_context(session)
+    flash = read_flash(request)
+    inline = bool(flash and flash["card"] and any(c["id"] == flash["card"] for c in ctx["waiting"] + ctx["under_way"]))
+    return _page(request, session, "review.html", "review", flash_inline=inline, **ctx)   # the line sits on its card
 
 
 # --- Companies --------------------------------------------------------------------------------------------
@@ -518,7 +516,7 @@ def ping_target(session: Session, n: Notification) -> str | None:
     if kind == "company" and sid.isdigit():
         return f"/companies/{sid}"
     if kind == "campaign" and sid.isdigit():
-        return f"/review#camp{sid}"
+        return f"/review#c{sid}"
     if kind == "memory" and not sid.startswith("undo:"):
         return "/memory"
     if kind == "owner_employer":
