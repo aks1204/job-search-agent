@@ -157,14 +157,14 @@ def _comp(read: dict, owner: OwnerStub, rules: JobRules, ctx: Context, table: di
         a.comp["below_floor"] = True
         if source == "stated" or read.get("pay_estimate_confidence") == "high":  # same bar as the pay rule
             a.comp["verdict"] = "below"
-            a.reasons.append(f"pay: below the floor you set (about {mid_inr / 1e5:.0f} vs {floor / 1e5:.0f} LPA)")
+            a.reasons.append(f"pay: below the lowest pay you set (this job: about {mid_inr / 1e5:.0f} LPA)")
             return
         a.flags.append("comp: may be below your floor")
 
     if source == "stated":
         if ratio < 1 - band:
             a.comp["verdict"] = "below"
-            a.reasons.append(f"pay: about {ratio:.0%} of your current pay ({basis})")
+            a.reasons.append(f"pay: well below your current pay (this job: about {mid_inr / 1e5:.0f} LPA, {basis})")
         elif ratio < 1 + band:
             a.comp["verdict"] = "marginal"
             a.flags.append("comp: marginal")
@@ -173,7 +173,7 @@ def _comp(read: dict, owner: OwnerStub, rules: JobRules, ctx: Context, table: di
     else:  # an AI estimate only rejects when it's confident AND clearly below
         if ratio < 1 - band and confident and read.get("pay_estimate_confidence") == "high":
             a.comp["verdict"] = "below"
-            a.reasons.append(f"pay (estimated): about {ratio:.0%} of your current pay ({basis})")
+            a.reasons.append(f"pay (estimated): well below your current pay (this job: about {mid_inr / 1e5:.0f} LPA, {basis})")
         elif ratio >= 1 + band and confident:
             a.comp["verdict"] = "above"
         else:

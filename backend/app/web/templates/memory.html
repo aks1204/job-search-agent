@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Memory{% endblock %}
+{% block content %}
+<h1>Memory</h1>
+<div class="sub">What the agent has learned from you · pin, edit or forget arrive in the next update</div>
+<form class="search" method="get" action="/memory"><input name="q" value="{{ q }}" placeholder="Search by meaning, e.g. relocation" aria-label="Search memory"><button type="submit">Search</button></form>
+{% for kind, label in [('answer', 'ANSWERS · ASKED AT MOST ONCE'), ('precedent', 'PRECEDENTS · YOUR DECISIONS, REMEMBERED'), ('taste_signal', 'TASTE PATTERNS')] %}
+<div class="sect"><h3>{{ label }}</h3>
+  {% for e in groups[kind] %}
+  <div class="row"><div><b>{{ e.meaning }}</b><div class="note">learned {{ e.created_at | day }}{% if e.last_used_at %} · last used {{ e.last_used_at | day }}{% endif %}{% if e.expires_at %} · re-check after {{ e.expires_at | day }}{% endif %}{% if e.similarity is defined %} · match {{ e.similarity }}{% endif %}</div></div>
+    <div style="display:flex;gap:6px">{% if e.pinned %}<span class="chip ch-blue">pinned</span>{% endif %}{% if e.clash %}<span class="chip ch-red">clashes</span>{% endif %}{% if e.status != 'active' %}<span class="chip ch-gray">{{ e.status }}</span>{% endif %}</div></div>
+  {% else %}<div class="note">Nothing yet.</div>{% endfor %}
+</div>
+{% endfor %}
+{% endblock %}

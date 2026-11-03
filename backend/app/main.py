@@ -15,6 +15,15 @@ def create_app() -> FastAPI:
     for router in (config_api.router, companies.router, scouts.router, audit.router, verdicts.router, feeds.router, jobs.router,
                    contacts.router, outreach.router, applications.router, profile.router, maintenance.router):
         app.include_router(router, prefix="/api")
+    # Module 6: the app's screens (http://localhost:8000) and their stylesheet
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    from app.web import pages
+
+    app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "web" / "static")), name="static")
+    app.include_router(pages.router)
     return app
 
 

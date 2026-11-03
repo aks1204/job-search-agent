@@ -32,6 +32,8 @@ class AppConfig(Strict):
     quiet_hours: QuietHours = Field(default_factory=lambda: QuietHours(start=time(22), end=time(8)))
     summary_mail_times: list[time] = Field(default_factory=lambda: [time(8), time(20)])
     heartbeat_interval_seconds: int = Field(60, ge=10, le=3600)
+    # The app's Jobs badge counts matches from this long ago (owner decision 2026-11-03: one week)
+    new_badge_hours: int = Field(168, ge=1, le=24 * 60)
 
     @field_validator("timezone")
     @classmethod

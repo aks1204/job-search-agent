@@ -88,14 +88,30 @@ def outreach_wait(session: Session, cluster_id: int, now: datetime | None = None
 def visible(session: Session, rows: list, limit: int | None = None) -> list:
     """Your matches without the roles hidden by a wait (owner decision 2026-11-03: a similar role at a company
     that just turned you down is hidden until the wait ends, then appears as a new match). `rows` start with a
-    JobScore; at most `limit` are kept."""
+    JobScore; at most `limit` are kept. Only roles at a company that has turned you down at all need the full
+    check, so a list of hundreds costs a couple of queries, not thousands."""
+    rows = list(rows)
+    rejecting = rejecting_companies(session)
+    company_of: dict[int, int] = {}
+    if rejecting and rows:
+        ids = list({row[0].cluster_id for row in rows})
+        company_of = dict(session.execute(select(JobCluster.id, JobCluster.company_id)
+                                          .where(JobCluster.id.in_(ids))).all())
     out = []
     for row in rows:
         if limit is not None and len(out) >= limit:
             break
-        if hidden_until(session, row[0].cluster_id) is None:
+        cid = row[0].cluster_id
+        if company_of.get(cid) not in rejecting or hidden_until(session, cid) is None:
             out.append(row)
     return out
+
+
+def rejecting_companies(session: Session) -> set[int]:
+    """Companies with any rejection the agent tracked (the same sources as `rejections`)."""
+    apps = select(Application.company_id).where(Application.status == "rejected", Application.outside.is_(False))
+    replies = select(OutreachCampaign.company_id).where(OutreachCampaign.outcome == "rejected")
+    return set(session.scalars(apps.union(replies)).all())
 
 
 def hidden_until(session: Session, cluster_id: int, now: datetime | None = None) -> datetime | None:

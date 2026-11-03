@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Review{% endblock %}
+{% block content %}
+<h1>Review</h1>
+<div class="sub">Every email needs your approval before it sends · Approve / Edit / Skip arrive in the next update (for now: <code>review</code> in the CLI)</div>
+{% for c in campaigns %}
+<div class="card {{ 's-red' if c.status == 'pending_review' else 's-none' }}">
+  <div class="top"><span class="ttl"><a href="/roles/{{ c.cluster_id }}">Role {{ c.cluster_id }}</a> · {{ c.company }} — campaign {{ c.id }}</span>
+    <span class="chip {{ 'ch-red' if c.status == 'pending_review' else 'ch-blue' }}">{{ c.status.replace('_', ' ') }}</span></div>
+  <div class="det">{{ c.emails | length }} email(s){% if c.edited %} · edited by you{% endif %}{% if c.status_reason %} · {{ c.status_reason }}{% endif %}{% if c.attach_resume %} · résumé: {{ attachment or 'missing — add config/resume.pdf' }}{% endif %}</div>
+</div>
+{% for e in c.emails %}
+<div class="draftbox">
+  <div class="hdr">Email {{ e.position }} · day {{ e.wave }} · {{ e.decision }} · {{ e.status }}
+    · To: {{ e.to_name ~ ' <' ~ e.to ~ '>' if e.to_name else e.to }} ({{ e.confidence }}{% if e.vouched %}, provider vouches{% endif %})
+    {% if e.needs_go_ahead and e.decision == 'pending' %} · <b>needs your go-ahead</b>{% endif %}
+    {% if e.previously_emailed_at %} · emailed about this role on {{ e.previously_emailed_at | day }}, no reply{% endif %}
+    <br>Subject: {{ e.subject }}</div>
+  <div class="body-text">{{ e.body }}</div>
+</div>
+{% endfor %}
+{% else %}<div class="empty">Nothing waiting for review.</div>{% endfor %}
+{% endblock %}

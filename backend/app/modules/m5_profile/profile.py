@@ -337,12 +337,12 @@ def _remember_time_sensitive(session: Session, data: dict) -> None:
     """Part 5c: your pay and notice period are remembered as answers that go stale after ~6 months."""
     nested = None
     try:
-        from app.modules.m5_profile.memory import record_answer
+        from app.modules.m5_profile.memory import PAY_QUESTION, record_answer
 
         nested = session.begin_nested()  # a memory problem rolls back only this, never your confirm
         pay = data.get("current_compensation") or {}
         if pay.get("annual_ctc"):
-            record_answer(session, "What is your current pay?", f"{pay['annual_ctc']} {pay.get('currency', 'INR')} a year",
+            record_answer(session, PAY_QUESTION, f"{pay['annual_ctc']} {pay.get('currency', 'INR')} a year",
                           module="m5.profile", expires_days=RECONFIRM_AFTER_DAYS)
         if data.get("notice_period_days") is not None:
             record_answer(session, "What is your notice period?", f"{data['notice_period_days']} days",

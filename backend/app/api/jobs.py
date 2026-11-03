@@ -45,6 +45,20 @@ def jobs_funnel(session: Session = Depends(get_session)) -> dict:
     return funnel(session)
 
 
+def listed_query(*entities):
+    """Scored roles you can be shown (the shortlist, the Jobs counts and the sidebar badge all start here):
+    never a blocked or rejected company, e.g. your employer or a dropped company. Rows start with `entities`;
+    the first must be JobScore. The wait after a rejection is applied afterwards, by `visible`."""
+    from app.models import JobAssessment, JobCluster, JobScore
+
+    return (select(*entities).select_from(JobScore)
+            .join(JobAssessment, JobAssessment.id == JobScore.assessment_id)
+            .join(JobPosting, JobPosting.id == JobAssessment.job_id)
+            .join(Company, Company.id == JobPosting.company_id)
+            .join(JobCluster, JobCluster.id == JobScore.cluster_id)
+            .where(Company.status.not_in(("blocked", "rejected"))))
+
+
 @router.get("/shortlist")
 def shortlist(
     band: str | None = Query(None, description="fast_lane | inbox | maybe | archive (default: all but archive)"),
@@ -53,13 +67,8 @@ def shortlist(
 ) -> list[dict]:
     from app.models import JobAssessment, JobCluster, JobScore
 
-    q = (select(JobScore, JobAssessment, JobPosting, Company, JobCluster)
-         .join(JobAssessment, JobAssessment.id == JobScore.assessment_id)
-         .join(JobPosting, JobPosting.id == JobAssessment.job_id)
-         .join(Company, Company.id == JobPosting.company_id)
-         .join(JobCluster, JobCluster.id == JobScore.cluster_id))
+    q = listed_query(JobScore, JobAssessment, JobPosting, Company, JobCluster)
     q = q.where(JobScore.band == band) if band else q.where(JobScore.band != "archive")
-    q = q.where(Company.status.not_in(("blocked", "rejected")))   # e.g. your employer; a dropped company
     from app.modules.m3_outreach.reopening import visible
 
     rows = visible(session, session.execute(q.order_by(JobScore.score.desc())).all(), limit)

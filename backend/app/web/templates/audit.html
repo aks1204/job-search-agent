@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Audit log{% endblock %}
+{% block content %}
+<h1>Audit log</h1>
+<div class="sub">Every consequential decision the agent made, and why — nothing here needs you</div>
+<div class="filters">
+  {% for g in groups %}<a href="/audit?group={{ g }}" class="{{ 'on' if group == g }}">{{ g.capitalize() }}</a>{% endfor %}
+</div>
+<div class="sect">
+  {% for a in rows %}
+  <div class="row"><div>{{ a.created_at | local }} · <b>{{ a.summary | private }}</b>
+    <div class="note">{{ a.module }} · {{ a.action.replace('_', ' ') }}{% if a.subject_type %} · {{ a.subject_type.replace('_', ' ') }} {{ a.subject_id }}{% endif %}</div>
+    {% if a.detail %}<details><summary>Detail</summary><pre class="rules">{{ a.detail | tojson(indent=2) }}</pre></details>{% endif %}</div>
+    {% if a.is_judgment %}<span class="chip {{ 'ch-gray' if a.overridden_at else 'ch-amber' }}">{{ 'overridden' if a.overridden_at else 'judgment' }}</span>{% else %}<span class="chip ch-gray">auto</span>{% endif %}</div>
+  {% else %}<div class="empty">Nothing recorded yet.</div>{% endfor %}
+</div>
+<div class="note">{% if page > 1 %}<a href="/audit?group={{ group }}&page={{ page - 1 }}">← newer</a>{% endif %}{% if more %} <a href="/audit?group={{ group }}&page={{ page + 1 }}">older →</a>{% endif %}</div>
+{% endblock %}

@@ -73,7 +73,9 @@ def answer_suggestion(suggestion_id: int, body: AnswerIn, session: Session = Dep
 
 
 def _mem_out(e) -> dict:
-    return {"id": e.id, "kind": e.kind, "meaning": e.meaning, "status": e.status, "pinned": e.pinned,
+    from app.modules.m5_profile.memory import shown_meaning
+
+    return {"id": e.id, "kind": e.kind, "meaning": shown_meaning(e), "status": e.status, "pinned": e.pinned,
             "clash": (e.content or {}).get("clash"), "created_at": e.created_at, "last_used_at": e.last_used_at,
             "expires_at": e.expires_at}
 

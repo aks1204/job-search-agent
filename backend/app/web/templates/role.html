@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ cluster.title }} · {{ company.name }}{% endblock %}
+{% block content %}
+<h1>{{ cluster.title }}</h1>
+<div class="sub"><a href="/companies/{{ company.id }}">{{ company.name }}</a>{% if job and job.location %} · {{ job.location }}{% endif %}{% if job and job.posted_at %} · posted {{ job.posted_at | day }}{% endif %}</div>
+
+{% if score %}
+<div class="sect"><h3>SCORE</h3>
+  <div class="kv"><span class="k">Score · band</span><span><b>{{ score.score }}</b> · {{ score.band.replace('_', ' ') }}{% if not score.graded %} (similarity only){% endif %}{% if score.owner_action %} · you: {{ score.owner_action.replace('_', ' ') }}{% endif %}</span></div>
+  {% if score.grade.one_liner %}<div class="kv"><span class="k">In one line</span><span>{{ score.grade.one_liner }}</span></div>{% endif %}
+  {% for r in score.grade.reasons or [] %}<div class="kv"><span class="k">Why it fits</span><span>{{ r }}</span></div>{% endfor %}
+  {% if score.grade.missing %}<div class="kv"><span class="k">Skill gaps</span><span>{{ score.grade.missing | join(', ') }}</span></div>{% endif %}
+  {% for p in (score.breakdown or {}).get('penalties', []) %}<div class="kv"><span class="k">Penalty</span><span>{{ p.points }} {{ p.name }}</span></div>{% endfor %}
+</div>
+{% endif %}
+
+{% if assessment %}
+<div class="sect"><h3>THE AI'S READ OF THE DESCRIPTION</h3>
+  <div class="kv"><span class="k">Outcome</span><span>{{ assessment.outcome }}</span></div>
+  {% if assessment.read.role_family %}<div class="kv"><span class="k">Role family</span><span>{{ assessment.read.role_family }}</span></div>{% endif %}
+  {% for r in assessment.reasons %}<div class="kv"><span class="k">Rule</span><span>{{ r | private }}</span></div>{% endfor %}
+  {% for f in assessment.flags %}<div class="kv"><span class="k">Flag</span><span>{{ f }}</span></div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="sect"><h3>OPENINGS & APPLY LINKS</h3>
+  {% if hidden %}<div class="card s-red"><div class="ttl">Hidden until {{ hidden.until | day }}</div><div class="det">{{ hidden.why[:1] | upper }}{{ hidden.why[1:] }}. It comes back as a new match then, with its apply link.</div></div>{% endif %}
+  {% for p in postings %}
+  <div class="kv"><span>{{ p.title }}{% if p.location %} · {{ p.location }}{% endif %}{% if p.lead_only %} · job-site listing{% endif %}</span>
+    <span>{{ p.status }}{% if p.url and not hidden %} · <a href="{{ p.url | href }}" target="_blank" rel="noopener noreferrer">open posting</a>{% endif %}</span></div>
+  {% endfor %}
+  {% if req_ids|length > 1 %}<div class="note">Job IDs: {{ req_ids | join(', ') }}</div>{% endif %}
+  {% for l in links %}<div class="kv"><span class="k">Apply{% if l.req_id %} ({{ l.req_id }}){% endif %}</span><span><a href="{{ l.url | href }}" target="_blank" rel="noopener noreferrer">{{ l.url }}</a>{% if l.why %} · {{ l.why }}{% endif %}</span></div>{% endfor %}
+  {% if app %}<div class="note">Application: {{ app.status.replace('_', ' ') }}{% if app.applied_at %} · applied {{ app.applied_at | day }}{% endif %}</div>{% endif %}
+</div>
+
+<div class="sect"><h3>OUTREACH</h3>
+  {% if channel %}
+    <div class="kv"><span class="k">How it reaches them</span><span>{{ channel.mode }}{% if channel.address %} · {{ channel.address }}{% endif %}{% for a in channel.also %} · {{ a }}{% endfor %}</span></div>
+    {% if channel.note %}<div class="kv"><span class="k">Note</span><span>{{ channel.note }}</span></div>{% endif %}
+    {% if channel.bench %}{% for p in channel.bench.people %}
+      <div class="kv"><span>{{ p.name }}{% if p.title %} — {{ p.title }}{% endif %}</span><span>{{ p.email or 'no address yet' }}{% if p.confidence %} · {{ p.confidence }}{% endif %}</span></div>
+    {% endfor %}{% endif %}
+  {% else %}<div class="note">No contact route decided yet.</div>{% endif %}
+  {% if draft %}
+    <details><summary>Draft v{{ draft.version }} · {{ draft.scenario.replace('_', ' ') }} · {{ draft.status }}</summary>
+      <div class="draftbox"><div class="hdr">Subject: {{ draft.subject }}</div><div class="body-text">{{ draft.preview }}</div></div>
+    </details>
+  {% endif %}
+</div>
+
+<div class="sect timeline"><h3>THE ROLE'S STORY</h3>
+  {% for at, kind, text in story %}<div class="row"><span class="when">{{ at | local }}</span><span>{{ text }}</span></div>
+  {% else %}<div class="note">Nothing has happened with this role yet.</div>{% endfor %}
+</div>
+
+{% if job and job.description %}
+<div class="sect"><h3>JOB DESCRIPTION</h3><div class="desc">{{ job.description }}</div></div>
+{% endif %}
+{% endblock %}

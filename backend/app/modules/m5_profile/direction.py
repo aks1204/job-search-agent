@@ -191,7 +191,10 @@ def question_of(kind: str, target: str, item: str) -> str:
     return describe(DirectionSuggestion(kind=kind, target=target, item=item, why="")).removesuffix(" ()")
 
 
-def describe(s: DirectionSuggestion) -> str:
+def describe(s: DirectionSuggestion, private: bool = False) -> str:
+    """private=True: for the Audit log, where your pay never appears (it's on the Profile screen only)."""
+    if private and s.kind == "pay_floor":
+        return "Set the lowest pay you'd take? (the level is on Profile)"
     where = {"progression": "step-up families", "lateral": "sideways families", "excluded": "excluded families",
              "target_roles": "target roles"}.get(s.target, s.target)
     if s.kind == "add":
@@ -233,7 +236,8 @@ def answer(session: Session, suggestion_id: int, yes: bool) -> DirectionSuggesti
         raise DirectionError(f"no open suggestion {suggestion_id} (see: direction)")
     if not yes:
         s.status, s.answered_at = "declined", datetime.now(timezone.utc)
-        audit.record(session, "m5", "direction_declined", f"You said no: {describe(s)}", subject_type="profile")
+        audit.record(session, "m5", "direction_declined", f"You said no: {describe(s, private=True)}",
+                     subject_type="profile")
         _remember(session, s, "no")
         return s
     row = store.load_confirmed(session)
@@ -245,7 +249,7 @@ def answer(session: Session, suggestion_id: int, yes: bool) -> DirectionSuggesti
         with session.begin_nested():
             n = set_aside_examples(session, s.item)
         audit.record(session, "m5", "direction_memory_set_aside",
-                     f"You said yes: {describe(s)} ({n} earlier skip(s) set aside)", subject_type="profile")
+                     f"You said yes: {describe(s, private=True)} ({n} earlier skip(s) set aside)", subject_type="profile")
         s.status, s.answered_at = "accepted", datetime.now(timezone.utc)
         _remember(session, s, "yes")
         return s
@@ -278,7 +282,7 @@ def answer(session: Session, suggestion_id: int, yes: bool) -> DirectionSuggesti
         drop(item)
         fam["excluded"].append(item)
     data["role_families"] = fam
-    _save_lists(session, row, data, f"You said yes: {describe(s)}")
+    _save_lists(session, row, data, f"You said yes: {describe(s, private=True)}")
     s.status, s.answered_at = "accepted", datetime.now(timezone.utc)  # only once the change is saved
     _remember(session, s, "yes")
     if s.kind in ("add", "include") and s.target in ("progression", "lateral"):

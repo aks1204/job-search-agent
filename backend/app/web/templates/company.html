@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ c.name }}{% endblock %}
+{% block content %}
+<h1>{{ c.name }}</h1>
+<div class="sub">{% if c.domain %}<a href="{{ ("https://" ~ c.domain) | href }}" target="_blank" rel="noopener noreferrer">{{ c.domain }}</a>{% else %}{{ c.domain or 'no website' }}{% endif %} · {{ c.type or 'type unknown' }} · {{ c.status }} · found by {{ c.sources | join(', ') or '—' }}</div>
+
+<div class="sect"><h3>HOW ITS JOBS ARE READ</h3>
+  {% if c.feed %}
+  <div class="kv"><span class="k">Source</span><span>{{ 'job sites (fallback)' if c.feed.method == 'aggregator' else c.feed.method }}{% if c.feed.slug %} · {{ c.feed.slug }}{% endif %}</span></div>
+  <div class="kv"><span class="k">Health</span><span>{{ c.feed.health }} · {{ c.feed.open_jobs }} open · last sync {{ c.feed.last_sync_at | local }}</span></div>
+  {% if c.feed.careers_url %}<div class="kv"><span class="k">Careers page</span><span><a href="{{ c.feed.careers_url | href }}" target="_blank" rel="noopener noreferrer">{{ c.feed.careers_url }}</a></span></div>{% endif %}
+  {% if c.feed.ownership_evidence %}<details><summary>How it was found</summary><div class="note">{{ c.feed.ownership_evidence }}</div></details>{% endif %}
+  {% if c.feed.last_error %}<div class="note">Last error: {{ c.feed.last_error }}</div>{% endif %}
+  {% else %}<div class="note">No feed set up yet.</div>{% endif %}
+</div>
+
+<div class="sect"><h3>VERDICT</h3>
+  {% for v in c.verdicts[:3] %}
+  <div class="row"><div><b>{{ 'Passed' if v.passed else 'Rejected' }}</b> · {{ v.decided_by }} · {{ v.at | day }}{% if v.permanent %} · permanent{% endif %}
+    <div class="note">{{ v.summary or v.failed_check or '' }}</div>
+    {% if v.checks %}<details><summary>Every check</summary>{% for ch in v.checks %}<div class="note">{{ ch.name }} — {{ ch.outcome }}{% if ch.reason %}: {{ ch.reason }}{% endif %}</div>{% endfor %}</details>{% endif %}
+  </div></div>
+  {% else %}<div class="note">Not judged yet.</div>{% endfor %}
+</div>
+
+<div class="sect"><h3>WHAT THE AGENT KNOWS</h3>
+  {% for name, fact in (c.facts or {}).items() %}
+  <div class="kv"><span class="k">{{ name.replace('_', ' ') }}</span><span>{{ fact.value }}{% if fact.confidence %} <span class="note">({{ fact.confidence }})</span>{% endif %}</span></div>
+  {% else %}<div class="note">No research notes yet.</div>{% endfor %}
+</div>
+
+<div class="sect"><h3>OPEN ROLES</h3>
+  {% for s, cl in roles %}
+  <div class="row"><div><a href="/roles/{{ cl.id }}"><b>{{ cl.title }}</b></a> <span class="note">{{ s.band.replace('_', ' ') }}</span></div><span class="score">{{ s.score }}</span></div>
+  {% else %}<div class="note">No scored roles right now.</div>{% endfor %}
+</div>
+
+<div class="sect"><h3>PEOPLE ON ITS CONTACT LIST</h3>
+  {% for b in benches %}
+  <div class="note">{{ b.key }} · {{ b.shape }} · {{ b.open_slots }} open slot(s)</div>
+  {% for p in b.people %}
+  <div class="kv"><span>{{ p.name }}{% if p.title %} — {{ p.title }}{% endif %}{% if p.status == 'frozen' %} (unclear who this is: not used){% endif %}</span><span>{{ p.email or 'no address yet' }}{% if p.confidence %} · {{ p.confidence }}{% endif %}</span></div>
+  {% endfor %}
+  {% else %}<div class="note">No contacts looked up yet.</div>{% endfor %}
+</div>
+{% endblock %}

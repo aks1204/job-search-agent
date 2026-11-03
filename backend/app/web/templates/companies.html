@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Companies{% endblock %}
+{% block content %}
+<h1>Companies</h1>
+<div class="sub">The watchlist — {{ coverage.kept_companies }} kept · {{ coverage.read_directly }} read from their own job boards · {{ coverage.on_job_site_fallback }} from job sites</div>
+<div class="filters">
+  {% for key, label in [('kept', 'Kept'), ('candidate', 'Waiting to be judged'), ('rejected', 'Rejected'), ('blocked', 'Blocked'), ('all', 'All')] %}
+  <a href="/companies?status={{ key }}" class="{{ 'on' if status == key }}">{{ label }}{% if key in statuses %} {{ statuses[key] }}{% endif %}</a>
+  {% endfor %}
+</div>
+<form class="search" method="get" action="/companies"><input type="hidden" name="status" value="{{ status }}">
+  <input name="q" value="{{ q }}" placeholder="Name or website" aria-label="Search companies"><button type="submit">Search</button></form>
+
+<div class="sect"><h3>{{ rows | length }} COMPANIES</h3>
+  {% for c, f in rows %}
+  <div class="row"><div><a href="/companies/{{ c.id }}"><b>{{ c.name }}</b></a> <span class="note">{{ c.domain or 'no website' }} · {{ c.type or 'type unknown' }} · {{ c.status }}</span></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+    {% if f %}
+      <span class="chip {{ 'ch-gray' if f.method == 'aggregator' else 'ch-blue' }}">{{ 'job sites' if f.method == 'aggregator' else f.method }}</span>
+      <span class="chip {{ 'ch-green' if f.health == 'ok' else ('ch-red' if f.health == 'failing' else 'ch-gray') }}">{{ f.health }} · {{ f.open_jobs }} open</span>
+    {% else %}<span class="chip ch-gray">no feed yet</span>{% endif %}
+    </div></div>
+  {% else %}<div class="empty">No companies match.</div>{% endfor %}
+</div>
+
+<div class="sect"><h3>RECENT VERDICTS</h3>
+  {% for v in verdicts %}
+  <div class="row"><div><b>{{ 'Passed' if v.passed else 'Rejected' }} — <a href="/companies/{{ v.company.id }}">{{ v.company.name }}</a></b>
+    <div class="note">{{ v.summary or v.failed_check or '' }} · {{ v.decided_by }} · {{ v.at | day }}</div></div></div>
+  {% else %}<div class="note">No verdicts yet.</div>{% endfor %}
+  <div class="note">Overriding a verdict (one tap, it becomes a precedent) arrives in the next update.</div>
+</div>
+{% endblock %}

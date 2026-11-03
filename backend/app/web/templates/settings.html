@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<div class="sub">Rhythms, services and rules · changing them from here arrives in the next update (for now: the files in config/)</div>
+
+<div class="sect"><h3>SENDING</h3>
+  <div class="kv"><span class="k">Outreach sending</span><span>{% if sending.on is none %}<span class="chip ch-gray">unknown</span>{% else %}<span class="chip {{ 'ch-green' if sending.on else 'ch-red' }}">{{ 'on' if sending.on else 'off (paused)' }}</span>{% endif %}</span></div>
+  <div class="kv"><span class="k">Bounce breaker</span><span>{{ sending.breaker }}{% if sending.breaker_reason %} · {{ sending.breaker_reason }}{% endif %}</span></div>
+  <div class="kv"><span class="k">Gmail</span><span>{% if gmail.connected %}connected · {{ gmail.email }}{% elif gmail.configured %}not connected{% else %}not set up{% endif %}</span></div>
+</div>
+
+<div class="sect"><h3>SUMMARY MAIL & ALERTS</h3>
+  <div class="kv"><span class="k">Summary mail</span><span>{% for t in app.summary_mail_times %}{{ t.strftime('%H:%M') }}{{ ' · ' if not loop.last }}{% endfor %} ({{ app.timezone }})</span></div>
+  <div class="kv"><span class="k">Quiet hours</span><span>{{ app.quiet_hours.start.strftime('%H:%M') }} – {{ app.quiet_hours.end.strftime('%H:%M') }} · alerts wait until morning</span></div>
+  <div class="kv"><span class="k">"New" on the Jobs badge</span><span>matches from the last {{ app.new_badge_hours // 24 if app.new_badge_hours % 24 == 0 else app.new_badge_hours }} {{ 'days' if app.new_badge_hours % 24 == 0 else 'hours' }}</span></div>
+</div>
+
+<div class="sect"><h3>SERVICES · KEYS STAY IN .env, NEVER SHOWN HERE</h3>
+  {% for name, on, used, cap, period in services %}
+  <div class="kv"><span class="k">{{ name }}</span>
+    <span style="display:flex;gap:8px;align-items:center;flex:1;justify-content:flex-end">
+    {% if not on %}<span class="chip ch-gray">not set up</span>
+    {% elif used == '?' %}<span class="chip ch-green">set ✓</span><span class="note">usage unknown (the counter store, Redis, isn't reachable)</span>
+    {% elif cap %}<span class="qbar"><i style="width:{{ [100, (used * 100 // cap) if cap else 0] | min }}%"></i></span><span class="note">{{ used }}/{{ cap }} this {{ period }}</span>
+    {% elif used is not none %}<span class="chip ch-green">set ✓</span><span class="note">{{ used }} this {{ period }}</span>
+    {% else %}<span class="chip ch-green">set ✓</span>{% endif %}</span></div>
+  {% endfor %}
+</div>
+
+<div class="sect"><h3>RULES · READ-ONLY HERE (EDIT THE FILES IN config/)</h3>
+  {% for name, text in rules %}
+  <details><summary>{{ name }}</summary><pre class="rules">{{ text }}</pre></details>
+  {% endfor %}
+</div>
+{% endblock %}

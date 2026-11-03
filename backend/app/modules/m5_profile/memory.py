@@ -51,6 +51,22 @@ def _shareable(e: MemoryEntry) -> bool:
 
 # --- answers: asked at most once -------------------------------------------------------------------
 
+PAY_QUESTION = "What is your current pay?"
+
+
+def shown_meaning(entry: MemoryEntry) -> str:
+    """The entry as the screens show it: your pay appears on the Profile screen only, so the remembered pay
+    answer and the pay-level skip pattern are shown without their numbers."""
+    c = entry.content or {}
+    if entry.kind == "answer" and c.get("question") == PAY_QUESTION:
+        return "Your current pay — kept private, see Profile"
+    if entry.kind == "answer" and (c.get("question") or "").startswith("Only consider roles paying"):
+        return f"The lowest pay you'd take — kept private, see Profile (you said {c.get('answer', '?')})"
+    if entry.kind == "taste_signal" and c.get("dim") == "pay":
+        return f"You usually skip roles below a certain pay level ({c.get('skipped', 'several')} skipped)"
+    return entry.meaning
+
+
 def _same_question(session: Session, question: str, statuses=("active", "needs_reconfirm")) -> MemoryEntry | None:
     """Answers are keyed by the EXACT question text — questions that differ by one word ('sales' vs 'marketing'
     analytics) sound alike to embeddings but are different questions."""
@@ -405,7 +421,8 @@ def act(session: Session, entry_id: int, action: str) -> MemoryEntry:
         e.last_used_at = _now()
     else:
         raise MemoryError("action must be pin, unpin, forget, restore or keep")
-    audit.record(session, "m5", f"memory_{action}", f"You chose {action} for a memory: {e.meaning[:120]}",
+    audit.record(session, "m5", f"memory_{action}",
+                 f"You chose {action} for a memory: {shown_meaning(e)[:120]}",
                  subject_type="memory", subject_id=str(e.id))
     return e
 
@@ -462,7 +479,7 @@ def beliefs(session: Session, llm) -> Beliefs:
 def search_text(session: Session, query: str, k: int = 10) -> list[tuple[MemoryEntry, float]]:
     out = []
     for kind in ("answer", "precedent", "taste_signal"):
-        out += search(session, kind, query, k=k)
+        out += search(session, kind, query, k=k, mark_used=False)   # you looking isn't the agent using it
     return sorted(out, key=lambda x: -x[1])[:k]
 
 

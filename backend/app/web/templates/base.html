@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Job agent{% endblock %} · Job agent</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">Job agent<small>self-hosted · this laptop only</small></div>
+    <nav class="nav" aria-label="Screens">
+      <a href="/jobs" class="{{ 'on' if screen == 'jobs' }}">Jobs {% if nav.new %}<span class="badge b-blue" title="new matches this week">{{ nav.new }}</span>{% endif %}</a>
+      <a href="/review" class="{{ 'on' if screen == 'review' }}">Review {% if nav.review %}<span class="badge b-red" title="campaigns waiting for you">{{ nav.review }}</span>{% endif %}</a>
+      <a href="/companies" class="{{ 'on' if screen == 'companies' }}">Companies</a>
+      <a href="/profile" class="{{ 'on' if screen == 'profile' }}">Profile</a>
+      <a href="/memory" class="{{ 'on' if screen == 'memory' }}">Memory</a>
+      <a href="/audit" class="{{ 'on' if screen == 'audit' }}">Audit log</a>
+      <a href="/settings" class="{{ 'on' if screen == 'settings' }}">Settings</a>
+      <a href="/maintenance" class="{{ 'on' if screen == 'maintenance' }}">Maintenance</a>
+    </nav>
+    <div class="foot">Last sync {{ nav.last_sync | local("%d %b %H:%M") }}<br>Next summary mail {{ nav.next_mail }}</div>
+  </aside>
+  <main class="main">
+{% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

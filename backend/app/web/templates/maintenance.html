@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Maintenance{% endblock %}
+{% block content %}
+<h1>Maintenance</h1>
+<div class="sub">How the agent's sources and job reading are doing · report from {{ report.generated_at | local }}</div>
+
+{% if report.system %}
+<div class="sect"><h3>WARNINGS</h3>
+  {% for w in report.system %}<div class="row"><div><b>{{ w.text }}</b>{% if w.examples %}<div class="note">e.g. {{ w.examples[:3] | join(', ') }}</div>{% endif %}{% if w.check %}<div class="note">look deeper: {{ w.check }}</div>{% endif %}</div></div>{% endfor %}
+</div>
+{% endif %}
+
+<div class="sect"><h3>COVERAGE · HOW KEPT COMPANIES' JOBS ARE READ</h3>
+  <div class="kv"><span class="k">Kept companies</span><span>{{ coverage.kept_companies }}</span></div>
+  <div class="kv"><span class="k">Read from their own job boards</span><span>{{ coverage.read_directly }}{% for m, n in coverage.direct_by_method.items() %} · {{ m }} {{ n }}{% endfor %}</span></div>
+  <div class="kv"><span class="k">From job sites (fallback)</span><span>{{ coverage.on_job_site_fallback }}</span></div>
+  <div class="kv"><span class="k">Awaiting set-up</span><span>{{ coverage.awaiting_setup }}</span></div>
+  {% for g in coverage.gaps %}<div class="kv"><span class="k">Gap: {{ g.reason }}</span><span>{{ g.companies }}{% if g.examples %} · e.g. {{ g.examples[:3] | join(', ') }}{% endif %}</span></div>{% endfor %}
+</div>
+
+<div class="sect"><h3>FEEDS</h3>
+  <div class="kv"><span class="k">By health</span><span>{% for h, n in feeds.by_health.items() %}{{ h }} {{ n }}{{ ' · ' if not loop.last }}{% endfor %}</span></div>
+  {% for f in failing %}<div class="kv"><span><a href="/companies/{{ f.company.id }}">{{ f.company.name }}</a> · {{ f.method }}</span><span class="note">{{ f.consecutive_failures }} failure(s){% if f.last_error %} · {{ f.last_error[:120] }}{% endif %}</span></div>{% endfor %}
+</div>
+
+<div class="sect"><h3>SOURCES OF COMPANIES · LAST {{ report.days }} DAYS</h3>
+  <table class="grid"><tr><th>Source</th><th>State</th><th>Found</th><th>Kept now</th><th>Open roles</th><th>Fast lane</th><th>Last run</th></tr>
+  {% for r in report.rows %}
+  <tr><td>{{ r.label }}</td><td>{{ r.state.replace('_', ' ') }}{% if r.state_note %}<div class="note">{{ r.state_note }}</div>{% endif %}</td><td>{{ r.found }}</td><td>{{ r.kept }}</td><td>{{ r.open_roles }}</td><td>{{ r.fast_lane }}</td><td>{{ r.last_run | local("%d %b %H:%M") }}</td></tr>
+  {% endfor %}</table>
+</div>
+
+<div class="sect"><h3>SCOUTS</h3>
+  {% for s in scouts %}
+  <div class="kv"><span>{{ s.scout }}</span><span><span class="chip {{ 'ch-green' if s.health == 'ok' else ('ch-red' if s.health == 'failing' else 'ch-gray') }}">{{ s.health.replace('_', ' ') }}</span>{% if s.last_run %} <span class="note">last {{ s.last_run.started_at | local("%d %b %H:%M") }}</span>{% endif %}{% if s.reason %} <span class="note">{{ s.reason }}</span>{% endif %}</span></div>
+  {% endfor %}
+</div>
+{% endblock %}
