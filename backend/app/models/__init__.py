@@ -10,6 +10,7 @@ from app.models.employer import OwnerEmployer
 from app.models.feed import CompanyFeed, RawPosting
 from app.models.job import JobCluster, JobPosting
 from app.models.llm_call import LLMCall
+from app.models.mail_log import MailLog
 from app.models.memory import MemoryEntry
 from app.models.notification import Notification
 from app.models.outreach import DraftEdit, MailAccount, OutreachCampaign, OutreachEmail, SendBreaker
@@ -21,5 +22,5 @@ from app.models.verdict import CompanyFact, CompanyVerdict
 __all__ = [
     "Application", "ApplicationEvent", "AuditLog", "Bench", "BenchMember", "CareerDirection", "DirectionSuggestion", "Company", "CompanyFact", "CompanyFeed", "CompanySighting", "CompanyVerdict", "Contact", "ContactEmail",
     "ContactLead", "DraftEdit", "EnrichmentLookup", "MailAccount", "OutreachCampaign", "OutreachEmail", "SendBreaker", "MailDomain", "OutreachDraft", "OwnerEmployer", "OwnerProfile", "RoleChannel",
-    "ExchangeFactor", "InboxMessage", "JobAssessment", "JobCluster", "JobFeedback", "JobPosting", "JobScore", "LLMCall", "MemoryEntry", "Notification", "RawPosting", "ScoutRun", "ScoutState",
+    "ExchangeFactor", "InboxMessage", "JobAssessment", "JobCluster", "JobFeedback", "JobPosting", "JobScore", "LLMCall", "MailLog", "MemoryEntry", "Notification", "RawPosting", "ScoutRun", "ScoutState",
 ]

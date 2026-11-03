@@ -531,6 +531,15 @@ docker compose exec api python -m app.cli memory pin 12           # unpin | forg
 
 API: `GET /api/memory` · `GET /api/memory/search?q=` · `GET /api/memory/beliefs` · `POST /api/memory/{id}/{pin|unpin|forget|restore|keep}`.
 
+## Your summary mail and alerts (Module 6, Part 6d)
+
+The agent writes to you in two ways, both from your connected Gmail to your own inbox. **Both start switched off**: turn each on in **Settings → Summary mail & alerts**. **Send me the summary now** sends a preview at any time.
+
+- **Summary mail**, at the times in `config/app.yaml` (default 08:00 and 20:00). Sections: ⚡ Needs you, 📥 New matches, 📤 What happened (per role), 📊 Pipeline and 🔧 Housekeeping, each only when it has something. A day with nothing new sends nothing.
+- **Two alerts**, each with its own switch: a **fast-lane find**, and **someone replying to your outreach** (with an Open in Gmail link). They are checked every 3 minutes, arrive together as one email, and wait during quiet hours (22:00 to 08:00).
+
+The buttons in the mail open the right screen in the app on your laptop (`app_url` in `config/app.yaml`, default `http://localhost:8000`); nothing is sent or changed from the mail itself. Your pay never appears in the mail, and roles held back by a wait after a rejection never appear in the mail or an alert.
+
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.

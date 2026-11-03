@@ -12,7 +12,7 @@ import hashlib
 import json
 import logging
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timezone
 
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -159,7 +159,12 @@ def _rebanding(row: JobScore, assessment: JobAssessment) -> None:
     elif row.owner_action == "maybe_rescue" and band in ("maybe", "archive"):
         band = "inbox"
         row.breakdown = {**row.breakdown, "caps": [*row.breakdown.get("caps", []), "rescued by you"]}
+    if BAND_RANK.get(band, 0) > BAND_RANK.get(row.band, 0):
+        row.banded_at = datetime.now(timezone.utc)   # moved up (e.g. graded into the Fast lane): new from now on
     row.band = band
+
+
+BAND_RANK = {"archive": 0, "maybe": 1, "inbox": 2, "fast_lane": 3}
 
 
 FEEDBACK_ACTIONS = ("act", "skip", "thumbs_up", "thumbs_down", "maybe_rescue")

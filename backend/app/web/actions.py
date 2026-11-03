@@ -639,6 +639,51 @@ async def sending(request: Request, session: Session = Depends(get_session)):
     return await _run(request, session, do, fallback="/settings")
 
 
+@router.post("/mail-switch")
+async def mail_switch(request: Request, session: Session = Depends(get_session)):
+    from app.core import audit
+    from app.modules.m6_mail import switches
+
+    def do(form):
+        name, on = _text(form, "name"), _text(form, "on") == "1"
+        if name not in switches.SWITCHES:
+            raise ValueError("unknown switch")
+        label = switches.SWITCHES[name]
+        audit.record(session, "m6", "mail_switch", f"You turned {'on' if on else 'off'}: {label}")
+        note = {"summary": " It comes at your mail times when there's something new.",
+                "fast": " Only roles found from now on.", "reply": " Only replies from now on."}[name] if on else ""
+        return f"{label}: {'on' if on else 'off'}.{note}", None, lambda: switches.set_on(name, on)
+
+    return await _run(request, session, do, fallback="/settings")
+
+
+@router.post("/mail-preview")
+async def mail_preview(request: Request, session: Session = Depends(get_session)):
+    from app.modules.m6_mail.summary import MailError, send_summary
+
+    def do(form):
+        import httpx
+
+        from app.modules.m3_outreach import gmail
+
+        acct = gmail.account(session)
+        status, account_id = (acct.status, acct.id) if acct else (None, None)
+        try:
+            result = send_summary(session, preview=True)
+        except MailError as e:
+            raise ValueError(str(e)) from None
+        except (gmail.GmailError, httpx.HTTPError) as e:   # Google said no, or no internet: told, not a crash
+            status = gmail.account(session).status   # (what Gmail just said about your sign-in)
+
+            def keep_status():                      # e.g. "reconnect": your sign-in was revoked — that stays
+                if account_id is not None:
+                    session.get(type(acct), account_id).status = status
+            raise Refused(f"Gmail didn't take it ({type(e).__name__}: {str(e)[:120]})", keep_status) from e
+        return f"Sent to your Gmail: {result['subject']}"
+
+    return await _run(request, session, do, fallback="/settings")
+
+
 @router.post("/breaker-reset")
 async def breaker_reset(request: Request, session: Session = Depends(get_session)):
     from app.core import audit

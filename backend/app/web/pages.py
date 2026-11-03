@@ -95,6 +95,10 @@ def _nav(session: Session) -> dict:
 def _next_mail() -> str:
     from zoneinfo import ZoneInfo
 
+    from app.modules.m6_mail import switches
+
+    if not switches.is_on("summary"):
+        return "off (Settings)"
     cfg = get_config().app
     tz = ZoneInfo(cfg.timezone)
     now = _now().astimezone(tz)
@@ -442,7 +446,19 @@ def settings(request: Request, session: Session = Depends(get_session)):
     except Exception:
         sending = {"on": None, "breaker": "unknown", "breaker_reason": "the switch store (Redis) isn't reachable"}
     return _page(request, session, "settings.html", "settings", app=cfg.app, sending=sending,
-                 gmail=gmail_status(session), services=services, rules=rules)
+                 gmail=gmail_status(session), services=services, rules=rules, mail=_mail_state(session))
+
+
+def _mail_state(session: Session) -> dict:
+    """The summary mail and alert switches (6d), and when each last went out."""
+    from app.models import MailLog
+    from app.modules.m6_mail import switches
+
+    def last(kind):
+        return session.scalar(select(func.max(MailLog.sent_at)).where(MailLog.kind == kind, MailLog.preview.is_(False)))
+
+    return {"switches": [(k, label, switches.is_on(k)) for k, label in switches.SWITCHES.items()],
+            "last_summary": last("summary"), "last_alert": last("alert")}
 
 
 # --- Maintenance ------------------------------------------------------------------------------------------

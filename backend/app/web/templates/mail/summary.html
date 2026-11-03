@@ -1,0 +1,39 @@
+{#- The summary mail (Module 6d). Styles are inline: mail apps drop most others. Every value is escaped. -#}
+{%- macro card(c) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin:0 0 8px 0;background:#FFFFFF;border:1px solid #E3E6E2;border-left:3px solid {{ stripes[c.color] }};border-radius:0 8px 8px 0">
+  <tr><td style="padding:10px 14px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td style="font-size:14px;font-weight:600;color:#1B211F;line-height:1.35">{{ c.title }}</td>
+      {% if c.chip %}{% set ch = chips[c.color] %}<td align="right" style="white-space:nowrap;padding-left:10px;vertical-align:top"><span style="display:inline-block;font-size:11px;font-weight:600;color:{{ ch[0] }};background:{{ ch[1] }};border-radius:99px;padding:2px 9px">{{ c.chip }}</span></td>{% endif %}
+    </tr></table>
+    {% if c.detail %}<div style="font-size:12.5px;color:#5E6763;margin-top:3px;line-height:1.45">{{ c.detail }}</div>{% endif %}
+    {% for text, link in c.lines %}<div style="font-size:12.5px;color:#1B211F;margin-top:4px;line-height:1.45">· {{ text }}{% if link %} · <a href="{{ link }}" style="color:#2F5FB3">Open in Gmail</a>{% endif %}</div>{% endfor %}
+    {% if c.buttons %}<div style="margin-top:9px">{% for label, href in c.buttons %}<a href="{{ href }}" style="display:inline-block;margin:0 6px 0 0;font-size:12.5px;font-weight:600;text-decoration:none;border-radius:7px;padding:5px 12px;{{ 'background:#1B211F;color:#FFFFFF;border:1px solid #1B211F' if loop.first else 'background:#FFFFFF;color:#1B211F;border:1px solid #CFD4D0' }}">{{ label }}</a>{% endfor %}</div>{% endif %}
+  </td></tr>
+</table>
+{%- endmacro -%}
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{{ s.subject }}</title></head>
+<body style="margin:0;padding:0;background:#F6F7F5;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#1B211F">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F6F7F5"><tr><td align="center" style="padding:20px 12px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px">
+  <tr><td style="padding:0 2px 14px">
+    <div style="font-size:12px;font-weight:600;letter-spacing:.05em;color:#8B938F">JOB AGENT · {{ kicker or "YOUR SUMMARY" }}</div>
+    <div style="font-size:18px;font-weight:600;margin-top:4px;line-height:1.35">{{ s.subject }}</div>
+  </td></tr>
+  {% for sec in s.sections %}
+  <tr><td style="padding:10px 2px 6px;font-size:13px;font-weight:700;color:#1B211F">{{ sec.heading }}</td></tr>
+  <tr><td>
+    {% for c in sec.cards %}{{ card(c) }}{% endfor %}
+    {% if sec.more %}<div style="font-size:12.5px;margin:2px 2px 8px"><a href="{{ sec.more_url }}" style="color:#2F5FB3;text-decoration:none">+{{ sec.more }} more in the app →</a></div>{% endif %}
+    {% if sec.note %}<div style="font-size:12.5px;color:#8B938F;margin:2px 2px 8px;line-height:1.45">{{ sec.note }}</div>{% endif %}
+  </td></tr>
+  {% endfor %}
+  {% if s.housekeeping %}<tr><td style="padding:12px 2px 4px;font-size:12.5px;color:#8B938F;line-height:1.5">🔧 {{ s.housekeeping }}</td></tr>{% endif %}
+  <tr><td style="padding:14px 2px 0;border-top:1px solid #E3E6E2;font-size:12px;color:#8B938F;line-height:1.55">
+    The buttons open the app on your laptop: <a href="{{ app_url }}" style="color:#2F5FB3">{{ app_url }}</a>. Nothing is sent or changed from this mail.
+    Mail and alerts can be turned off in <a href="{{ settings_url }}" style="color:#2F5FB3">Settings</a>.
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>

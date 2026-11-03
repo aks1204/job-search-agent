@@ -39,6 +39,11 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
         "maintenance-source-check": {"task": "maintenance.source_check",
                                      "schedule": crontab(minute="30", hour="7", day_of_week="mon")},
     }
+    # Module 6d: the summary mail at each of your mail times (app.yaml), and the alerts (both off until you
+    # switch them on in Settings)
+    for t in cfg.app.summary_mail_times:
+        schedule[f"m6-summary-{t:%H%M}"] = {"task": "m6.summary", "schedule": crontab(minute=str(t.minute), hour=str(t.hour))}
+    schedule["m6-alerts"] = {"task": "m6.alerts", "schedule": 180.0}
     for name in SCOUT_NAMES:
         scout = getattr(cfg.scouts, name)
         if not scout.enabled:
@@ -61,7 +66,8 @@ celery_app = Celery(
     backend=_settings.redis_url,
     include=["app.tasks.system", "app.modules.m1_companies.tasks", "app.modules.m2_jobs.tasks",
              "app.modules.m3_outreach.tasks", "app.modules.m4_apply.tasks",
-             "app.modules.m5_profile.tasks", "app.modules.maintenance.tasks", "app.web.runs"],
+             "app.modules.m5_profile.tasks", "app.modules.maintenance.tasks", "app.modules.m6_mail.tasks",
+             "app.web.runs"],
 )
 
 celery_app.conf.update(

@@ -34,6 +34,8 @@ class AppConfig(Strict):
     heartbeat_interval_seconds: int = Field(60, ge=10, le=3600)
     # The app's Jobs badge counts matches from this long ago (owner decision 2026-11-03: one week)
     new_badge_hours: int = Field(168, ge=1, le=24 * 60)
+    # Where the summary mail's buttons point: the app on this laptop (owner 2026-11-01: localhost only)
+    app_url: str = "http://localhost:8000"
 
     @field_validator("timezone")
     @classmethod

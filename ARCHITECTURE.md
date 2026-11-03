@@ -185,7 +185,7 @@ Times config (default 08:00 / 20:00 IST). Subject = compressed counts ("2 need y
 3. **📤 What happened** — **grouped per opening** (role header, events beneath: waves sent, replies classified w/ Gmail links, applications confirmed); non-role events = one gray "Elsewhere" line.
 4. **📊 Pipeline** — every in-flight opening, one card, colored status chip (live / on you / tracking / silent), sorted red→green→blue→gray; deep-links to role detail.
 5. **🔧 Housekeeping** — one gray line.
-Long sections truncate to top cards + "+N more in app". Quiet day → short note or skip (config). Action links: signed single-purpose tokens, deep-link to the exact screen, expire with their referent; trivial confirms resolvable from the mail.
+Long sections truncate to top cards + "+N more in app". Quiet day → short note or skip (config). Action links deep-link to the exact screen (owner 2026-11-04: links only open screens, nothing is changed from the mail; no signed one-click actions). Mail and both alerts start switched off (owner 2026-11-04).
 
 ### 6.2 Real-time pings — exactly two
 Fast-lane find (drafts auto-prepared, never auto-sent) · recruiter reply ("[Open in Gmail]"). Quiet-hours aware (queued to morning; config exception), batched, individually toggleable, email by default. **Nothing else may interrupt the owner.**
