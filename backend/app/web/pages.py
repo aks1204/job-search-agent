@@ -69,11 +69,13 @@ def _private(text: str) -> str:
 
 templates.env.filters["private"] = _private
 from app.web.text import rich_text  # noqa: E402  (job descriptions: paragraphs, headings, lists)
+from app.web.labels import CSS, role_chips  # noqa: E402  (the same words on every screen and in the mail)
 
 templates.env.filters["rich"] = rich_text
 templates.env.filters["local"] = _local
 templates.env.filters["day"] = lambda dt: _local(dt, "%d %b %Y")
 templates.env.filters["href"] = _href
+templates.env.globals["chip_css"] = CSS          # the labels' colours (web/labels.py)
 
 
 def _nav(session: Session) -> dict:
@@ -212,9 +214,11 @@ def _pursuing(session: Session) -> list[dict]:
         held = hidden_until(session, cl.id) if to_apply else None     # a wait after a rejection: no apply link
         if to_apply and co.status in ("blocked", "rejected"):
             continue                                                   # e.g. it turned out to be your employer
+        camp = campaigns.get(cl.id)
         out.append({"cluster_id": cl.id, "title": cl.title, "company": co.name, "app": app, "held": held,
                     "to_apply": to_apply, "auto": to_apply and cl.id not in acted,
-                    "outreach": _outreach_state(session, campaigns.get(cl.id)),
+                    "outreach": _outreach_state(session, camp),
+                    "chips": role_chips(app, camp.status if camp else None, to_apply),
                     "at": (app.status_at if app and app.status_at else None)})
     far = datetime.min.replace(tzinfo=timezone.utc)
     return sorted(out, key=lambda r: (not r["to_apply"], -(r["at"] or far).timestamp()))
@@ -269,10 +273,15 @@ def role(request: Request, cluster_id: int, session: Session = Depends(get_sessi
     # a role hidden by a wait shows why, and no apply or posting links until the wait ends (owner, 2026-11-03)
     wait = outreach_wait(session, cluster_id)
     hidden = {"until": wait[0], "why": wait[1]} if wait and hidden_until(session, cluster_id) else None
+    stands = None                    # where it stands, as on the Pursuing tab (only for a role you're pursuing)
+    if app is not None or (score is not None and score.owner_action == "act"):
+        camp = session.scalar(select(OutreachCampaign).where(OutreachCampaign.cluster_id == cluster_id)
+                              .order_by(OutreachCampaign.id.desc()).limit(1))
+        stands = role_chips(app, camp.status if camp else None, app is None or app.status == "queued")
     return _page(request, session, "role.html", "jobs", cluster=cluster, company=company, score=score,
                  assessment=assessment, job=job, postings=postings, req_ids=sibling_req_ids(session, cluster_id),
                  links=[] if hidden else role_links(session, cluster_id), channel=channel, draft=draft, app=app,
-                 story=story(session, cluster_id), hidden=hidden, chips=_chips(),
+                 story=story(session, cluster_id), hidden=hidden, chips=_chips(), stands=stands,
                  reaction=session.scalar(select(JobFeedback).where(JobFeedback.cluster_id == cluster_id)
                                          .order_by(JobFeedback.id.desc())))
 

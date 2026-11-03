@@ -12,13 +12,13 @@
   <div class="kv"><span class="k">Gmail</span><span>{% if gmail.connected %}connected · {{ gmail.email }} {{ ui.button('/do/gmail-test', 'Send me a test email') }}{% elif gmail.configured %}not connected · <a href="/api/gmail/connect">Connect Gmail</a>{% else %}not set up (README: Connect Gmail){% endif %}</span></div>
 </div>
 
-<div class="sect" id="mail"><h3>SUMMARY MAIL & ALERTS · TO YOUR OWN GMAIL</h3>
+<div class="sect" id="mail"><h3>SUMMARY MAIL & EMAIL ALERTS · TO YOUR OWN GMAIL</h3>
   {% for key, label, on in mail.switches %}
   <div class="kv"><span class="k">{{ label }}</span><span><span class="chip {{ 'ch-green' if on else 'ch-gray' }}">{{ 'on' if on else 'off' }}</span>
     {{ ui.button('/do/mail-switch', 'Turn off' if on else 'Turn on', {'name': key, 'on': '0' if on else '1'}) }}</span></div>
   {% endfor %}
   <div class="kv"><span class="k">Summary times</span><span>{% for t in app.summary_mail_times %}{{ t.strftime('%H:%M') }}{{ ' · ' if not loop.last }}{% endfor %} ({{ app.timezone }}) · last sent {{ mail.last_summary | local if mail.last_summary else 'never' }} · a day with nothing new sends nothing</span></div>
-  <div class="kv"><span class="k">Quiet hours</span><span>{{ app.quiet_hours.start.strftime('%H:%M') }} – {{ app.quiet_hours.end.strftime('%H:%M') }} · alerts wait until morning{% if mail.last_alert %} · last alert {{ mail.last_alert | local }}{% endif %}</span></div>
+  <div class="kv"><span class="k">Quiet hours</span><span>{{ app.quiet_hours.start.strftime('%H:%M') }} – {{ app.quiet_hours.end.strftime('%H:%M') }} · email alerts wait until morning{% if mail.last_alert %} · last alert {{ mail.last_alert | local }}{% endif %}</span></div>
   <div class="kv"><span class="k">Preview</span><span>{{ ui.button('/do/mail-preview', 'Send me the summary now', title='Goes to your own Gmail, marked Preview; the next scheduled summary still covers everything since the last one') }}</span></div>
   <div class="kv"><span class="k">"New" on the Jobs badge</span><span>matches from the last {{ app.new_badge_hours // 24 if app.new_badge_hours % 24 == 0 else app.new_badge_hours }} {{ 'days' if app.new_badge_hours % 24 == 0 else 'hours' }}</span></div>
 </div>

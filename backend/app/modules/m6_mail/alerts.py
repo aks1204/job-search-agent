@@ -92,7 +92,7 @@ def send_alerts(session: Session, *, now: datetime | None = None, sender=None) -
             + [f"{len(finds)} fast-lane role{'s' if len(finds) != 1 else ''}"] * bool(finds))
     summary = Summary(subject, [Section("alerts", "Right now", cards)], "", {}, False, now)
     html = templates.env.get_template("mail/summary.html").render(
-        s=summary, stripes=STRIPES, chips=CHIPS, app_url=url("/"), settings_url=url("/settings"), kicker="ALERT")
+        s=summary, stripes=STRIPES, chips=CHIPS, app_url=url("/"), settings_url=url("/settings"), kicker="EMAIL ALERT")
     text = "\n".join([subject, ""] + [f"- {c.title}\n  {c.detail}\n" + "\n".join(f"  {a} {h}" for a, h in c.buttons)
                                       for c in cards])
     (sender or gmail.send)(session, message(acct.email, f"Job Agent: {subject}", text, html))

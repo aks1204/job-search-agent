@@ -69,7 +69,7 @@ def test_a_role_hidden_by_a_wait_is_not_in_the_mail(db_session, roles):
     s = M.build(db_session, now=NOW + timedelta(seconds=1), since=NOW - timedelta(seconds=1))
     _, html = M.render(s)
     assert "Analytics Manager · Web Co" not in html                         # hidden until the wait ends
-    assert "Data Analyst &lt;script&gt;" not in html.split("Pipeline")[0]    # applied to: not a "new match"
+    assert "Data Analyst &lt;script&gt;" not in html                         # applied to and turned down: ended, not "new"
 
 
 def test_a_quiet_day_sends_nothing_but_a_preview_always_goes(db_session, roles, gmail_account):
@@ -195,7 +195,35 @@ def test_each_role_is_on_one_card_in_the_whole_mail(db_session, roles):
     if not mine:
         pytest.skip("your real items fill the top of Needs you")
     _, html = M.render(s)
-    assert html.count("Analytics Manager · Web Co") == 1                     # not again in New matches / Pipeline
+    assert html.count("Analytics Manager · Web Co") == 1                     # not again in New matches / Pursuing
     assert ("Web Co: a new opening for this role", None) in mine[0].lines    # its news is on that card
-    pipeline = next((sec for sec in s.sections if sec.key == "pipeline"), None)
-    assert pipeline is not None and "Also in flight" in pipeline.note
+    pursuing = next((sec for sec in s.sections if sec.key == "pursuing"), None)
+    assert pursuing is None or all(c.role != manager for c in pursuing.cards)  # (left out when nothing else is)
+    assert s.counts["pursuing"] >= 1 and "pursuing" in s.subject
+
+
+def test_one_set_of_words_for_where_a_role_stands():
+    from types import SimpleNamespace as App
+
+    from app.web.labels import in_play, role_chips
+
+    assert role_chips(None, None, True) == [("to apply", "red")]
+    assert role_chips(None, "pending_review", True) == [("to apply", "red"), ("to review", "red")]
+    assert role_chips(App(status="applied"), "running", False) == [("outreach on", "green"), ("applied", "blue")]
+    assert role_chips(App(status="interviewing"), None, False) == [("interviewing", "green")]
+    ended = role_chips(App(status="silent"), "done", False)
+    assert ended == [("ended · no reply", "gray")] and not in_play(ended)
+
+
+def test_pursuing_tab_uses_the_same_chips(client, db_session, roles):
+    from sqlalchemy import select
+
+    from app.models import JobScore
+
+    _company, data, _manager = roles
+    db_session.scalars(select(JobScore).where(JobScore.cluster_id == data)).one().owner_action = "act"
+    db_session.flush()
+    page = client.get("/jobs?tab=pursuing").text
+    card = page[page.index(f'id="c{data}"'):]
+    assert '<span class="chip ch-red">to apply</span>' in card[:1500]
+    assert '<span class="chip ch-red">to apply</span>' in client.get(f"/roles/{data}").text

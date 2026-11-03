@@ -23,10 +23,12 @@
 {% if tab == 'pursuing' %}
   {% for r in cards %}
   {% set a = r.app %}
-  <div class="card {{ 's-blue' if r.to_apply else 's-green' }}" id="c{{ r.cluster_id }}">
+  {% set lead = r.chips[0][1] %}
+  <div class="card {{ {'red': 's-red', 'green': 's-green', 'blue': 's-blue'}.get(lead, 's-none') }}" id="c{{ r.cluster_id }}">
     <div class="top"><span class="ttl"><a href="/roles/{{ r.cluster_id }}">{{ r.title }} · {{ r.company }}</a></span>
-      {% if r.to_apply %}<span>{% if r.auto %}<span class="chip ch-gray" title="A Fast-lane role: the agent put it on your list; Skip it if you don't want it">added automatically</span> {% endif %}<span class="chip ch-blue">to apply</span></span>
-      {% else %}<span class="chip {{ 'ch-gray' if a.status in ('silent', 'rejected', 'closed', 'skipped') else 'ch-green' }}">{{ a.status.replace('_', ' ') }}{% if a.status_at %} · {{ a.status_at | day }}{% endif %}</span>{% endif %}</div>
+      <span>{% if r.auto %}<span class="chip ch-gray" title="A Fast-lane role: the agent put it on your list; Skip it if you don't want it">added automatically</span> {% endif %}
+        {%- for label, color in r.chips %}<span class="chip {{ chip_css[color] }}">{{ label }}</span>{{ ' ' if not loop.last }}{% endfor %}
+        {%- if a and a.status_at and not r.to_apply %} <span class="note inline">{{ a.status_at | day }}</span>{% endif %}</span></div>
     <div class="det">Outreach: {{ r.outreach }}{% if a and a.applied_at %} · applied {{ a.applied_at | day }}{% if a.applied_how == 'email' %} ✓ confirmed by email{% endif %}{% endif %}{% if a and a.outside %} · applied outside the agent{% endif %}</div>
     <div class="act">
       {% if r.held %}<span class="note">Hidden until {{ r.held | day }}: you were turned down for a similar role there; its apply link comes back then.</span>

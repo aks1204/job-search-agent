@@ -531,14 +531,16 @@ docker compose exec api python -m app.cli memory pin 12           # unpin | forg
 
 API: `GET /api/memory` · `GET /api/memory/search?q=` · `GET /api/memory/beliefs` · `POST /api/memory/{id}/{pin|unpin|forget|restore|keep}`.
 
-## Your summary mail and alerts (Module 6, Part 6d)
+## Your summary mail and email alerts (Module 6, Part 6d)
 
-The agent writes to you in two ways, both from your connected Gmail to your own inbox. **Both start switched off**: turn each on in **Settings → Summary mail & alerts**. **Send me the summary now** sends a preview at any time.
+The agent writes to you in two ways, both from your connected Gmail to your own inbox. **Both start switched off**: turn each on in **Settings → Summary mail & email alerts**. **Send me the summary now** sends a preview at any time.
 
-- **Summary mail**, at the times in `config/app.yaml` (default 08:00 and 20:00). Sections: ⚡ Needs you, 📥 New matches, 📤 What happened (per role), 📊 Pipeline and 🔧 Housekeeping, each only when it has something. A day with nothing new sends nothing.
-- **Two alerts**, each with its own switch: a **fast-lane find**, and **someone replying to your outreach** (with an Open in Gmail link). They are checked every 3 minutes, arrive together as one email, and wait during quiet hours (22:00 to 08:00).
+- **Summary mail**, at the times in `config/app.yaml` (default 08:00 and 20:00). Sections: ⚡ Needs you, 📥 New matches, 📤 What happened (per role), 📊 Pursuing (the roles still in play that aren't already shown above) and 🔧 Housekeeping, each only when it has something. Each role appears once, in the first section where it matters. A day with nothing new sends nothing.
+- **Two email alerts**, each with its own switch: a **fast-lane find**, and **someone replying to your outreach** (with an Open in Gmail link). They are checked every 3 minutes, arrive together as one email, and wait during quiet hours (22:00 to 08:00).
 
-The buttons in the mail open the right screen in the app on your laptop (`app_url` in `config/app.yaml`, default `http://localhost:8000`); nothing is sent or changed from the mail itself. Your pay never appears in the mail, and roles held back by a wait after a rejection never appear in the mail or an alert.
+The buttons in the mail open the right screen in the app on your laptop (`app_url` in `config/app.yaml`, default `http://localhost:8000`); nothing is sent or changed from the mail itself. Your pay never appears in the mail, and roles held back by a wait after a rejection never appear in the mail or an email alert.
+
+**The same words everywhere** (app, mail, Settings): **Pursuing** is the list of roles you're working on (the Jobs tab, the mail section, "2 pursuing" in the subject). Where a role stands: **to apply**, **to review** (a draft on Review), **outreach on** (or **outreach on hold**), **applied**, **interviewing**, **offer**, and **ended** with the reason (rejected, no reply, posting closed, skipped). **Pings** are what the agent wants you to know (the Pings screen); **email alerts** are the two pings that can also come to your inbox at once.
 
 ## Configuration
 

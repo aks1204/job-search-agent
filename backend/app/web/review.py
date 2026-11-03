@@ -31,8 +31,8 @@ DAYS = {0: "Day 1", 1: "Day 2", 2: "Day 3"}
 REPLIES = {"interested": "replied: interested", "question": "replied with a question", "rejection": "replied: no",
            "ooo": "out of office", "redirect": "said: not the right person", "auto_other": "automatic reply",
            "unsure": "replied (see Gmail)", "forwarded": "forwarded it"}
-STATUS = {"pending_review": ("ch-red", "waiting for you"), "scheduled": ("ch-blue", "outreach begun"),
-          "running": ("ch-blue", "sending"), "paused": ("ch-amber", "on hold")}
+STATUS = {"pending_review": ("ch-red", "to review"), "scheduled": ("ch-green", "outreach on"),   # (web/labels.py)
+          "running": ("ch-green", "outreach on"), "paused": ("ch-amber", "outreach on hold")}
 
 
 def preview(body: str, greeting_hint: str = "Hi first name,") -> Markup:

@@ -1,7 +1,7 @@
 """The twice-daily summary mail (spec §6.1): the app's one regular message to you.
 
 Five sections, each only when it has something: ⚡ Needs you · 📥 New matches · 📤 What happened (per role) ·
-📊 Pipeline · 🔧 Housekeeping. Every card is the same shape (title, one detail line, a status chip, at most two
+📊 Pursuing · 🔧 Housekeeping. Every card is the same shape (title, one detail line, a status chip, at most two
 buttons, a coloured stripe: red = needs you, blue = new, green = done, grey = tracking). Buttons open the exact
 screen in the app (owner 2026-11-04: links never change anything by themselves).
 
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
 from app.core import audit
+from app.web import labels as L
 from app.models import (
     Application, Company, DirectionSuggestion, JobAssessment, JobCluster, JobPosting, JobScore, MailLog, Notification,
     OutreachCampaign, OutreachEmail,
@@ -26,7 +27,7 @@ from app.models import (
 
 TOP = 5                         # cards per section before "+N more in the app"
 FIRST_LOOKBACK = timedelta(hours=12)
-STRIPES = {"red": "#B3382C", "blue": "#2F5FB3", "green": "#2E7D4F", "gray": "#CFD4D0"}
+STRIPES = {"red": "#B3382C", "amber": "#9A6A12", "blue": "#2F5FB3", "green": "#2E7D4F", "gray": "#CFD4D0"}
 CHIPS = {"red": ("#B3382C", "#F9ECEA"), "blue": ("#2F5FB3", "#EBF0F8"), "green": ("#2E7D4F", "#EAF3EC"),
          "gray": ("#5E6763", "#EEF0ED"), "amber": ("#9A6A12", "#F7F0E0")}
 
@@ -128,7 +129,7 @@ def _needs_you(session: Session, now: datetime) -> tuple[list[Card], int, list[d
         n = session.scalar(select(func.count()).select_from(OutreachEmail).where(
             OutreachEmail.campaign_id == c.id, OutreachEmail.decision == "pending")) or 0
         per_role[cl.id] = Card(f"{cl.title} · {co.name}", f"Outreach ready: {n} email(s) for you to approve, then Begin outreach",
-                               "approval", "red", [("Review drafts →", url(f"/review#c{c.id}"))], role=cl.id)
+                               L.TO_REVIEW[0], "red", [("Review drafts →", url(f"/review#c{c.id}"))], role=cl.id)
         cards.append(per_role[cl.id])
         born.append(c.created_at)
     full, _older = apply_list(session, now)
@@ -147,20 +148,20 @@ def _needs_you(session: Session, now: datetime) -> tuple[list[Card], int, list[d
         links = [x for x in role_links(session, cl.id) if _web(x["url"])]
         many = f" · {len(links)} openings" if len(links) > 1 else ""
         if card is not None:                           # its outreach card: the apply link joins it
-            card.chip, card.detail = "approval · apply", f"{card.detail} · Apply manually on their site{many}"
+            card.chip, card.detail = f"{L.TO_REVIEW[0]} · {L.TO_APPLY[0]}", f"{card.detail} · Apply manually on their site{many}"
             if links:
                 card.buttons = [*card.buttons[:1], ("Open apply link →", links[0]["url"])]
             born.append(app.queued_at)
             continue
         buttons = [("Open apply link →", links[0]["url"])] if links else []
         buttons.append(("Pursuing", url(f"/jobs?tab=pursuing#c{cl.id}")))
-        per_role[cl.id] = Card(f"{cl.title} · {co.name}", f"Apply manually on their site{many}", "apply", "red", buttons,
+        per_role[cl.id] = Card(f"{cl.title} · {co.name}", f"Apply manually on their site{many}", L.TO_APPLY[0], "red", buttons,
                                role=cl.id)
         cards.append(per_role[cl.id])
         born.append(app.queued_at)
     open_q = session.scalars(select(DirectionSuggestion.created_at).where(DirectionSuggestion.status == "open")).all()
     if open_q:
-        cards.append(Card("Your career direction", f"{len(open_q)} suggestion(s) to answer Yes or No", "question",
+        cards.append(Card("Your career direction", f"{len(open_q)} suggestion(s) to answer Yes or No", L.TO_ANSWER[0],
                           "red", [("Answer →", url("/profile#direction"))]))
         born += list(open_q)
     for n in session.scalars(select(Notification).where(
@@ -174,7 +175,7 @@ def _needs_you(session: Session, now: datetime) -> tuple[list[Card], int, list[d
             per_role[role].lines.append((_private(n.title), _web(n.link)))
             per_role[role].add_button("Open →", href)
             continue
-        card = Card(_private(n.title), lines[0] if lines else "", "for you", "red", [("Open →", href)], role=role)
+        card = Card(_private(n.title), lines[0] if lines else "", L.TO_CHECK[0], "red", [("Open →", href)], role=role)
         if role is not None:
             per_role[role] = card
         cards.append(card)
@@ -229,33 +230,20 @@ def _happened(session: Session, since: datetime) -> tuple[list[Card], list[str],
     return cards, elsewhere, sum(len(e) for e in groups.values()) + len(elsewhere)
 
 
-ORDER = {"red": 0, "green": 1, "blue": 2, "gray": 3}
-QUIET_STATES = ("silent", "rejected", "closed", "skipped")
-
-
-def _pipeline(session: Session) -> tuple[list[Card], int]:
-    """Every role in flight, one card: on you (red) · live (green) · tracking (blue) · silent (grey)."""
+def _pursuing_cards(session: Session) -> list[Card]:
+    """The roles you're pursuing that are still in play, one card each, with the same chips as the Pursuing tab
+    (ended ones stay on the tab only)."""
     from app.web.pages import _pursuing
 
     cards = []
     for r in _pursuing(session):
-        if r["held"]:
-            continue                                   # hidden by a wait after a rejection
-        a, outreach = r["app"], r["outreach"]
-        status = a.status if a else "queued"
-        if r["to_apply"] or outreach.startswith("draft ready"):
-            color, chip = "red", "on you"
-        elif status in QUIET_STATES or "silent" in outreach:
-            color, chip = "gray", status.replace("_", " ") if status in QUIET_STATES else "silent"
-        elif outreach.startswith("sending") or status in ("in_review", "interviewing", "offer"):
-            color, chip = "green", "live"
-        else:
-            color, chip = "blue", "tracking"
-        what = "to apply" if r["to_apply"] else status.replace("_", " ")
-        cards.append(Card(f"{r['title']} · {r['company']}", f"{what} · outreach: {outreach}", chip, color,
+        if r["held"] or not L.in_play(r["chips"]):
+            continue                                   # hidden by a wait after a rejection; or over
+        cards.append(Card(f"{r['title']} · {r['company']}", f"Outreach: {r['outreach']}",
+                          " · ".join(label for label, _ in r["chips"]), r["chips"][0][1],
                           [("Open role →", url(f"/roles/{r['cluster_id']}"))], role=r["cluster_id"]))
-    cards.sort(key=lambda c: ORDER[c.color])
-    return cards, sum(1 for c in cards if c.color != "gray")
+    cards.sort(key=lambda c: L.COLOR_ORDER[c.color])
+    return cards
 
 
 def _housekeeping(session: Session, since: datetime) -> str:
@@ -296,10 +284,10 @@ def build(session: Session, now: datetime | None = None, since: datetime | None 
     rows, maybe = _new_matches(session, since)
     needs, older, born = _needs_you(session, now)
     happened, elsewhere, events = _happened(session, since)
-    pipeline, in_flight = _pipeline(session)
+    pursuing = _pursuing_cards(session)
 
     # Each role once, in the first group where it matters (owner 2026-11-04): Needs you → New matches →
-    # What happened → Pipeline, which shows only the rest.
+    # What happened → Pursuing, which shows only the rest (and is left out when there's no rest).
     s_needs = _top(Section("needs_you", "⚡ Needs you"), needs, "/pings")
     if older:
         s_needs.note = f"+{older} older apply link(s) still waiting on your Pursuing tab."
@@ -326,18 +314,18 @@ def build(session: Session, now: datetime | None = None, since: datetime | None 
         extra = f" (+{len(elsewhere) - 3} more)" if len(elsewhere) > 3 else ""
         s_happened.note = "Elsewhere: " + "; ".join(elsewhere[:3]) + extra
     shown = set(above) | {c.role for c in s_happened.cards}
-    s_pipe = _top(Section("pipeline", "📊 Pipeline"), [c for c in pipeline if c.role not in shown], "/jobs?tab=pursuing")
-    also = sum(1 for c in pipeline if c.role in shown and c.color != "gray")
-    if also:
-        s_pipe.note = f"Also in flight: the {also} role{'s' if also != 1 else ''} above."
-    sections = [s for s in (s_needs, s_new, s_happened, s_pipe) if s.cards or s.note]
+    s_pipe = _top(Section("pursuing", f"📊 {L.PURSUING}"), [c for c in pursuing if c.role not in shown], "/jobs?tab=pursuing")
+    also = sum(1 for c in pursuing if c.role in shown)
+    if also and s_pipe.cards:
+        s_pipe.note = f"Also pursuing: the {also} role{'s' if also != 1 else ''} above."
+    sections = [s for s in (s_needs, s_new, s_happened) if s.cards or s.note] + ([s_pipe] if s_pipe.cards else [])
 
     counts = {"need_you": len(needs) + older, "new": len(new_cards), "maybe": maybe, "updates": events,
-              "in_flight": in_flight}
+              "pursuing": len(pursuing)}
     parts = [f"{counts['need_you']} need you" if counts["need_you"] else "",
              f"{counts['new']} new match{'es' if counts['new'] != 1 else ''}" if counts["new"] else "",
              f"{events} update{'s' if events != 1 else ''}" if events else "",
-             f"{in_flight} in flight"]
+             f"{len(pursuing)} pursuing"]
     quiet = not rows and not events and not maybe and not any(b > since for b in born)
     return Summary(" · ".join(p for p in parts if p), sections, _housekeeping(session, since), counts, quiet, since)
 

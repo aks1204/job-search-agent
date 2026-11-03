@@ -53,7 +53,7 @@
   {% endfor %}
   {% if req_ids|length > 1 %}<div class="note">Job IDs: {{ req_ids | join(', ') }}</div>{% endif %}
   {% for l in links %}<div class="kv"><span class="k">Apply{% if l.req_id %} ({{ l.req_id }}){% endif %}</span><span><a href="{{ l.url | href }}" target="_blank" rel="noopener noreferrer">{{ l.url }}</a>{% if l.why %} · {{ l.why }}{% endif %}</span></div>{% endfor %}
-  {% if app %}<div class="note">Application: {{ app.status.replace('_', ' ') }}{% if app.applied_at %} · applied {{ app.applied_at | day }}{% endif %}</div>{% endif %}
+  {% if stands %}<div class="summary">{% for label, color in stands %}<span class="chip {{ chip_css[color] }}">{{ label }}</span>{% endfor %}{% if app and app.applied_at %}<span class="note inline">applied {{ app.applied_at | day }}</span>{% endif %}</div>{% endif %}
   {% if not hidden and (app is none or app.status == 'queued') %}
   <div class="act">
     <form class="inline" method="post" action="/do/applied/{{ cluster.id }}">{{ ui.hidden() }}<input name="note" placeholder="Note (optional)" aria-label="Note"><button type="submit" class="primary">Mark applied</button></form>

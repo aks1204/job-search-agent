@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from app.core.redis_client import get_redis
 
-SWITCHES = {"summary": "Summary mail (twice a day)", "fast": "Alert: a fast-lane find",
-            "reply": "Alert: someone replied to your outreach"}
+SWITCHES = {"summary": "Summary mail (twice a day)", "fast": "Email alert: a fast-lane find",
+            "reply": "Email alert: a reply to your outreach"}
 KEY = "mail:on:{}"
 
 
