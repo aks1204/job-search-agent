@@ -113,6 +113,7 @@ def _needs_you(session: Session, shown: set[int], now: datetime) -> tuple[list[C
     from app.web.pages import _ping_lines, _private, ping_target
 
     cards, born = [], []
+    per_role: dict[int, Card] = {}                     # one card per role (owner 2026-11-04): its reasons together
     for c, cl, co in session.execute(
             select(OutreachCampaign, JobCluster, Company).join(JobCluster, JobCluster.id == OutreachCampaign.cluster_id)
             .join(Company, Company.id == OutreachCampaign.company_id)
@@ -121,8 +122,9 @@ def _needs_you(session: Session, shown: set[int], now: datetime) -> tuple[list[C
             continue                                   # drafted before a rejection for a similar role: it waits too
         n = session.scalar(select(func.count()).select_from(OutreachEmail).where(
             OutreachEmail.campaign_id == c.id, OutreachEmail.decision == "pending")) or 0
-        cards.append(Card(f"{cl.title} · {co.name}", f"Outreach ready: {n} email(s) for you to approve, then Begin outreach",
-                          "approval", "red", [("Review drafts →", url(f"/review#c{c.id}"))]))
+        per_role[cl.id] = Card(f"{cl.title} · {co.name}", f"Outreach ready: {n} email(s) for you to approve, then Begin outreach",
+                               "approval", "red", [("Review drafts →", url(f"/review#c{c.id}"))])
+        cards.append(per_role[cl.id])
         born.append(c.created_at)
     full, _older = apply_list(session, now)
     full_ids = {cl.id for _, cl, _ in full}
@@ -133,15 +135,22 @@ def _needs_you(session: Session, shown: set[int], now: datetime) -> tuple[list[C
             .where(Application.status == "queued", Application.on_list.is_(True))).all():
         if co.status in ("blocked", "rejected") or hidden_until(session, cl.id):
             continue                                   # e.g. it turned out to be your employer; or a wait
-        if cl.id not in full_ids:
+        card = per_role.get(cl.id)
+        if card is None and cl.id not in full_ids:
             older += 1                                 # older ones: only counted
             continue
-        if cl.id in shown:
+        if card is None and cl.id in shown:
             continue                                   # on its card under New matches
         links = [x for x in role_links(session, cl.id) if _web(x["url"])]
+        many = f" · {len(links)} openings" if len(links) > 1 else ""
+        if card is not None:                           # its outreach card: the apply link joins it
+            card.chip, card.detail = "approval · apply", f"{card.detail} · Apply manually on their site{many}"
+            if links:
+                card.buttons = [*card.buttons[:1], ("Open apply link →", links[0]["url"])]
+            born.append(app.queued_at)
+            continue
         buttons = [("Open apply link →", links[0]["url"])] if links else []
         buttons.append(("Pursuing", url(f"/jobs?tab=pursuing#c{cl.id}")))
-        many = f" · {len(links)} openings" if len(links) > 1 else ""
         cards.append(Card(f"{cl.title} · {co.name}", f"Apply manually on their site{many}", "apply", "red", buttons))
         born.append(app.queued_at)
     open_q = session.scalars(select(DirectionSuggestion.created_at).where(DirectionSuggestion.status == "open")).all()
