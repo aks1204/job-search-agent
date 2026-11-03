@@ -311,15 +311,17 @@ def check(session: Session, llm=None) -> dict:
         out["draft"] = row.id
         what = "Your resume changed" if current else "Your profile is ready to check"
         notify(session, "needs_you", "needs_you", f"{what}: please confirm it",
-               detail="Run: profile export — check review/profile.yaml — then: profile confirm. "
+               detail="Check review/profile.yaml in your project folder, then press Confirm profile on the "
+                      "Profile screen "
+                      "(or: profile export, then profile confirm). "
                       "Until then the agent keeps using " + ("your last confirmed profile." if current else "owner_stub.yaml."),
                subject=("profile", "draft"))
     for f in stale_fields(current):
         if not _asked_recently(session, f):
             label = {"current_compensation": "your current pay", "notice_period_days": "your notice period"}[f]
             notify(session, "needs_you", "needs_you", f"Is {label} still right?",
-                   detail="It was last confirmed over 6 months ago. To update or re-confirm: profile edit, then "
-                          "profile confirm.", subject=("profile", f))
+                   detail="It was last confirmed over 6 months ago. To update or re-confirm it, for now in the "
+                          "terminal: profile edit, then profile confirm.", subject=("profile", f))
             out.setdefault("reminders", []).append(f)
     return out
 

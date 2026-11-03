@@ -5,25 +5,42 @@
 <h1>Pings</h1>
 <div class="sub">What the agent wants you to know · {% if everything %}<a href="/pings">unread only</a>{% else %}<a href="/pings?everything=1">show read ones too</a>{% endif %}</div>
 {% if rows %}<div class="act">{{ ui.button('/do/pings-read', 'Mark all read') }}<span class="note">(the ones that need you stay until answered)</span></div>{% endif %}
-<div class="sect">
-  {% for n in rows %}
-  <div class="row"><div>
-    <span class="chip {{ 'ch-red' if n.kind == 'needs_you' else ('ch-blue' if n.kind == 'ping' else 'ch-gray') }}">{{ {'needs_you': 'needs you', 'ping': 'ping', 'update': 'update'}.get(n.kind, n.kind) }}</span>
-    <b>{{ n.title | private }}</b> <span class="note">{{ n.created_at | local("%d %b %H:%M") }}</span>
-    {% if n.detail %}<div class="note">{{ n.detail | private }}</div>{% endif %}
-    {% if n.link %}<div class="note"><a href="{{ n.link | href }}" target="_blank" rel="noopener noreferrer">Open in Gmail</a></div>{% endif %}
-    {% if n.id in emails %}{% set m = emails[n.id] %}
-    <form class="stack" method="post" action="/do/assign/{{ m.no }}">{{ ui.hidden() }}
-      {% for r in m.roles %}<label class="pick"><input type="radio" name="choice" value="{{ r.id }}"> {{ r.title }}</label>{% endfor %}
-      <label class="pick"><input type="radio" name="choice" value="other"> Another job:</label> <input name="other" placeholder="Job title (typing one picks this)" aria-label="Other job title">
-      <label class="pick"><input type="radio" name="choice" value="ignore"> Not mine</label>
-      <button type="submit" class="primary">That's it</button></form>
-    {% endif %}
+{% set shown_suggestions = namespace(done=false) %}
+{% for n in rows %}
+<div class="card {{ 's-red' if n.kind == 'needs_you' and n.read_at is none else 's-none' }} ping{{ ' read' if n.read_at }}">
+  <div class="top"><span class="ttl">{{ n.title | private }}</span>
+    <span class="note">{{ {'needs_you': 'needs you', 'ping': 'news', 'update': 'update'}.get(n.kind, n.kind) }} · {{ n.created_at | local("%d %b %H:%M") }}</span></div>
+  {% set lines = n.detail | ping_lines %}
+  {% if lines | length == 1 %}<div class="det">{{ lines[0] }}</div>
+  {% elif lines %}<ul class="lines">{% for l in lines %}<li>{{ l }}</li>{% endfor %}</ul>{% endif %}
+
+  {% if n.subject_type == 'direction' and n.read_at is none and suggestions and not shown_suggestions.done %}
+  {% set shown_suggestions.done = true %}
+  <div class="answers">{% for s in suggestions %}
+    <div class="kv"><span>{{ s.text | private }}</span><span style="display:flex;gap:6px">{{ ui.button('/do/direction/' ~ s.id, 'Yes', {'answer': 'yes'}, 'primary') }}{{ ui.button('/do/direction/' ~ s.id, 'No', {'answer': 'no'}) }}</span></div>
+  {% endfor %}</div>
+  {% endif %}
+
+  {% if n.id in emails %}{% set m = emails[n.id] %}
+  <form class="stack" method="post" action="/do/assign/{{ m.no }}">{{ ui.hidden() }}
+    {% for r in m.roles %}<label class="pick"><input type="radio" name="choice" value="{{ r.id }}"> {{ r.title }}</label>{% endfor %}
+    <label class="pick"><input type="radio" name="choice" value="other"> Another job:</label> <input name="other" placeholder="Job title (typing one picks this)" aria-label="Other job title">
+    <label class="pick"><input type="radio" name="choice" value="ignore"> Not mine</label>
+    <button type="submit" class="primary">That's it</button></form>
+  {% endif %}
+
+  <div class="act">
+    {% if n.id in applies %}{% set ap = applies[n.id] %}
+      {% for l in ap.links %}<a class="btnlike primary" href="{{ l.url | href }}" target="_blank" rel="noopener noreferrer">Apply{% if l.req_id %} ({{ l.req_id }}){% endif %}</a>{% endfor %}
+      {{ ui.button('/do/applied/' ~ ap.cluster_id, 'Mark applied') }}
+    {% elif n.link and 'mail.google.com' in n.link %}<a class="mailbtn" href="{{ n.link | href }}" target="_blank" rel="noopener noreferrer">Open in Gmail</a>
+    {% elif n.link %}<a class="mailbtn" href="{{ n.link | href }}" target="_blank" rel="noopener noreferrer">Open the link</a>{% endif %}
     {% if n.subject_type == 'memory' and (n.subject_id or '').startswith('undo:') and n.read_at is none %}
       {{ ui.button('/do/memory-undo/' ~ n.subject_id[5:], 'Undo') }}
     {% endif %}
+    {% if targets[n.id] %}{{ ui.button('/do/ping-open/' ~ n.id, 'Open') }}{% endif %}
+    {% if n.read_at is none and n.id not in emails %}{{ ui.button('/do/ping-read/' ~ n.id, 'Mark read') }}{% endif %}
   </div>
-  {% if n.read_at is none and n.id not in emails %}{{ ui.button('/do/ping-read/' ~ n.id, 'Read') }}{% endif %}</div>
-  {% else %}<div class="empty">Nothing new.</div>{% endfor %}
 </div>
+{% else %}<div class="empty">Nothing new.</div>{% endfor %}
 {% endblock %}

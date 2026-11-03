@@ -192,7 +192,7 @@ def test_saying_yes_to_a_family_sorts_old_skips_by_their_reason(db_session, monk
     assert junior.status == "active"                                               # "too junior": still true, kept
     note = db_session.scalars(select(Notification).where(Notification.title == f"You now include {FAMILY} roles",
                                                          Notification.kind == "update")).one()
-    assert "Undo: memory undo" in note.detail
+    assert "memory undo" in note.detail
     ask = db_session.scalars(select(DirectionSuggestion).where(DirectionSuggestion.kind == "memory",
                                                                DirectionSuggestion.item == FAMILY)).one()
     D.answer(db_session, ask.id, yes=True)                                         # only the unclear one is asked

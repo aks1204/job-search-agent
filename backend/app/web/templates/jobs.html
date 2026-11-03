@@ -3,29 +3,46 @@
 {% block title %}Jobs{% endblock %}
 {% block content %}
 <h1>Jobs</h1>
-<div class="sub">Scored openings from your watched companies</div>
+<div class="sub">Scored openings from your watched companies · Pursue the ones you want, Skip the rest</div>
 <div class="tabs">
   <a href="/jobs?tab=fast" class="{{ 'on' if tab == 'fast' }}">Fast lane {{ counts.fast }}</a>
   <a href="/jobs?tab=inbox" class="{{ 'on' if tab == 'inbox' }}">Inbox {{ counts.inbox }}</a>
   <a href="/jobs?tab=maybe" class="{{ 'on' if tab == 'maybe' }}">Maybe {{ counts.maybe }}</a>
-  <a href="/jobs?tab=applied" class="{{ 'on' if tab == 'applied' }}">Applied {{ counts.applied }}</a>
+  <a href="/jobs?tab=pursuing" class="{{ 'on' if tab == 'pursuing' }}">Pursuing {{ counts.pursuing }}</a>
 </div>
 
-{% if tab == 'applied' %}
-  {% for a in cards %}
-  <div class="card s-green">
-    <div class="top"><span class="ttl"><a href="/roles/{{ a.cluster_id }}">{{ a.title }} · {{ a.company }}</a></span>
-      <span class="chip {{ 'ch-gray' if a.status in ('silent', 'rejected') else 'ch-blue' }}">{{ a.status.replace('_', ' ') }} · {{ a.status_at | day }}</span></div>
-    <div class="det">{% if a.applied_at %}Applied {{ a.applied_at | day }}{% if a.applied_how == 'email' %} ✓ confirmed by email{% endif %}{% endif %}{% if a.outside %} · applied outside the agent{% endif %}</div>
-    {% if a.receipt_link %}<div class="act"><a class="mailbtn" href="{{ a.receipt_link | href }}" target="_blank" rel="noopener noreferrer">Open in Gmail</a></div>{% endif %}
+{% macro result(cluster_id) -%}
+{%- if flash and flash.card == cluster_id %}
+<div class="cardflash {{ 'ok' if flash.ok else 'bad' }}" role="status"><span>{{ '✓' if flash.ok else '!' }} {{ flash.text }}</span>
+  {%- if flash.undo %}<form class="inline" method="post" action="{{ flash.undo }}">{{ ui.hidden() }}<button type="submit" class="mailbtn">Undo</button></form>{% endif %}</div>
+{%- endif %}
+{%- endmacro %}
+
+{% if tab == 'pursuing' %}
+  {% for r in cards %}
+  {% set a = r.app %}
+  <div class="card {{ 's-blue' if r.to_apply else 's-green' }}" id="c{{ r.cluster_id }}">
+    <div class="top"><span class="ttl"><a href="/roles/{{ r.cluster_id }}">{{ r.title }} · {{ r.company }}</a></span>
+      {% if r.to_apply %}<span class="chip ch-blue">to apply</span>
+      {% else %}<span class="chip {{ 'ch-gray' if a.status in ('silent', 'rejected', 'closed', 'skipped') else 'ch-green' }}">{{ a.status.replace('_', ' ') }}{% if a.status_at %} · {{ a.status_at | day }}{% endif %}</span>{% endif %}</div>
+    <div class="det">Outreach: {{ r.outreach }}{% if a and a.applied_at %} · applied {{ a.applied_at | day }}{% if a.applied_how == 'email' %} ✓ confirmed by email{% endif %}{% endif %}{% if a and a.outside %} · applied outside the agent{% endif %}</div>
+    <div class="act">
+      {% if r.held %}<span class="note">Hidden until {{ r.held | day }}: you were turned down for a similar role there; its apply link comes back then.</span>
+      {% elif r.to_apply %}
+        {% for l in (a.links if a else [])[:2] %}<a class="btnlike primary" href="{{ l.url | href }}" target="_blank" rel="noopener noreferrer">Apply{% if l.req_id %} ({{ l.req_id }}){% endif %}</a>{% else %}<span class="note">Apply link: on the next round</span>{% endfor %}
+        {{ ui.button('/do/applied/' ~ r.cluster_id, 'Mark applied') }}
+      {% endif %}
+      {% if a and a.receipt_link %}<a class="mailbtn" href="{{ a.receipt_link | href }}" target="_blank" rel="noopener noreferrer">Open in Gmail</a>{% endif %}
+    </div>
   </div>
-  {% else %}<div class="empty">No applications yet.</div>{% endfor %}
+  {% else %}<div class="empty">Nothing pursued yet. Press Pursue on a role you want.</div>{% endfor %}
 {% else %}
   {% for j in cards %}
-  <div class="card {{ 's-none' if tab == 'maybe' else 's-blue' }}">
+  <div class="card {{ 's-none' if tab == 'maybe' else 's-blue' }}{{ ' kept' if j.kept }}" id="c{{ j.cluster_id }}">
     <div class="top"><span class="ttl"><a href="/roles/{{ j.cluster_id }}">{{ j.title }} · {{ j.company }}</a></span><span class="score">{{ j.score }}</span></div>
     <div class="det">{{ j.one_liner or '' }}{% if j.location %} · {{ j.location }}{% endif %}{% if j.req_ids > 1 %} · {{ j.req_ids }} openings{% endif %}{% for f in j.flags[:3] %} · {{ f }}{% endfor %}{% if not j.graded %} · similarity only{% endif %}</div>
-    {{ ui.feedback(j.cluster_id, j.band, chips) }}
+    {% if j.kept %}{{ result(j.cluster_id) }}
+    {% else %}{{ result(j.cluster_id) }}{{ ui.feedback(j.cluster_id, j.band, chips) }}{% endif %}
   </div>
   {% else %}<div class="empty">Nothing here right now.</div>{% endfor %}
   {% if more %}<div class="empty">+{{ more }} more</div>{% endif %}

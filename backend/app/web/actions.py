@@ -45,8 +45,8 @@ class Refused(ValueError):
         self.after = after
 
 
-def _flash_value(text: str, ok: bool = True, undo: str | None = None) -> str:
-    raw = json.dumps({"text": text[:400], "ok": ok, "undo": undo}).encode()
+def _flash_value(text: str, ok: bool = True, undo: str | None = None, card: int | None = None) -> str:
+    raw = json.dumps({"text": text[:400], "ok": ok, "undo": undo, "card": card}).encode()
     return base64.urlsafe_b64encode(raw).decode()
 
 
@@ -61,13 +61,19 @@ def read_flash(request: Request) -> dict | None:
     if not isinstance(data, dict):
         return None
     undo = data.get("undo")
+    card = data.get("card")
     return {"text": str(data.get("text") or ""), "ok": bool(data.get("ok", True)),
-            "undo": undo if isinstance(undo, str) and undo.startswith("/do/") else None}
+            "undo": undo if isinstance(undo, str) and undo.startswith("/do/") else None,
+            "card": card if isinstance(card, int) and not isinstance(card, bool) else None}
 
 
-def _back(form, text: str, *, ok: bool = True, undo: str | None = None, fallback: str = "/jobs") -> RedirectResponse:
-    r = RedirectResponse(safe_next(str(form.get("next") or ""), fallback), status_code=303)
-    r.set_cookie(FLASH_COOKIE, _flash_value(text, ok, undo), httponly=True, samesite="lax", max_age=120, path="/")
+def _back(form, text: str, *, ok: bool = True, undo: str | None = None, card: int | None = None,
+          fallback: str = "/jobs") -> RedirectResponse:
+    """Back to the page. With `card`, to that role's card, which stays shown (marked) for this one view."""
+    url = safe_next(str(form.get("next") or ""), fallback).split("#")[0]
+    r = RedirectResponse(f"{url}#c{card}" if card else url, status_code=303)
+    r.set_cookie(FLASH_COOKIE, _flash_value(text, ok, undo, card), httponly=True, samesite="lax", max_age=120,
+                 path="/")
     return r
 
 
@@ -106,11 +112,11 @@ def _press(request: Request, session: Session, do, form, fallback: str):
             session.commit()
         return _back(form, f"Not done: {e}", ok=False, fallback=fallback)
     out = out if isinstance(out, tuple) else (out,)
-    text, undo, then = (*out, None, None)[:3]
+    text, undo, then, card = (*out, None, None, None)[:4]
     session.commit()
     if then is not None:                            # outside the database (Redis): only once the save stuck
         then()
-    return _back(form, text, undo=undo, fallback=fallback)
+    return _back(form, text, undo=undo, card=card, fallback=fallback)
 
 
 def _confirmed(form) -> bool:
@@ -132,7 +138,10 @@ def _company(session: Session, company_id: int) -> Company:
 
 @router.post("/feedback/{cluster_id}")
 async def feedback(cluster_id: int, request: Request, session: Session = Depends(get_session)):
+    """Pursue or Skip (the Jobs screen's two buttons; the API still takes 👍 / 👎 / rescue). The card stays on
+    the page, marked, with Undo — until you reload."""
     from app.modules.m2_jobs.scoring import FEEDBACK_ACTIONS, record_feedback
+    from app.modules.m4_apply.tracker import pursue_now
     from app.modules.m5_profile.reasons import CHIPS, explain
 
     def do(form):
@@ -145,21 +154,32 @@ async def feedback(cluster_id: int, request: Request, session: Session = Depends
         chips = [c for c in form.getlist("chips") if c in CHIPS]
         fb = record_feedback(session, row, action, _text(form, "reason") or None, chips=chips)
         session.flush()
-        what = {"act": "Pursuing", "skip": "Skipped", "thumbs_up": "Liked", "thumbs_down": "Disliked",
-                "maybe_rescue": "Rescued from Maybe"}[action]
-        why = f" · reason: {explain(fb.chips, fb.inferred)}" if action in ("skip", "thumbs_down") else ""
-        return f"{what} this role (now {row.score} · {row.band.replace('_', ' ')}){why}", f"/do/feedback-undo/{fb.id}"
+        if action == "act":
+            pursue_now(session, cluster_id)
+            text = "Pursuing: it's on your Pursuing tab with its apply link; contacts and a draft follow on Review."
+        elif action in ("skip", "thumbs_down"):
+            text = f"Skipped · reason: {explain(fb.chips, fb.inferred)}"
+        else:
+            text = {"thumbs_up": "Liked", "maybe_rescue": "Moved to the Inbox"}[action]
+        return text, f"/do/feedback-undo/{fb.id}", None, cluster_id
 
     return await _run(request, session, do)
 
 
 @router.post("/feedback-undo/{feedback_id}")
 async def feedback_undo(feedback_id: int, request: Request, session: Session = Depends(get_session)):
+    from app.models import JobFeedback
     from app.modules.m2_jobs.scoring import undo_feedback
+    from app.modules.m4_apply.tracker import after_undo
 
     def do(form):
+        fb = session.get(JobFeedback, feedback_id)
+        if fb is None:
+            raise NotFound("nothing to undo (it was already undone)")
+        action, cluster_id = fb.action, fb.cluster_id
         row = undo_feedback(session, feedback_id)
-        return f"Undone. The role is back at {row.score} · {row.band.replace('_', ' ')}."
+        after_undo(session, cluster_id, action)
+        return f"Undone: back in {row.band.replace('_', ' ')}.", None, None, cluster_id
 
     return await _run(request, session, do)
 
@@ -500,6 +520,31 @@ def _now():
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc)
+
+
+@router.post("/ping-open/{notification_id}")
+async def ping_open(notification_id: int, request: Request, session: Session = Depends(get_session)):
+    """Open: you go where you act on it (worked out here, never from the form). News counts as read; a ping that
+    needs you stays until it's answered (or you press Mark read)."""
+    from app.web.pages import ping_target
+
+    form = await request.form()
+    try:
+        check_token(request, str(form.get("token") or ""))
+    except HTTPException:
+        return RedirectResponse("/pings", status_code=303)
+
+    def go():
+        n = session.get(Notification, notification_id)
+        if n is None:
+            return "/pings"
+        if n.kind != "needs_you":
+            n.read_at = n.read_at or _now()
+        target = ping_target(session, n) or "/pings"
+        session.commit()
+        return target
+
+    return RedirectResponse(await run_in_threadpool(go), status_code=303)
 
 
 @router.post("/ping-read/{notification_id}")

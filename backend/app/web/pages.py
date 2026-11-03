@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 from app.config_loader import get_config
 from app.db import get_session
 from app.models import (
-    Application, Company, CompanyFeed, JobAssessment, JobCluster, JobPosting, JobScore, Notification, OutreachCampaign,
+    Application, Company, CompanyFeed, JobAssessment, JobCluster, JobFeedback, JobPosting, JobScore, Notification,
+    OutreachCampaign,
 )
 
 router = APIRouter(include_in_schema=False)
@@ -67,6 +68,9 @@ def _private(text: str) -> str:
 
 
 templates.env.filters["private"] = _private
+from app.web.text import rich_text  # noqa: E402  (job descriptions: paragraphs, headings, lists)
+
+templates.env.filters["rich"] = rich_text
 templates.env.filters["local"] = _local
 templates.env.filters["day"] = lambda dt: _local(dt, "%d %b %Y")
 templates.env.filters["href"] = _href
@@ -74,12 +78,12 @@ templates.env.filters["href"] = _href
 
 def _nav(session: Session) -> dict:
     """Sidebar badges: blue = matches from the last `new_badge_hours` (owner: one week), red = emails to review."""
-    from app.api.jobs import listed_query
+    from app.api.jobs import listed_query, not_pursued
     from app.modules.m3_outreach.reopening import visible
 
     since = _now() - timedelta(hours=get_config().app.new_badge_hours)
     fresh = session.execute(listed_query(JobScore).where(JobScore.band.in_(("fast_lane", "inbox")),
-                                                         JobScore.banded_at >= since)).all()
+                                                         JobScore.banded_at >= since, not_pursued())).all()
     pending = session.scalar(select(func.count()).select_from(OutreachCampaign)
                              .where(OutreachCampaign.status == "pending_review")) or 0
     last_sync = session.scalar(select(func.max(CompanyFeed.last_sync_at)))
@@ -133,26 +137,99 @@ def home() -> RedirectResponse:
 
 @router.get("/jobs", response_class=HTMLResponse)
 def jobs(request: Request, tab: str = "inbox", session: Session = Depends(get_session)):
-    from app.api.applications import list_applications
-    from app.api.jobs import listed_query, shortlist
+    from app.api.jobs import listed_query, not_pursued, shortlist
     from app.modules.m3_outreach.reopening import visible
 
-    if tab not in (*BANDS, "applied"):
-        tab = "inbox"
-    # exact counts, one query for all tabs (the cards below stop at 500, with "+N more")
-    shown = listed_query(JobScore).where(JobScore.band.in_(tuple(BANDS.values())))
+    if tab not in (*BANDS, "pursuing"):
+        tab = "pursuing" if tab == "applied" else "inbox"           # (the tab's old name)
+    # exact counts, one query for all tabs (the cards below stop at 500, with "+N more"); pursued roles have
+    # their own tab
+    shown = listed_query(JobScore).where(JobScore.band.in_(tuple(BANDS.values())), not_pursued())
     listed = visible(session, session.execute(shown).all())
     counts = {t: sum(1 for (s,) in listed if s.band == b) for t, b in BANDS.items()}
-    applied = [a for a in list_applications(status=None, session=session) if a["status"] in APPLIED]
-    counts["applied"] = len(applied)
-    if tab == "applied":
-        cards, more = applied, 0
+    pursuing = _pursuing(session)
+    counts["pursuing"] = len(pursuing)
+    if tab == "pursuing":
+        cards, more = pursuing, 0
     else:
         limit = MAYBE_CARDS if tab == "maybe" else 500
-        cards = shortlist(band=BANDS[tab], limit=limit, session=session)
+        cards = shortlist(band=BANDS[tab], limit=limit, undecided=True, cluster_id=None, session=session)
         more = max(counts[tab] - len(cards), 0)
+        cards = _with_kept_card(request, session, cards)
+    from app.web.actions import read_flash
+
+    flash = read_flash(request)
+    inline = bool(tab != "pursuing" and flash and flash["card"]
+                  and any(c["cluster_id"] == flash["card"] for c in cards))
     return _page(request, session, "jobs.html", "jobs", tab=tab, counts=counts, cards=cards, more=more,
-                 chips=_chips())
+                 chips=_chips(), flash_inline=inline)       # the result line sits on the card itself
+
+
+def _with_kept_card(request: Request, session: Session, cards: list[dict]) -> list[dict]:
+    """The role you just pressed Pursue / Skip on stays in its place for this one view, marked, with Undo;
+    reload and it's gone (6b, owner 2026-11-03)."""
+    from app.api.jobs import shortlist
+    from app.web.actions import read_flash
+
+    flash = read_flash(request)
+    if not flash or not flash["card"] or any(c["cluster_id"] == flash["card"] for c in cards):
+        return cards
+    kept = shortlist(band=None, limit=1, undecided=False, cluster_id=flash["card"], session=session) or \
+        shortlist(band="archive", limit=1, undecided=False, cluster_id=flash["card"], session=session)
+    if not kept:
+        return cards
+    card = {**kept[0], "kept": True}
+    at = next((i for i, c in enumerate(cards) if c["score"] < card["score"]), len(cards))
+    return [*cards[:at], card, *cards[at:]]
+
+
+def _pursuing(session: Session) -> list[dict]:
+    """Roles you pursued, and every application you made: what to do next first (apply), then the rest by date.
+    Each with its apply links, how the application stands, and how its outreach is going."""
+    from sqlalchemy import or_
+
+    from app.modules.m3_outreach.reopening import hidden_until
+
+    acted = set(session.scalars(select(JobScore.cluster_id).where(JobScore.owner_action == "act")).all())
+    apps = {a.cluster_id: a for a in session.scalars(select(Application).where(
+        or_(Application.cluster_id.in_(acted), Application.status.in_(APPLIED)))).all()}
+    ids = acted | set(apps)
+    if not ids:
+        return []
+    campaigns = {c.cluster_id: c for c in session.scalars(select(OutreachCampaign).where(
+        OutreachCampaign.cluster_id.in_(ids)).order_by(OutreachCampaign.id)).all()}     # the latest wins
+    out = []
+    for cl, co in session.execute(select(JobCluster, Company).join(Company, Company.id == JobCluster.company_id)
+                                  .where(JobCluster.id.in_(ids))).all():
+        app = apps.get(cl.id)
+        to_apply = app is None or app.status == "queued"
+        held = hidden_until(session, cl.id) if to_apply else None     # a wait after a rejection: no apply link
+        if to_apply and co.status in ("blocked", "rejected"):
+            continue                                                   # e.g. it turned out to be your employer
+        out.append({"cluster_id": cl.id, "title": cl.title, "company": co.name, "app": app, "held": held,
+                    "to_apply": to_apply,
+                    "outreach": _outreach_state(session, campaigns.get(cl.id)),
+                    "at": (app.status_at if app and app.status_at else None)})
+    far = datetime.min.replace(tzinfo=timezone.utc)
+    return sorted(out, key=lambda r: (not r["to_apply"], -(r["at"] or far).timestamp()))
+
+
+def _outreach_state(session: Session, c) -> str:
+    from app.models import OutreachEmail
+
+    if c is None:
+        return "contacts and a draft come on the next round"
+    if c.status == "pending_review":
+        return "draft ready: see Review"
+    if c.status in ("scheduled", "running"):
+        emails = session.scalars(select(OutreachEmail).where(OutreachEmail.campaign_id == c.id)).all()
+        emails = [e for e in emails if e.status != "cancelled"]
+        return f"sending: {sum(1 for e in emails if e.sent_at)} of {len(emails)} sent"
+    if c.status == "paused":
+        return "outreach on hold"
+    if c.status == "cancelled":
+        return "outreach stopped"
+    return f"outreach finished{': ' + c.outcome.replace('_', ' ') if c.outcome else ''}"
 
 
 # --- Role detail ------------------------------------------------------------------------------------------
@@ -189,7 +266,9 @@ def role(request: Request, cluster_id: int, session: Session = Depends(get_sessi
     return _page(request, session, "role.html", "jobs", cluster=cluster, company=company, score=score,
                  assessment=assessment, job=job, postings=postings, req_ids=sibling_req_ids(session, cluster_id),
                  links=[] if hidden else role_links(session, cluster_id), channel=channel, draft=draft, app=app,
-                 story=story(session, cluster_id), hidden=hidden, chips=_chips())
+                 story=story(session, cluster_id), hidden=hidden, chips=_chips(),
+                 reaction=session.scalar(select(JobFeedback).where(JobFeedback.cluster_id == cluster_id)
+                                         .order_by(JobFeedback.id.desc())))
 
 
 # --- Review (read-only until 6c) ----------------------------------------------------------------------------
@@ -386,18 +465,72 @@ def maintenance(request: Request, session: Session = Depends(get_session)):
 
 @router.get("/pings", response_class=HTMLResponse)
 def pings(request: Request, everything: int = 0, session: Session = Depends(get_session)):
-    """What the agent wants you to know: things that need you first, then news. Unread only, unless asked."""
+    """What the agent wants you to know: things that need you first, then news. Unread only, unless asked.
+    Each ping opens where you act on it; simple answers (Yes / No, which role, Apply) happen right here."""
     from app.models import InboxMessage
+    from app.modules.m3_outreach.reopening import hidden_until
+    from app.modules.m5_profile import direction as D
 
     q = select(Notification).order_by(Notification.kind != "needs_you", Notification.id.desc()).limit(100)
     if not everything:
         q = q.where(Notification.read_at.is_(None))
     rows = session.scalars(q).all()
-    emails = {}                                # "which role is this email about?": the roles it could be
+    emails, applies = {}, {}                   # "which role is this email about?" · "Apply: …" pings
     for n in rows:
-        if n.subject_type == "inbox" and n.subject_id and n.subject_id.isdigit() and n.read_at is None:
+        if n.read_at is not None or not (n.subject_id or "").isdigit():
+            continue
+        if n.subject_type == "inbox":
             m = session.scalar(select(InboxMessage).where(InboxMessage.no == int(n.subject_id)))
             if m is not None and m.outcome == "ambiguous":
                 emails[n.id] = {"no": m.no, "roles": [r for cid in m.candidates
                                                       if (r := session.get(JobCluster, cid)) is not None]}
-    return _page(request, session, "pings.html", "pings", rows=rows, emails=emails, everything=bool(everything))
+        elif n.subject_type == "job_cluster":
+            app = session.scalar(select(Application).where(Application.cluster_id == int(n.subject_id)))
+            if app is not None and app.status == "queued" and not hidden_until(session, app.cluster_id):
+                applies[n.id] = {"cluster_id": app.cluster_id, "links": (app.links or [])[:2]}
+    asks = any(n.subject_type == "direction" and n.read_at is None for n in rows)
+    suggestions = ((D.explained(session) or {}).get("suggestions") or []) if asks else []
+    return _page(request, session, "pings.html", "pings", rows=rows, emails=emails, applies=applies,
+                 suggestions=suggestions, targets={n.id: ping_target(session, n) for n in rows},
+                 everything=bool(everything))
+
+
+def ping_target(session: Session, n: Notification) -> str | None:
+    """Where a ping's Open button goes: the screen where you act on it."""
+    kind, sid = n.subject_type or "", n.subject_id or ""
+    if kind == "direction" or (kind == "profile" and sid == "direction"):
+        return "/profile#direction"
+    if kind == "profile":
+        return "/profile"
+    if kind == "job_cluster" and sid.isdigit():
+        return f"/roles/{sid}"
+    if kind == "job" and sid.isdigit():
+        cluster = session.scalar(select(JobPosting.cluster_id).where(JobPosting.id == int(sid)))
+        return f"/roles/{cluster}" if cluster else None
+    if kind == "company" and sid.isdigit():
+        return f"/companies/{sid}"
+    if kind == "campaign" and sid.isdigit():
+        return f"/review#camp{sid}"
+    if kind == "memory" and not sid.startswith("undo:"):
+        return "/memory"
+    if kind == "owner_employer":
+        return "/companies#employers"
+    if kind in ("run", "source_warning"):
+        return "/maintenance"
+    return None
+
+
+# Terminal instructions in a ping's text: the screen has buttons for them (the terminal's `pings` still shows them)
+_CLI_HINTS = re.compile(r"\s*(?:·\s*)?(?:Pick one: assign \d+ <role id>|another job: assign \d+ --other \"Job title\""
+                        r"|not yours: assign \d+ --ignore|\(or: [^)]*\))\.?")
+
+
+def _ping_lines(text: str | None) -> list[str]:
+    """A ping's detail as separate lines, without the terminal instructions."""
+    if not text:
+        return []
+    text = _CLI_HINTS.sub("", _private(text))
+    return [p.strip(" ·") for p in re.split(r"\s·\s|;\s(?=[A-Z])", text) if p.strip(" ·.")]
+
+
+templates.env.filters["ping_lines"] = _ping_lines

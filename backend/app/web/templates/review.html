@@ -4,7 +4,7 @@
 <h1>Review</h1>
 <div class="sub">Every email needs your approval before it sends · Approve / Edit / Skip arrive in the next update (for now: <code>review</code> in the CLI)</div>
 {% for c in campaigns %}
-<div class="card {{ 's-red' if c.status == 'pending_review' else 's-none' }}">
+<div id="camp{{ c.id }}" class="card {{ 's-red' if c.status == 'pending_review' else 's-none' }}">
   <div class="top"><span class="ttl"><a href="/roles/{{ c.cluster_id }}">Role {{ c.cluster_id }}</a> · {{ c.company }} — campaign {{ c.id }}</span>
     <span class="chip {{ 'ch-red' if c.status == 'pending_review' else 'ch-blue' }}">{{ c.status.replace('_', ' ') }}</span></div>
   <div class="det">{{ c.emails | length }} email(s){% if c.edited %} · edited by you{% endif %}{% if c.status_reason %} · {{ c.status_reason }}{% endif %}{% if c.attach_resume %} · résumé: {{ attachment or 'missing — add config/resume.pdf' }}{% endif %}</div>

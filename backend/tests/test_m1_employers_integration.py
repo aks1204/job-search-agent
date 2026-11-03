@@ -92,7 +92,7 @@ def test_a_guess_the_homepage_doesnt_back_is_not_trusted_and_you_are_asked(db_se
     assert row.domain is None and row.source == "none" and row.told_at is not None
     ask = db_session.scalars(select(Notification).where(Notification.subject_type == "owner_employer",
                                                         Notification.subject_id == "zzemp associates")).one()
-    assert "employers fix" in ask.detail
+    assert "employers fix" in ask.detail and "Companies screen" in ask.detail
 
 
 def test_an_unreachable_ai_is_tried_again_and_then_you_are_asked(db_session):

@@ -310,7 +310,7 @@ def _suggest_other(session: Session, kind: str, target: str, item: str, why: str
     session.add(DirectionSuggestion(direction_id=current.id, kind=kind, target=target, item=item, why=why,
                                     strength="taste", status="open", resume_hash=row.resume_hash))
     notify(session, "needs_you", "needs_you", "A pattern in your choices",
-           detail=f"{why} (see: direction)", subject=("direction", "taste"))
+           detail=f"{why} Answer on the Profile screen.", subject=("direction", "taste"))
     return True
 
 
@@ -339,7 +339,8 @@ def _suggest_exclusion(session: Session, family: str, why: str) -> bool:
     session.add(DirectionSuggestion(direction_id=current.id, kind="remove", target=target, item=family, why=why,
                                     strength="taste", status="open", resume_hash=row.resume_hash))
     notify(session, "needs_you", "needs_you", f"A pattern in your choices: {family}",
-           detail=f"{why} Move it to your excluded families? (see: direction)", subject=("direction", "taste"))
+           detail=f"{why} Move it to your excluded families? Answer on the Profile screen.",
+           subject=("direction", "taste"))
     return True
 
 
@@ -406,7 +407,8 @@ def check_clashes(session: Session, llm) -> dict:
                 continue
             e.content = {**(e.content or {}), "clash": {"profile_id": row.id, "why": c.why}}
             notify(session, "needs_you", "needs_you", "Your new resume may not fit something the agent remembers",
-                   detail=f"“{e.meaning}” — {c.why}. Keep it: memory keep {e.id} · forget it: memory forget {e.id}",
+                   detail=f"“{e.meaning}” — {c.why}. Keep or forget it on the Memory screen "
+                          f"(or: memory keep {e.id} / memory forget {e.id}).",
                    subject=("memory", str(e.id)))
             result["clashes"] += 1
     row.notes = {**(row.notes or {}), "memory_checked": True}
@@ -561,7 +563,7 @@ def after_family_included(session: Session, family: str, direction_id: int, resu
             lines.append(f"Kept {len(other)} that were about other things ("
                          + "; ".join(_short(e) for e in other[:3]) + ").")
         notify(session, "update", "happened", f"You now include {family} roles",
-               detail=" ".join(lines) + (f" Undo: memory undo {batch}" if field else ""),
+               detail=" ".join(lines) + (f" Undo it from Pings (or: memory undo {batch})." if field else ""),
                subject=("memory", f"undo:{batch}"))
     already = session.scalar(select(DirectionSuggestion.id).where(
         DirectionSuggestion.kind == "memory", DirectionSuggestion.status == "open",
@@ -573,7 +575,7 @@ def after_family_included(session: Session, family: str, direction_id: int, resu
             why=f"{len(unclear)} earlier skip(s) without a reason I can work out: " + "; ".join(_short(e) for e in unclear[:3])))
         notify(session, "needs_you", "needs_you", f"You now include {family} roles",
                detail=f"I can't tell why you skipped {len(unclear)} earlier role(s) like this. "
-                      "Stop using them as examples? (see: direction)", subject=("direction", "memory"))
+                      "Stop using them as examples? Answer on the Profile screen.", subject=("direction", "memory"))
         out["asked"] = True
     return out
 

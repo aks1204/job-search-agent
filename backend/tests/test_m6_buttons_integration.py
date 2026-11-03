@@ -57,7 +57,7 @@ def test_after_a_button_it_only_goes_back_to_this_app(client, roles):
     _, data, _ = roles
     r = client.post(f"/do/feedback/{data}", data={"token": token_of(client), "action": "thumbs_up",
                                                   "next": "https://evil.example/"}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/jobs"
+    assert r.status_code == 303 and r.headers["location"].split("#")[0] == "/jobs"
 
 
 # --- Jobs: skip with reasons, and Undo --------------------------------------------------------------
@@ -71,8 +71,8 @@ def test_skip_with_reasons_then_undo(client, db_session, roles):
     fb = db_session.scalars(select(JobFeedback).where(JobFeedback.cluster_id == data)).one()
     assert fb.chips == ["too_junior", "location"]
     page = client.get("/jobs").text
-    assert "Skipped this role" in page and f'action="/do/feedback-undo/{fb.id}"' in page
-    assert "Skipped this role" not in client.get("/jobs").text      # the line shows once
+    assert "Skipped · reason" in page and f'action="/do/feedback-undo/{fb.id}"' in page   # on its card
+    assert "Skipped · reason" not in client.get("/jobs").text       # reload: the line and the card are gone
     press(client, f"/do/feedback-undo/{fb.id}")
     db_session.expire_all()
     score = db_session.scalars(select(JobScore).where(JobScore.cluster_id == data)).one()
@@ -229,3 +229,75 @@ def test_each_scout_button_runs_its_own_scout(monkeypatch):
     assert ran == list(SCOUT_NAMES)
     with pytest.raises(ValueError):
         runs.start("sync", "5")                                    # only some jobs can be aimed at one item
+
+
+# --- Pursue: the card stays once, then the role lives on Pursuing ------------------------------------
+
+def test_pursue_keeps_the_card_once_then_it_moves_to_pursuing(client, db_session, roles):
+    from app.models import Application
+
+    _, data, manager = roles
+    press(client, f"/do/feedback/{data}", action="act", next="/jobs?tab=fast")
+    first = client.get("/jobs?tab=fast").text
+    assert f'id="c{data}"' in first and "Pursuing: it" in first and "/do/feedback-undo/" in first
+    again = client.get("/jobs?tab=fast").text
+    assert f'id="c{data}"' not in again and f'id="c{manager}"' in again       # gone on reload; others stay
+    app = db_session.scalars(select(Application).where(Application.cluster_id == data)).one()
+    assert app.status == "queued" and app.on_list                            # on your apply list at once
+    pursuing = client.get("/jobs?tab=pursuing").text
+    assert f'id="c{data}"' in pursuing and "to apply" in pursuing and f'action="/do/applied/{data}"' in pursuing
+
+
+def test_undoing_pursue_takes_it_off_pursuing(client, db_session, roles, monkeypatch):
+    from app.config_loader import get_config
+    from app.models import Application
+
+    _, data, _ = roles
+    monkeypatch.setattr(get_config().apply, "apply_bands", [])     # nothing on the list without a Pursue, here
+    press(client, f"/do/feedback/{data}", action="act")
+    fb = db_session.scalars(select(JobFeedback).where(JobFeedback.cluster_id == data)).one()
+    press(client, f"/do/feedback-undo/{fb.id}")
+    assert f'id="c{data}"' not in client.get("/jobs?tab=pursuing").text
+    app = db_session.scalars(select(Application).where(Application.cluster_id == data)).one()
+    assert app.on_list is False                                           # off your apply list again
+    score = db_session.scalars(select(JobScore).where(JobScore.cluster_id == data)).one()
+    assert score.owner_action is None                                     # back among your matches
+
+
+# --- Pings open where you act -------------------------------------------------------------------------
+
+def test_a_ping_opens_where_you_act_on_it(client, db_session, roles):
+    from app.core.notify import notify
+    from app.web.pages import _ping_lines
+
+    company, _, _ = roles
+    n = notify(db_session, "update", "happened", "m6 company news", subject=("company", str(company.id)))
+    d = notify(db_session, "needs_you", "needs_you", "Your career direction: 1 suggestion(s) to answer",
+               detail="Add 'Data Science' to your step-up families? (fits) · Answer each with Yes or No on the "
+                      "Profile screen (or: direction).", subject=("direction", "1"))
+    db_session.flush()
+    assert client.get("/pings").status_code == 200        # (your real pings may fill the page: checked directly)
+    lines = _ping_lines(d.detail)
+    assert lines[0].startswith("Add 'Data Science'") and not any("or: direction" in x for x in lines)
+    r = press(client, f"/do/ping-open/{n.id}")
+    assert r.status_code == 303 and r.headers["location"] == f"/companies/{company.id}" and n.read_at is not None
+    assert press(client, f"/do/ping-open/{d.id}").headers["location"] == "/profile#direction"
+
+
+# --- readable descriptions ----------------------------------------------------------------------------
+
+def test_descriptions_keep_their_shape_and_lose_anything_unsafe():
+    from app.web.text import rich_text
+
+    out = str(rich_text('<div><h2 class="x">Responsibilities</h2><ul><li onclick="evil()">Build <b>models</b>'
+                        '<li>Partner with teams</ul><script>alert(1)</script><a href="javascript:x">link</a>'
+                        '<img src=x onerror="alert(2)"><p>Last line</div>'))
+    assert "<h4>Responsibilities</h4>" in out and "<li>Build <strong>models</strong></li>" in out
+    assert "<li>Partner with teams</li>" in out and "<p>Last line</p>" in out
+    for bad in ("script", "alert", "onclick", "href", "<img", "<a", "class="):
+        assert bad not in out, bad
+    escaped = str(rich_text("&lt;p&gt;About us&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Hybrid&lt;/li&gt;&lt;/ul&gt;"))
+    assert "<p>About us</p>" in escaped and "<li>Hybrid</li>" in escaped
+    plain = str(rich_text("About the role\nWe build things.\n\nWhat you'll do:\n- Analyse data\n- Present <findings>"))
+    assert "<h4>What you&#39;ll do</h4>" in plain and "<li>Analyse data</li>" in plain
+    assert "&lt;findings&gt;" in plain and "<findings>" not in plain

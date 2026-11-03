@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -48,6 +48,13 @@ def jobs_funnel(session: Session = Depends(get_session)) -> dict:
 PRIVATE_COMP = ("current_inr", "ratio")   # your current pay, and the job's pay as a share of it
 
 
+def not_pursued():
+    """Roles you haven't pursued yet: the Jobs screen's Fast lane / Inbox / Maybe (pursued ones are on Pursuing)."""
+    from app.models import JobScore
+
+    return or_(JobScore.owner_action.is_(None), JobScore.owner_action != "act")
+
+
 def listed_query(*entities):
     """Scored roles you can be shown (the shortlist, the Jobs counts and the sidebar badge all start here):
     never a blocked or rejected company, e.g. your employer or a dropped company. Rows start with `entities`;
@@ -66,24 +73,33 @@ def listed_query(*entities):
 def shortlist(
     band: str | None = Query(None, description="fast_lane | inbox | maybe | archive (default: all but archive)"),
     limit: int = Query(50, le=500),
+    undecided: bool = Query(False, description="leave out roles you already pursued (the Jobs screen's tabs)"),
+    cluster_id: int | None = Query(None, description="just this role"),
     session: Session = Depends(get_session),
 ) -> list[dict]:
     from app.models import JobAssessment, JobCluster, JobScore
 
     q = listed_query(JobScore, JobAssessment, JobPosting, Company, JobCluster)
     q = q.where(JobScore.band == band) if band else q.where(JobScore.band != "archive")
+    if undecided:
+        q = q.where(not_pursued())
+    if cluster_id is not None:
+        q = q.where(JobScore.cluster_id == cluster_id)
     from app.modules.m3_outreach.reopening import visible
 
     rows = visible(session, session.execute(q.order_by(JobScore.score.desc())).all(), limit)
-    return [
-        {"cluster_id": cl.id, "score": sc.score, "band": sc.band, "graded": sc.graded,
-         "company": c.name, "title": j.title, "location": j.location, "url": j.url, "req_ids": cl.size,
-         "one_liner": sc.grade.get("one_liner") or a.read.get("one_liner"), "reasons": sc.grade.get("reasons", []),
-         "missing": sc.grade.get("missing", []), "flags": a.flags, "level": a.level,
-         "comp": {k: v for k, v in (a.comp or {}).items() if k not in PRIVATE_COMP},   # your pay stays on Profile
-         "breakdown": sc.breakdown, "similarity": round(sc.similarity, 3)}
-        for sc, a, j, c, cl in rows
-    ]
+    return [card(sc, a, j, c, cl) for sc, a, j, c, cl in rows]
+
+
+def card(sc, a, j, c, cl) -> dict:
+    """One role as the screens and the API show it."""
+    return {"cluster_id": cl.id, "score": sc.score, "band": sc.band, "graded": sc.graded,
+            "owner_action": sc.owner_action, "company": c.name, "title": j.title, "location": j.location,
+            "url": j.url, "req_ids": cl.size,
+            "one_liner": sc.grade.get("one_liner") or a.read.get("one_liner"), "reasons": sc.grade.get("reasons", []),
+            "missing": sc.grade.get("missing", []), "flags": a.flags, "level": a.level,
+            "comp": {k: v for k, v in (a.comp or {}).items() if k not in PRIVATE_COMP},   # your pay stays on Profile
+            "breakdown": sc.breakdown, "similarity": round(sc.similarity, 3)}
 
 
 class FeedbackIn(BaseModel):

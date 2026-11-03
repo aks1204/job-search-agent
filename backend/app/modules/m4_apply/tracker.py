@@ -168,6 +168,38 @@ def queue_roles(session: Session) -> Counter:
     return counts
 
 
+def pursue_now(session: Session, cluster_id: int) -> Application:
+    """You pressed Pursue: onto your apply list at once, with its links (the tracker would add it within the
+    half hour anyway)."""
+    app = get_or_create(session, cluster_id, on_list=True)
+    if app.status == "queued":
+        if not app.on_list:
+            app.on_list, app.queued_at = True, _now()
+        if not app.links:
+            app.links = role_links(session, cluster_id)
+    return app
+
+
+def after_undo(session: Session, cluster_id: int, undone: str) -> None:
+    """Undo of Pursue / Skip on the Jobs screen: the apply list follows the decision that stands now (your
+    earlier one, if any). Applied stays applied."""
+    app = session.scalar(select(Application).where(Application.cluster_id == cluster_id))
+    if app is None:
+        return
+    score = session.scalar(select(JobScore).where(JobScore.cluster_id == cluster_id))
+    pursued = score is not None and score.owner_action == "act"
+    auto = score is not None and score.band in get_config().apply.apply_bands     # on the list without a Pursue
+    skipped = score is not None and score.owner_action in ("skip", "thumbs_down")
+    if undone in ("skip", "thumbs_down") and app.status == "skipped" and not skipped:
+        app.status, app.status_at = "queued", _now()
+    if app.status == "queued":
+        should = (pursued or auto) and not skipped
+        if should and not app.on_list:
+            app.on_list, app.queued_at = True, app.queued_at or _now()
+        elif not should:
+            app.on_list = False
+
+
 def check_link(http: PoliteClient, url: str) -> tuple[bool | None, str]:
     """(ok, why). None = couldn't tell (e.g. the site blocks checks) — the link is still shown."""
     try:

@@ -20,13 +20,10 @@
 </details>
 {%- endmacro %}
 
-{#- The feedback buttons on a role card / page. -#}
+{#- Your two reactions to a role (owner 2026-11-03): Pursue (apply list, contacts, a draft) or Skip (with reasons). -#}
 {% macro feedback(cluster_id, band, chips) -%}
 <div class="act">
-  {{ button('/do/feedback/' ~ cluster_id, 'Pursue', {'action': 'act'}, 'primary') }}
+  {{ button('/do/feedback/' ~ cluster_id, 'Pursue', {'action': 'act'}, 'primary', title='I want this one: apply link on your Pursuing tab, then contacts and a draft for your review') }}
   {{ reasons('/do/feedback/' ~ cluster_id, 'skip', 'Skip', chips) }}
-  {{ button('/do/feedback/' ~ cluster_id, '👍', {'action': 'thumbs_up'}, title='More like this') }}
-  {{ reasons('/do/feedback/' ~ cluster_id, 'thumbs_down', '👎', chips) }}
-  {% if band in ('maybe', 'archive') %}{{ button('/do/feedback/' ~ cluster_id, 'Rescue', {'action': 'maybe_rescue'}, title='Move it up to the Inbox') }}{% endif %}
 </div>
 {%- endmacro %}

@@ -24,7 +24,7 @@
     <div class="foot">Last sync {{ nav.last_sync | local("%d %b %H:%M") }}<br>Next summary mail {{ nav.next_mail }}</div>
   </aside>
   <main class="main">
-{% if flash %}<div class="flash {{ 'ok' if flash.ok else 'bad' }}" role="status"><span>{{ '✓' if flash.ok else '!' }} {{ flash.text }}</span>{% if flash.undo %}<form class="inline" method="post" action="{{ flash.undo }}"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="next" value="{{ here }}"><button type="submit" class="mailbtn">Undo</button></form>{% endif %}</div>{% endif %}
+{% if flash and not flash_inline %}<div class="flash {{ 'ok' if flash.ok else 'bad' }}" role="status"><span>{{ '✓' if flash.ok else '!' }} {{ flash.text }}</span>{% if flash.undo %}<form class="inline" method="post" action="{{ flash.undo }}"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="next" value="{{ here }}"><button type="submit" class="mailbtn">Undo</button></form>{% endif %}</div>{% endif %}
 {% block content %}{% endblock %}
   </main>
 </div>

@@ -32,7 +32,7 @@
   <div class="note">To keep or reject a company, open it: its page has Keep / Reject (your call becomes an example for future judgments).</div>
 </div>
 
-<div class="sect"><h3>YOUR EMPLOYERS · NEVER WATCHED OR CONTACTED</h3>
+<div class="sect" id="employers"><h3>YOUR EMPLOYERS · NEVER WATCHED OR CONTACTED</h3>
   {% for e in employers %}
   <div class="kv"><span><b>{{ e.name }}</b> <span class="note">{{ 'current' if e.current else 'past' }}</span></span>
     <span>{{ e.domain or 'website not found yet: matched by exact name only' }}{% if e.blocked %} · keeps off: {{ e.blocked | join(', ') }}{% endif %}</span></div>

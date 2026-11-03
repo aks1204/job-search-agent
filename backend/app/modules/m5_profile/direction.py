@@ -176,9 +176,9 @@ def refresh(session: Session, llm) -> dict:
         open_keys.add(_key(p))  # the AI listing the same thing twice asks once
     session.flush()
     if new:
-        lines = [f"[{s.id}] {describe(s, private=True)}" for s in new]
+        lines = [describe(s, private=True) for s in new]
         notify(session, "needs_you", "needs_you", f"Your career direction: {len(new)} suggestion(s) to answer",
-               detail=" · ".join(lines) + " — answer with: direction yes <id> / direction no <id>",
+               detail=" · ".join(lines) + " · Answer each with Yes or No on the Profile screen (or: direction).",
                subject=("direction", str(direction.id)))
     audit.record(session, "m5", "direction_refreshed", f"Re-worked your career direction ({len(new)} new suggestion(s))",
                  subject_type="profile", subject_id=str(row.id))

@@ -130,3 +130,27 @@ details.more[open] summary{margin-bottom:6px}
 .flash{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:9px 14px;border-radius:var(--r);margin-bottom:14px;font-size:13px}
 .flash.ok{background:var(--green-bg);color:var(--green)}
 .flash.bad{background:var(--red-bg);color:var(--red)}
+.cardflash{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-top:9px;padding:7px 11px;border-radius:8px;font-size:12.5px}
+.cardflash.ok{background:var(--green-bg);color:var(--green)}
+.cardflash.bad{background:var(--red-bg);color:var(--red)}
+.card.kept{opacity:.75}
+a.btnlike{text-decoration:none}
+a.btnlike.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+/* readable text: descriptions, pings, the AI's read */
+.desc.rich{white-space:normal;max-height:380px;overflow:hidden;position:relative;line-height:1.6;max-width:68ch}
+.desc.rich p{margin:0 0 10px}
+.desc.rich h4{font-size:13px;font-weight:600;margin:14px 0 6px;color:var(--ink)}
+.desc.rich ul,.desc.rich ol,ul.lines{margin:0 0 10px 18px;padding:0}
+.desc.rich li,ul.lines li{margin:3px 0}
+.moretoggle{position:absolute;opacity:0;pointer-events:none}
+.moretoggle:checked + .desc.rich{max-height:none}
+.morelabel{display:inline-block;margin-top:8px;color:var(--blue);font-size:12.5px;cursor:pointer}
+.morelabel::after{content:"Show the full description"}
+.moretoggle:checked ~ .morelabel::after{content:"Show less"}
+.moretoggle:focus-visible ~ .morelabel{outline:2px solid var(--blue);outline-offset:2px}
+.summary{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px}
+.sublabel{font-size:12px;margin:10px 0 4px}
+ul.lines{font-size:12.5px;color:var(--sub)}
+.card .lines{margin-top:6px}
+.card.ping.read{opacity:.7}
+.answers{margin-top:8px}

@@ -233,8 +233,8 @@ def _ask_once(session: Session, row: OwnerEmployer) -> None:
         return
     row.told_at = _now()
     notify(session, "needs_you", "needs_you", f"Couldn't find the website of your employer {row.name}",
-           detail=f'Until then it is matched by its exact name only. Set it: python -m app.cli employers fix '
-                  f'"{row.name}" <website, e.g. zs.com>', subject=("owner_employer", row.normalized[:64]))
+           detail=f'Until then it is matched by its exact name only. Set it on the Companies screen, under Your '
+                  f'employers (or: employers fix "{row.name}" <website, e.g. zs.com>).', subject=("owner_employer", row.normalized[:64]))
 
 
 def refresh(session: Session, llm=None, http=None) -> dict:
@@ -361,7 +361,8 @@ def block(session: Session, company: Company, e: Employer, *, trigger: str = TRI
     session.flush()
     where = f" ({company.domain})" if company.domain else ""
     notify(session, "update", "happened", f"Not watching {company.name}{where}: {reason}",
-           detail="Wrong match? python -m app.cli employers", subject=("company", str(company.id)))
+           detail="Wrong match? Fix it on the Companies screen, under Your employers (or: employers).",
+           subject=("company", str(company.id)))
     audit.record(session, "m1", "company_verdict", f"Rejected {company.name}: {reason} — never watched",
                  subject_type="company", subject_id=str(company.id),
                  detail={"verdict_id": verdict.id, "check": CHECK, "emails_cancelled": cancelled,

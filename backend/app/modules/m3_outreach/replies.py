@@ -162,9 +162,10 @@ def handle_reply(session: Session, e: OutreachEmail, m: dict, read: ReplyRead) -
                       else (None, ""))
         detail = read.summary + (f" They named {read.referred_name or read.referred_email}." if how else "")
         if added is not None:
-            detail += f" An email to them is waiting for your approval (review {c.id}; {how})."
+            detail += f" An email to them is waiting for your approval on Review ({how})."
         elif how:
-            detail += f" No email prepared: {how}. Add an address with `add-contact` if you have one."
+            detail += (f" No email prepared: {how}. If you know someone there, add them on the role's page "
+                       "(or: add-contact).")
         notify(session, "ping", "needs_you" if added is not None else "happened",
                f"{company.name}: {who} says they're not the right person", detail=detail, link=link,
                subject=("campaign", str(c.id)))

@@ -12,16 +12,24 @@
   {% for r in score.grade.reasons or [] %}<div class="kv"><span class="k">Why it fits</span><span>{{ r }}</span></div>{% endfor %}
   {% if score.grade.missing %}<div class="kv"><span class="k">Skill gaps</span><span>{{ score.grade.missing | join(', ') }}</span></div>{% endif %}
   {% for p in (score.breakdown or {}).get('penalties', []) %}<div class="kv"><span class="k">Penalty</span><span>{{ p.points }} {{ p.name }}</span></div>{% endfor %}
-  {% if not hidden %}{{ ui.feedback(cluster.id, score.band, chips) }}{% endif %}
+  {% if reaction and score.owner_action in ('act', 'skip', 'thumbs_down') %}
+  <div class="act"><span class="chip {{ 'ch-blue' if score.owner_action == 'act' else 'ch-gray' }}">You: {{ {'act': 'pursuing', 'skip': 'skipped', 'thumbs_down': 'skipped', 'thumbs_up': 'liked', 'maybe_rescue': 'moved to the Inbox'}.get(score.owner_action, score.owner_action) }} · {{ reaction.created_at | day }}</span>
+    {{ ui.button('/do/feedback-undo/' ~ reaction.id, 'Undo') }}</div>
+  {% elif not hidden %}{{ ui.feedback(cluster.id, score.band, chips) }}{% endif %}
 </div>
 {% endif %}
 
 {% if assessment %}
 <div class="sect"><h3>THE AI'S READ OF THE DESCRIPTION</h3>
-  <div class="kv"><span class="k">Outcome</span><span>{{ assessment.outcome }}</span></div>
-  {% if assessment.read.role_family %}<div class="kv"><span class="k">Role family</span><span>{{ assessment.read.role_family }}</span></div>{% endif %}
-  {% for r in assessment.reasons %}<div class="kv"><span class="k">Rule</span><span>{{ r | private }}</span></div>{% endfor %}
-  {% for f in assessment.flags %}<div class="kv"><span class="k">Flag</span><span>{{ f }}</span></div>{% endfor %}
+  {% set rd = assessment.read or {} %}{% set comp = assessment.comp or {} %}
+  <div class="summary">
+    <span class="chip {{ 'ch-green' if assessment.outcome == 'passed' else 'ch-red' }}">{{ 'Passes your rules' if assessment.outcome == 'passed' else 'Ruled out' }}</span>
+    {% if rd.role_family and rd.role_family != '?' %}<span class="chip ch-gray">{{ rd.role_family }}</span>{% endif %}
+    {% if rd.level %}<span class="chip ch-gray">level: {{ rd.level }}</span>{% endif %}
+    {% if comp.verdict %}<span class="chip {{ {'above': 'ch-green', 'below': 'ch-red', 'marginal': 'ch-amber'}.get(comp.verdict, 'ch-gray') }}">{{ {'above': 'pays more than now', 'marginal': 'pay about the same as now', 'below': 'pays less', 'unverified': 'pay not known'}.get(comp.verdict, comp.verdict) }}</span>{% endif %}
+  </div>
+  {% if assessment.reasons %}<div class="k sublabel">{{ "Why it was ruled out" if assessment.outcome != "passed" else "Rules noted" }}</div><ul class="lines">{% for r in assessment.reasons %}<li>{{ r | private }}</li>{% endfor %}</ul>{% endif %}
+  {% if assessment.flags %}<div class="k sublabel">Worth knowing</div><div class="summary">{% for f in assessment.flags %}<span class="chip ch-amber">{{ f }}</span>{% endfor %}</div>{% endif %}
 </div>
 {% endif %}
 
@@ -76,6 +84,8 @@
 </div>
 
 {% if job and job.description %}
-<div class="sect"><h3>JOB DESCRIPTION</h3><div class="desc">{{ job.description }}</div></div>
+<div class="sect"><h3>JOB DESCRIPTION</h3>
+  <input type="checkbox" id="desc-more" class="moretoggle"><div class="desc rich">{{ job.description | rich }}</div>
+  <label for="desc-more" class="morelabel"></label></div>
 {% endif %}
 {% endblock %}

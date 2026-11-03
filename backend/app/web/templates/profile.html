@@ -38,7 +38,7 @@
   <div class="kv"><span class="k">Where</span><span>{{ (data.preferred_locations_india or []) | join(', ') or 'anywhere in India' }}{% if data.remote_ok %} · remote ok{% endif %}</span></div>
 </div>
 
-<div class="sect"><h3>CAREER DIRECTION · DERIVED, YOUR CHOICES PERSIST</h3>
+<div class="sect" id="direction"><h3>CAREER DIRECTION · DERIVED, YOUR CHOICES PERSIST</h3>
   {% if direction %}
   {% if direction.position %}<div class="kv"><span class="k">Where you are</span><span>{{ direction.position }}</span></div>{% endif %}
   {% if direction.trajectory %}<div class="kv"><span class="k">Heading</span><span>{{ direction.trajectory }}</span></div>{% endif %}
