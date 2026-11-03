@@ -168,7 +168,7 @@ def test_a_role_with_a_draft_and_an_apply_link_is_one_card(db_session, roles):
     db_session.flush()
     cards, _older, _born = M._needs_you(db_session, NOW)          # all of them (the mail shows the top 5)
     mine = [c for c in cards if c.title.startswith("Analytics Manager · Web Co")]
-    assert len(mine) == 1 and mine[0].chip == "approval · apply"
+    assert len(mine) == 1 and mine[0].chip == "to review · to apply"
     assert [label for label, _ in mine[0].buttons] == ["Review drafts →", "Open apply link →"]
 
 
