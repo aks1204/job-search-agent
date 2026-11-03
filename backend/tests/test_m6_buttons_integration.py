@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import Company, JobFeedback, JobScore, MemoryEntry, Notification
-from tests.test_m6_web_integration import client, roles  # noqa: F401  (same fixtures)
+from tests.test_m6_web_integration import NOW, client, roles  # noqa: F401  (same fixtures)
 
 pytestmark = pytest.mark.integration
 
@@ -303,3 +303,75 @@ def test_descriptions_keep_their_shape_and_lose_anything_unsafe():
     plain = str(rich_text("About the role\nWe build things.\n\nWhat you'll do:\n- Analyse data\n- Present <findings>"))
     assert "<h4>What you&#39;ll do</h4>" in plain and "<li>Analyse data</li>" in plain
     assert "&lt;findings&gt;" in plain and "<findings>" not in plain
+
+
+def test_a_flattened_description_gets_its_bullets_and_headings_back():
+    from app.web.text import rich_text
+
+    flat = ("Our Purpose Mastercard powers economies in 200+ countries and territories worldwide, and more. "
+            "Overview: The Services team drives growth through data-driven insights across the portfolio. "
+            "Role Responsibilities In this role, you will: • Support pricing strategy with deep analysis. "
+            "• Perform revenue analytics, including price modeling. All About You • Experience in pricing.")
+    out = str(rich_text(flat))
+    for heading in ("Our Purpose", "Overview", "Role Responsibilities", "All About You"):
+        assert f"<h4>{heading}</h4>" in out, heading
+    assert "<li>Support pricing strategy with deep analysis.</li>" in out
+    assert "<li>Experience in pricing.</li>" in out and "•" not in out
+
+
+# --- the Fast lane goes straight to Pursuing (owner 2026-11-03) ----------------------------------------
+
+def test_a_fast_lane_role_on_the_apply_list_is_on_pursuing_with_skip(client, db_session, roles, monkeypatch):
+    from app.config_loader import get_config
+    from app.models import Application
+
+    company, data, manager = roles
+    # (this test's score has no AI grade, so Undo re-bands it from similarity alone: keep it on the list)
+    monkeypatch.setattr(get_config().apply, "apply_bands", ["fast_lane", "inbox", "maybe"])
+    db_session.add(Application(cluster_id=manager, company_id=company.id, status="queued", on_list=True,
+                               queued_at=NOW, links=[{"url": "https://jobs.m6web-test.io/W-2", "req_id": "W-2"}]))
+    db_session.flush()
+    assert f'id="c{manager}"' not in client.get("/jobs?tab=fast").text      # not waiting for a decision any more
+    pursuing = client.get("/jobs?tab=pursuing").text
+    card = pursuing[pursuing.index(f'id="c{manager}"'):]
+    card = card[:card.index('<div class="card') if '<div class="card' in card else len(card)]
+    assert "added automatically" in card and f'action="/do/feedback/{manager}"' in card
+    assert "https://jobs.m6web-test.io/W-2" in card
+    press(client, f"/do/feedback/{manager}", action="skip", next="/jobs?tab=pursuing")
+    app = db_session.scalars(select(Application).where(Application.cluster_id == manager)).one()
+    assert app.status == "skipped"                                           # off the list at once
+    assert f'id="c{manager}"' not in client.get("/jobs?tab=pursuing").text
+    fb = db_session.scalars(select(JobFeedback).where(JobFeedback.cluster_id == manager)).one()
+    press(client, f"/do/feedback-undo/{fb.id}")
+    db_session.expire_all()
+    app = db_session.scalars(select(Application).where(Application.cluster_id == manager)).one()
+    assert app.status == "queued" and app.on_list                            # Undo: back on Pursuing
+    assert f'id="c{manager}"' in client.get("/jobs?tab=pursuing").text
+
+
+def test_an_apply_ping_opens_the_pursuing_tab(client, db_session, roles):
+    from app.core.notify import notify
+
+    _, data, _ = roles
+    n = notify(db_session, "needs_you", "needs_you", "Apply: Analytics Manager at Web Co",
+               subject=("job_cluster", str(data)))
+    db_session.flush()
+    assert press(client, f"/do/ping-open/{n.id}").headers["location"] == f"/jobs?tab=pursuing#c{data}"
+
+
+# --- the role page: at a glance, a tidy score ----------------------------------------------------------
+
+def test_the_role_page_leads_with_a_glance_and_a_tidy_score(client, db_session, roles):
+    from app.models import JobAssessment
+
+    _, data, _ = roles
+    a = db_session.scalars(select(JobAssessment).where(JobAssessment.cluster_id == data)).one()
+    a.read = {**a.read, "duties": ["Build pricing models", "Partner with sales"], "asks": ["5+ years of analytics"]}
+    score = db_session.scalars(select(JobScore).where(JobScore.cluster_id == data)).one()
+    score.grade = {"one_liner": "A strong fit", "reasons": ["Analytics depth", "Gurgaon"], "missing": ["Tableau"]}
+    score.owner_action = "thumbs_up"
+    db_session.flush()
+    page = client.get(f"/roles/{data}").text
+    assert "AT A GLANCE" in page and "<li>Build pricing models</li>" in page and "<li>5+ years of analytics</li>" in page
+    assert page.count("Why it fits") == 1 and "<li>Analytics depth</li>" in page
+    assert ">Tableau</span>" in page and "thumbs up" not in page

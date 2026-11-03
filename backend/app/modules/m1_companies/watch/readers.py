@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from app.core.http import PoliteClient, RobotsDisallowed
-from app.modules.m1_companies.enrich import html_to_text
+from app.modules.m1_companies.enrich import html_to_lines
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class FeedSpec:
 def _text(html_or_escaped: str | None) -> str | None:
     if not html_or_escaped:
         return None
-    return html_to_text(html.unescape(html_or_escaped), limit=DESCRIPTION_LIMIT)
+    return html_to_lines(html.unescape(html_or_escaped), limit=DESCRIPTION_LIMIT)
 
 
 def _get_json(http: PoliteClient, url: str, **kw):

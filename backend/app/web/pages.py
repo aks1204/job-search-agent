@@ -184,15 +184,17 @@ def _with_kept_card(request: Request, session: Session, cards: list[dict]) -> li
 
 
 def _pursuing(session: Session) -> list[dict]:
-    """Roles you pursued, and every application you made: what to do next first (apply), then the rest by date.
-    Each with its apply links, how the application stands, and how its outreach is going."""
-    from sqlalchemy import or_
+    """Roles you pursued, roles the agent put on your apply list itself (the Fast lane: marked "added
+    automatically", with Skip), and every application you made: what to do next first (apply), then the rest
+    by date. Each with its apply links, how the application stands, and how its outreach is going."""
+    from sqlalchemy import and_, or_
 
     from app.modules.m3_outreach.reopening import hidden_until
 
     acted = set(session.scalars(select(JobScore.cluster_id).where(JobScore.owner_action == "act")).all())
     apps = {a.cluster_id: a for a in session.scalars(select(Application).where(
-        or_(Application.cluster_id.in_(acted), Application.status.in_(APPLIED)))).all()}
+        or_(Application.cluster_id.in_(acted), Application.status.in_(APPLIED),
+            and_(Application.status == "queued", Application.on_list.is_(True))))).all()}
     ids = acted | set(apps)
     if not ids:
         return []
@@ -207,7 +209,7 @@ def _pursuing(session: Session) -> list[dict]:
         if to_apply and co.status in ("blocked", "rejected"):
             continue                                                   # e.g. it turned out to be your employer
         out.append({"cluster_id": cl.id, "title": cl.title, "company": co.name, "app": app, "held": held,
-                    "to_apply": to_apply,
+                    "to_apply": to_apply, "auto": to_apply and cl.id not in acted,
                     "outreach": _outreach_state(session, campaigns.get(cl.id)),
                     "at": (app.status_at if app and app.status_at else None)})
     far = datetime.min.replace(tzinfo=timezone.utc)
@@ -503,6 +505,8 @@ def ping_target(session: Session, n: Notification) -> str | None:
     if kind == "profile":
         return "/profile"
     if kind == "job_cluster" and sid.isdigit():
+        if (n.title or "").startswith("Apply:"):
+            return f"/jobs?tab=pursuing#c{sid}"          # where its apply link, Mark applied and Skip are
         return f"/roles/{sid}"
     if kind == "job" and sid.isdigit():
         cluster = session.scalar(select(JobPosting.cluster_id).where(JobPosting.id == int(sid)))

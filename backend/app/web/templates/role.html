@@ -5,13 +5,25 @@
 <h1>{{ cluster.title }}</h1>
 <div class="sub"><a href="/companies/{{ company.id }}">{{ company.name }}</a>{% if job and job.location %} · {{ job.location }}{% endif %}{% if job and job.posted_at %} · posted {{ job.posted_at | day }}{% endif %}</div>
 
+{% set glance = (assessment.read or {}) if assessment else {} %}
+{% if glance.duties or glance.asks %}
+<div class="sect"><h3>AT A GLANCE</h3>
+  <div class="glance">
+    {% if glance.duties %}<div><div class="k sublabel">What you'd do</div><ul class="points">{% for d in glance.duties[:4] %}<li>{{ d }}</li>{% endfor %}</ul></div>{% endif %}
+    {% if glance.asks %}<div><div class="k sublabel">What they ask for</div><ul class="points">{% for a in glance.asks[:4] %}<li>{{ a }}</li>{% endfor %}</ul></div>{% endif %}
+  </div>
+  {% if job and job.description %}<a class="note" href="#desc">The full posting is at the bottom of the page</a>{% endif %}
+</div>
+{% endif %}
+
 {% if score %}
 <div class="sect"><h3>SCORE</h3>
-  <div class="kv"><span class="k">Score · band</span><span><b>{{ score.score }}</b> · {{ score.band.replace('_', ' ') }}{% if not score.graded %} (similarity only){% endif %}{% if score.owner_action %} · you: {{ score.owner_action.replace('_', ' ') }}{% endif %}</span></div>
-  {% if score.grade.one_liner %}<div class="kv"><span class="k">In one line</span><span>{{ score.grade.one_liner }}</span></div>{% endif %}
-  {% for r in score.grade.reasons or [] %}<div class="kv"><span class="k">Why it fits</span><span>{{ r }}</span></div>{% endfor %}
-  {% if score.grade.missing %}<div class="kv"><span class="k">Skill gaps</span><span>{{ score.grade.missing | join(', ') }}</span></div>{% endif %}
-  {% for p in (score.breakdown or {}).get('penalties', []) %}<div class="kv"><span class="k">Penalty</span><span>{{ p.points }} {{ p.name }}</span></div>{% endfor %}
+  <div class="scorehead"><span class="bigscore">{{ score.score }}</span><span class="chip {{ {'fast_lane': 'ch-green', 'inbox': 'ch-blue'}.get(score.band, 'ch-gray') }}">{{ score.band.replace('_', ' ') }}</span>{% if not score.graded %}<span class="note">similarity only</span>{% endif %}</div>
+  {% if score.grade.one_liner %}<p class="lead">{{ score.grade.one_liner }}</p>{% endif %}
+  {% if score.grade.reasons %}<div class="k sublabel">Why it fits</div><ul class="points">{% for r in score.grade.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+  {% if score.grade.missing %}<div class="k sublabel">Gaps to prepare for</div><div class="summary">{% for m in score.grade.missing %}<span class="chip ch-amber">{{ m }}</span>{% endfor %}</div>{% endif %}
+  {% set penalties = (score.breakdown or {}).get('penalties', []) %}
+  {% if penalties %}<div class="k sublabel">Points taken off</div><ul class="points">{% for p in penalties %}<li>{{ p.points }} · {{ p.name }}</li>{% endfor %}</ul>{% endif %}
   {% if reaction and score.owner_action in ('act', 'skip', 'thumbs_down') %}
   <div class="act"><span class="chip {{ 'ch-blue' if score.owner_action == 'act' else 'ch-gray' }}">You: {{ {'act': 'pursuing', 'skip': 'skipped', 'thumbs_down': 'skipped', 'thumbs_up': 'liked', 'maybe_rescue': 'moved to the Inbox'}.get(score.owner_action, score.owner_action) }} · {{ reaction.created_at | day }}</span>
     {{ ui.button('/do/feedback-undo/' ~ reaction.id, 'Undo') }}</div>
@@ -84,7 +96,7 @@
 </div>
 
 {% if job and job.description %}
-<div class="sect"><h3>JOB DESCRIPTION</h3>
+<div class="sect" id="desc"><h3>THE FULL POSTING</h3>
   <input type="checkbox" id="desc-more" class="moretoggle"><div class="desc rich">{{ job.description | rich }}</div>
   <label for="desc-more" class="morelabel"></label></div>
 {% endif %}

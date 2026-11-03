@@ -180,6 +180,13 @@ def pursue_now(session: Session, cluster_id: int) -> Application:
     return app
 
 
+def skip_now(session: Session, cluster_id: int, why: str) -> None:
+    """You pressed Skip: off your apply list (and the Pursuing tab) at once, not at the tracker's next run."""
+    app = session.scalar(select(Application).where(Application.cluster_id == cluster_id))
+    if app is not None and app.status == "queued":
+        set_status(session, app, "skipped", source="you", summary=why)
+
+
 def after_undo(session: Session, cluster_id: int, undone: str) -> None:
     """Undo of Pursue / Skip on the Jobs screen: the apply list follows the decision that stands now (your
     earlier one, if any). Applied stays applied."""

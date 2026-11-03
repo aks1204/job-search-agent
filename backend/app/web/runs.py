@@ -133,6 +133,19 @@ def _resume(_):
     return {"draft": draft.id, "still_to_fill_in": len((draft.notes or {}).get("gaps") or [])}
 
 
+def _layout(_):
+    from app.core.http import PoliteClient
+    from app.core.redis_client import get_redis
+    from app.db import session_scope
+    from app.modules.m2_jobs.pipeline import refresh_layout
+    key = "web:layout:after"                         # where the last press stopped (one batch per press)
+    after = int(get_redis().get(key) or 0)
+    with PoliteClient() as http, session_scope() as s:
+        counts, next_from = refresh_layout(s, http, after_id=after)
+    get_redis().set(key, next_from)
+    return {**counts, "more_to_do": "press Run now again" if next_from else ""}
+
+
 def _sources(_):
     from app.modules.maintenance.tasks import source_check_task
     return source_check_task()
@@ -148,6 +161,7 @@ JOBS: dict[str, tuple[str, object]] = {
     "sync": ("Read job feeds", _sync),
     "process": ("Process new postings (filters, AI read, scores)", _process),
     "assess": ("AI-read job descriptions", _assess),
+    "layout": ("Lay out saved job descriptions again (no AI)", _layout),
     "score": ("Score roles", _score),
     "contacts": ("Find contacts and write drafts", _contacts),
     "drafts": ("Write outreach drafts", _drafts),

@@ -83,6 +83,43 @@ def html_to_text(raw: str, limit: int = 8000) -> str:
     return (f"{head}\n\n{body}" if head else body)[:limit]
 
 
+_ITEM = re.compile(r"<li\b[^>]*>", re.I)
+_LINE_END = re.compile(r"</li\s*>|<br\s*/?>", re.I)
+_BLOCK = re.compile(r"</?(?:p|div|ul|ol|h[1-6]|section|article|header|footer|table|tr|blockquote|dl|dt|dd)\b[^>]*>",
+                    re.I)
+_SPACES = re.compile(r"[^\S\n]+")
+
+
+def html_to_lines(raw: str, limit: int = 8000) -> str:
+    """Like html_to_text, but keeps the layout (job descriptions): paragraphs and headings on their own lines,
+    list items as '• ' lines. The same words as html_to_text — only line breaks and the bullets differ."""
+    title = _TITLE.search(raw)
+    desc = _META_DESC.search(raw)
+    body = _DROP.sub(" ", raw)
+    if _TAG.search(body):
+        body = _WS.sub(" ", body)               # the page's own line breaks are layout noise; tags say it
+        body = _BLOCK.sub("\n\n", _LINE_END.sub("\n", _ITEM.sub("\n• ", body)))
+    body = _SPACES.sub(" ", html.unescape(_TAG.sub(" ", body)))
+    body = "\n".join(ln.strip() for ln in body.split("\n"))
+    body = re.sub(r"^•[ \t]*\n+(?=[^•\s])", "• ", body, flags=re.M)     # <li><p>text</p></li>: bullet + text
+    body = re.sub(r"^•\s*$", "", body, flags=re.M)          # empty list items
+    body = re.sub(r"(^• [^\n]*)\n{2,}(?=• )", r"\1\n", body, flags=re.M)   # one list: its items line by line
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    head = " — ".join(html.unescape(m.group(1)).strip() for m in (title, desc) if m)
+    return (f"{head}\n\n{body}" if head else body)[:limit]
+
+
+def same_words(a: str | None, b: str | None, prefix: bool = False) -> bool:
+    """The same text apart from layout (spacing, line breaks, bullets): a description re-read with its layout.
+    prefix: texts cut at a length limit — the shorter only has to start the longer."""
+    squash = lambda s: re.sub(r"[\s•]+", "", s or "")          # noqa: E731
+    a, b = squash(a), squash(b)
+    if prefix and a and b:
+        short, long_ = sorted((a, b), key=len)
+        return long_.startswith(short)
+    return a == b
+
+
 def fetch_site_text(http: PoliteClient, domain: str) -> tuple[str, str] | None:
     """(page text, final URL) of the homepage, or None if unreachable / disallowed."""
     for url in (f"https://{domain}", f"https://www.{domain}"):

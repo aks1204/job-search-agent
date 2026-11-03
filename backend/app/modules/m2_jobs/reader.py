@@ -69,6 +69,13 @@ def read_model(ladder: tuple[str, ...]) -> type[BaseModel]:
         "pay_estimate_confidence": (Literal["high", "medium", "low"], ...),
         "flags": (Flags, ...),
         "one_liner": (str, Field(description="What the job is, at most 15 words.")),
+        # "At a glance" on the role's page, so the full posting rarely needs reading (2026-11-03)
+        "duties": (list[str], Field(default_factory=list, description=(
+            "The 3-4 main things the person would do in this job, from the description, best first; "
+            "each at most 12 words, plain words, no company boilerplate."))),
+        "asks": (list[str], Field(default_factory=list, description=(
+            "The 3-4 main things the posting asks of the candidate (years, skills, education, domain), "
+            "must-haves first; each at most 12 words."))),
     }
     return create_model("JobRead", **fields)
 

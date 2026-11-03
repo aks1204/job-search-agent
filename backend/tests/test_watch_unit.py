@@ -360,3 +360,21 @@ def test_each_redirect_is_checked_against_robots():
         assert not results.called
         r = client.get("https://zzshop-test.com/careers", scrape=True)      # an allowed redirect is still followed
         assert (r.status_code, str(r.url)) == (200, "https://jobs.zzshop-test.io/open")
+
+
+def test_job_descriptions_keep_their_layout_with_the_same_words():
+    from app.modules.m1_companies.enrich import html_to_lines, html_to_text, same_words
+    from app.modules.m1_companies.watch.sync import _layout_only
+
+    raw = ("<h2>About the role</h2>\n<p>We build\n things.</p><ul><li>Analyse <b>data</b></li><li>Present</li></ul>"
+           "<script>x()</script><p>Bye &amp; thanks</p>")
+    out = html_to_lines(raw)
+    assert out == "About the role\n\nWe build things.\n\n• Analyse data\n• Present\n\nBye & thanks"
+    flat = html_to_text(raw)
+    assert "\n" not in flat and same_words(flat, out) and not same_words(flat, out + " More")
+    assert html_to_lines("Plain text\n\nwith its own breaks") == "Plain text\n\nwith its own breaks"
+    # an old one-line description, re-read with its layout: not a change (no new AI read)
+    old = SimpleNamespace(title="BA", location="Pune", description=flat)
+    assert _layout_only(old, RawJob(external_id="1", title="BA", location="Pune", description=out))
+    assert not _layout_only(old, RawJob(external_id="1", title="BA", location="Pune", description=out + " New"))
+    assert not _layout_only(old, RawJob(external_id="1", title="Senior BA", location="Pune", description=out))

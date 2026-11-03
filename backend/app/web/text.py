@@ -18,6 +18,7 @@ BLOCKS = {"div", "section", "article", "tr", "table", "header", "footer", "block
 # content dropped too (always closed in practice; a never-closed one would hide the rest, so only these)
 DROP = {"script", "style", "noscript", "head", "title", "template", "select", "textarea"}
 LOOKS_LIKE_HTML = re.compile(r"<\s*(p|div|br|li|ul|ol|strong|b|em|h[1-6]|span|section|table)\b[^>]*>", re.I)
+SMALL_WORDS = {"and", "of", "to", "the", "for", "with", "a", "an", "in", "on", "at", "you", "we"}   # in Title Case
 BULLET = re.compile(r"^\s*(?:[-*•●▪◦·–]|\d{1,2}[.)])\s+")
 
 
@@ -108,12 +109,14 @@ def _is_heading(line: str) -> bool:
     if not s or len(s) > 70 or s.endswith((".", ",", ";")):
         return False
     words = s.rstrip(":").split()
-    return s.endswith(":") or (len(words) <= 6 and (s.isupper() or all(w[:1].isupper() for w in words if w[0].isalpha())))
+    return s.endswith(":") or (len(words) <= 6 and (s.isupper() or all(
+        w[:1].isupper() or w in SMALL_WORDS for w in words if w[0].isalpha())))
 
 
 def _from_text(raw: str) -> str:
     out: list[str] = []
-    for block in re.split(r"\n\s*\n", raw.replace("\r\n", "\n").strip()):
+    blocks = re.split(r"\n\s*\n", raw.replace("\r\n", "\n").strip())
+    for i, block in enumerate(blocks):
         lines = [ln.strip() for ln in block.split("\n") if ln.strip()]
         items: list[str] = []
         para: list[str] = []
@@ -132,7 +135,7 @@ def _from_text(raw: str) -> str:
             if BULLET.match(ln):
                 flush_para()
                 items.append(BULLET.sub("", ln))
-            elif _is_heading(ln) and len(lines) > 1:
+            elif _is_heading(ln) and (len(lines) > 1 or i < len(blocks) - 1):   # a heading alone: one more follows
                 flush_para()
                 flush_items()
                 out.append(f"<h4>{escape(ln.rstrip(':'))}</h4>")
@@ -144,6 +147,25 @@ def _from_text(raw: str) -> str:
     return "\n".join(out)
 
 
+INLINE_BULLET = re.compile(r"\s+[•●▪]\s+")
+_HEADINGS = (r"Our Purpose|Overview|About (?:the|this) (?:Role|Team|Job|Company|Position|Opportunity)|About Us"
+             r"|About You|All About You|Title and Summary|Role Responsibilities|Key Responsibilities|Responsibilities"
+             r"|What You(?:'ll| Will) Do|What you(?:'ll| will) do|What We(?:'re| Are) Looking For"
+             r"|What we(?:'re| are) looking for|Who You Are|Who you are|Requirements|Minimum Qualifications"
+             r"|Preferred Qualifications|Basic Qualifications|Qualifications|Nice to Have|Nice to have|Benefits"
+             r"|What We Offer|What we offer|Why Join Us|Job Description|Job Summary|Skills Required|Key Skills")
+HEADING_COLON = re.compile(rf"(?:^|\s)({_HEADINGS}):\s+")                         # "… Overview: The team …"
+HEADING_AFTER = re.compile(rf"(?:^|(?<=[.!?])\s+)({_HEADINGS})\s+(?=[A-Z•])")    # "… growth. Role Responsibilities In …"
+
+
+def _unflatten(text: str) -> str:
+    """A description saved as one long line (before descriptions kept their layout): bullets and the usual
+    section headings back on lines of their own."""
+    text = HEADING_COLON.sub(lambda m: f"\n\n{m.group(1)}\n", text)
+    text = HEADING_AFTER.sub(lambda m: f"\n\n{m.group(1)}\n", text)
+    return INLINE_BULLET.sub("\n• ", text).strip()
+
+
 def rich_text(raw: str | None) -> Markup:
     """A posting's description, ready to show (see the module note for what is kept)."""
     if not raw or not raw.strip():
@@ -153,4 +175,7 @@ def rich_text(raw: str | None) -> Markup:
         text = html.unescape(text)       # escaped web-page code (a real page's "&lt;div&gt;" example stays text)
     if LOOKS_LIKE_HTML.search(text):
         return Markup(_from_html(text))
-    return Markup(_from_text(html.unescape(text)))
+    text = html.unescape(text)
+    if "\n" not in text.strip() and len(text) > 300:
+        text = _unflatten(text)
+    return Markup(_from_text(text))

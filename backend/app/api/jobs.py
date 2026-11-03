@@ -48,11 +48,20 @@ def jobs_funnel(session: Session = Depends(get_session)) -> dict:
 PRIVATE_COMP = ("current_inr", "ratio")   # your current pay, and the job's pay as a share of it
 
 
-def not_pursued():
-    """Roles you haven't pursued yet: the Jobs screen's Fast lane / Inbox / Maybe (pursued ones are on Pursuing)."""
-    from app.models import JobScore
+ON_PURSUING = ("applied", "confirmed", "in_review", "interviewing", "offer", "rejected", "silent")   # applied
 
-    return or_(JobScore.owner_action.is_(None), JobScore.owner_action != "act")
+
+def not_pursued():
+    """Roles not on the Pursuing tab: the Jobs screen's Fast lane / Inbox / Maybe. On Pursuing: roles you
+    pursued, roles the agent put on your apply list itself (the Fast lane, owner 2026-11-03), and roles you
+    applied to."""
+    from sqlalchemy import and_, exists
+
+    from app.models import Application, JobScore
+
+    on_list = exists().where(Application.cluster_id == JobScore.cluster_id, or_(
+        and_(Application.status == "queued", Application.on_list.is_(True)), Application.status.in_(ON_PURSUING)))
+    return and_(or_(JobScore.owner_action.is_(None), JobScore.owner_action != "act"), ~on_list)
 
 
 def listed_query(*entities):

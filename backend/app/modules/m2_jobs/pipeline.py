@@ -202,6 +202,46 @@ def fetch_descriptions(session: Session, http: PoliteClient, limit: int | None =
     return counts
 
 
+LAYOUT_BATCH = 300
+
+
+def refresh_layout(session: Session, http: PoliteClient, after_id: int = 0,
+                   limit: int = LAYOUT_BATCH) -> tuple[Counter, int]:
+    """Descriptions fetched before they kept their paragraphs and bullets (2026-11-03) are one long line:
+    fetch them again and keep the new text only when its words are the same, so nothing counts as changed
+    and nothing is read by the AI again. Open roles that passed the filters only.
+    One batch after posting `after_id`; returns (counts, where the next batch starts — 0 when done), so ones
+    left as they are aren't fetched again and again."""
+    from app.modules.m1_companies.enrich import same_words
+
+    counts: Counter = Counter()
+    rows = session.execute(
+        select(JobPosting, CompanyFeed)
+        .join(RawPosting, RawPosting.id == JobPosting.raw_posting_id)
+        .join(CompanyFeed, CompanyFeed.id == RawPosting.feed_id)
+        .join(Company, Company.id == JobPosting.company_id)
+        .where(JobPosting.filter_status == "passed", JobPosting.status == "open",
+               JobPosting.description_status == "fetched", ~JobPosting.description.contains("\n"),
+               Company.status != "blocked", JobPosting.id > after_id)
+        .order_by(JobPosting.id).limit(limit)
+    ).all()
+    cache: dict = {}
+    next_from = rows[-1][0].id if len(rows) == limit else 0
+    for job, feed in rows:
+        try:
+            text, _extra = fetch_description(http, feed, job, cache)
+        except Exception as e:
+            counts["failed"] += 1
+            log.info("layout re-fetch failed for job %s: %s", job.id, redact(str(e))[:200])
+            continue
+        if text and "\n" in text and same_words(job.description, text):
+            job.description = text
+            counts["laid_out"] += 1
+        else:
+            counts["left_as_is"] += 1       # no layout on the page, or its words changed since
+    return counts, next_from
+
+
 def refilter_all(session: Session) -> Counter:
     """Re-apply Kind 1 to every open posting (after owner_stub / job_rules edits + restart)."""
     cfg = get_config()

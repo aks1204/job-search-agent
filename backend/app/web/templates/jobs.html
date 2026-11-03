@@ -18,12 +18,14 @@
 {%- endif %}
 {%- endmacro %}
 
+{% if tab == 'fast' %}<div class="note">Fast-lane roles move to your Pursuing tab by themselves within the half hour, with their apply link and an outreach draft. Skip them there if you don't want them.</div>{% endif %}
+
 {% if tab == 'pursuing' %}
   {% for r in cards %}
   {% set a = r.app %}
   <div class="card {{ 's-blue' if r.to_apply else 's-green' }}" id="c{{ r.cluster_id }}">
     <div class="top"><span class="ttl"><a href="/roles/{{ r.cluster_id }}">{{ r.title }} · {{ r.company }}</a></span>
-      {% if r.to_apply %}<span class="chip ch-blue">to apply</span>
+      {% if r.to_apply %}<span>{% if r.auto %}<span class="chip ch-gray" title="A Fast-lane role: the agent put it on your list; Skip it if you don't want it">added automatically</span> {% endif %}<span class="chip ch-blue">to apply</span></span>
       {% else %}<span class="chip {{ 'ch-gray' if a.status in ('silent', 'rejected', 'closed', 'skipped') else 'ch-green' }}">{{ a.status.replace('_', ' ') }}{% if a.status_at %} · {{ a.status_at | day }}{% endif %}</span>{% endif %}</div>
     <div class="det">Outreach: {{ r.outreach }}{% if a and a.applied_at %} · applied {{ a.applied_at | day }}{% if a.applied_how == 'email' %} ✓ confirmed by email{% endif %}{% endif %}{% if a and a.outside %} · applied outside the agent{% endif %}</div>
     <div class="act">
@@ -32,6 +34,7 @@
         {% for l in (a.links if a else [])[:2] %}<a class="btnlike primary" href="{{ l.url | href }}" target="_blank" rel="noopener noreferrer">Apply{% if l.req_id %} ({{ l.req_id }}){% endif %}</a>{% else %}<span class="note">Apply link: on the next round</span>{% endfor %}
         {{ ui.button('/do/applied/' ~ r.cluster_id, 'Mark applied') }}
       {% endif %}
+      {% if r.auto %}{{ ui.reasons('/do/feedback/' ~ r.cluster_id, 'skip', 'Skip', chips) }}{% endif %}
       {% if a and a.receipt_link %}<a class="mailbtn" href="{{ a.receipt_link | href }}" target="_blank" rel="noopener noreferrer">Open in Gmail</a>{% endif %}
     </div>
   </div>

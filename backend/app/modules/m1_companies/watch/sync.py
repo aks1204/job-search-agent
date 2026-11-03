@@ -6,15 +6,19 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.config_loader import get_config
 from app.core.http import PoliteClient
 from app.models.company import Company, CompanySighting
 from app.models.feed import CompanyFeed, RawPosting
+from app.models.job import JobPosting
+from app.modules.m1_companies.enrich import same_words
 from app.modules.m1_companies.facts import _INDIA, upsert_fact
-from app.modules.m1_companies.watch.readers import READERS, FeedSpec, RawJob, read_adapter, read_workday
+from app.modules.m1_companies.watch.readers import (
+    DESCRIPTION_LIMIT, READERS, FeedSpec, RawJob, read_adapter, read_workday,
+)
 from app.settings import redact
 
 log = logging.getLogger(__name__)
@@ -47,6 +51,16 @@ class SyncResult:
 
 def _hash(job: RawJob) -> str:
     return hashlib.sha256(f"{job.title}|{job.location}|{job.description or ''}".encode()).hexdigest()[:32]
+
+
+def _layout_only(row: RawPosting, job: RawJob) -> bool:
+    """Only the description's layout differs (no new words, same title and place)."""
+    if not job.description or row.title != job.title or row.location != job.location:
+        return False
+    # A description at the length limit is cut a little earlier with its layout (line breaks take room):
+    # then the shorter one only has to start the longer one.
+    cut = max(len(row.description or ""), len(job.description)) >= DESCRIPTION_LIMIT - 100
+    return same_words(row.description, job.description, prefix=cut)
 
 
 def aggregator_jobs(session: Session, company_id: int) -> list[RawJob]:
@@ -144,7 +158,16 @@ def apply_jobs(session: Session, feed: CompanyFeed, jobs: list[RawJob], now: dat
         if row.closed_at is not None:
             row.closed_at = None
             result.reopened += 1
-        if row.content_hash != digest:
+        if row.content_hash != digest and _layout_only(row, job):
+            # The same posting, now read with its paragraphs and bullets (2026-11-03): show the new layout
+            # without counting it as a change — a change would pay for a new AI read of every posting.
+            # (Its old fingerprint stays, so this branch keeps matching: nothing to do once the text is in.)
+            if row.description != job.description:
+                row.description = job.description
+                session.execute(update(JobPosting).where(JobPosting.raw_posting_id == row.id,
+                                                         JobPosting.description_status == "present")
+                                .values(description=job.description).execution_options(synchronize_session=False))
+        elif row.content_hash != digest:
             row.title, row.location, row.url, row.description = job.title, job.location, job.url, job.description
             row.department, row.employment_type, row.posted_at = job.department, job.employment_type, job.posted_at
             row.payload, row.content_hash, row.changed_at = job.payload, digest, now

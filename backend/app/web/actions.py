@@ -141,7 +141,7 @@ async def feedback(cluster_id: int, request: Request, session: Session = Depends
     """Pursue or Skip (the Jobs screen's two buttons; the API still takes 👍 / 👎 / rescue). The card stays on
     the page, marked, with Undo — until you reload."""
     from app.modules.m2_jobs.scoring import FEEDBACK_ACTIONS, record_feedback
-    from app.modules.m4_apply.tracker import pursue_now
+    from app.modules.m4_apply.tracker import pursue_now, skip_now
     from app.modules.m5_profile.reasons import CHIPS, explain
 
     def do(form):
@@ -158,6 +158,7 @@ async def feedback(cluster_id: int, request: Request, session: Session = Depends
             pursue_now(session, cluster_id)
             text = "Pursuing: it's on your Pursuing tab with its apply link; contacts and a draft follow on Review."
         elif action in ("skip", "thumbs_down"):
+            skip_now(session, cluster_id, f"you chose {action}")
             text = f"Skipped · reason: {explain(fb.chips, fb.inferred)}"
         else:
             text = {"thumbs_up": "Liked", "maybe_rescue": "Moved to the Inbox"}[action]

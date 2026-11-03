@@ -11,7 +11,7 @@ from urllib.parse import quote, urlsplit
 from app.core.http import PoliteClient
 from app.models.feed import CompanyFeed
 from app.models.job import JobPosting
-from app.modules.m1_companies.enrich import html_to_text
+from app.modules.m1_companies.enrich import html_to_lines
 
 LIMIT = 20_000
 _SITE_NUMBER = re.compile(r'data-sitenumber="([\w-]+)"', re.I)
@@ -20,7 +20,7 @@ _SITE_NUMBER = re.compile(r'data-sitenumber="([\w-]+)"', re.I)
 def _text(raw: str | None) -> str | None:
     if not raw:
         return None
-    return html_to_text(html.unescape(raw), limit=LIMIT) or None
+    return html_to_lines(html.unescape(raw), limit=LIMIT) or None
 
 
 def _workday(http: PoliteClient, feed: CompanyFeed, job: JobPosting, cache: dict) -> tuple[str | None, dict]:

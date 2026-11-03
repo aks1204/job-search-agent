@@ -145,7 +145,7 @@ a.btnlike.primary{background:var(--ink);border-color:var(--ink);color:#fff}
 .moretoggle{position:absolute;opacity:0;pointer-events:none}
 .moretoggle:checked + .desc.rich{max-height:none}
 .morelabel{display:inline-block;margin-top:8px;color:var(--blue);font-size:12.5px;cursor:pointer}
-.morelabel::after{content:"Show the full description"}
+.morelabel::after{content:"Show the full posting"}
 .moretoggle:checked ~ .morelabel::after{content:"Show less"}
 .moretoggle:focus-visible ~ .morelabel{outline:2px solid var(--blue);outline-offset:2px}
 .summary{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px}
@@ -154,3 +154,11 @@ ul.lines{font-size:12.5px;color:var(--sub)}
 .card .lines{margin-top:6px}
 .card.ping.read{opacity:.7}
 .answers{margin-top:8px}
+/* role page: at a glance, score (2026-11-03) */
+.glance{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;margin-bottom:6px}
+@media (max-width:700px){.glance{grid-template-columns:1fr}}
+ul.points{margin:0 0 8px 18px;padding:0;font-size:13px;line-height:1.5;color:var(--ink)}
+ul.points li{margin:3px 0}
+.scorehead{display:flex;align-items:center;gap:8px;margin:2px 0 6px}
+.bigscore{font-size:22px;font-weight:600;color:var(--ink)}
+p.lead{font-size:14px;line-height:1.5;margin:0 0 8px;color:var(--ink)}
