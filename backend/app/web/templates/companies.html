@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Companies{% endblock %}
 {% block content %}
 <h1>Companies</h1>
@@ -28,6 +29,14 @@
   <div class="row"><div><b>{{ 'Passed' if v.passed else 'Rejected' }} — <a href="/companies/{{ v.company.id }}">{{ v.company.name }}</a></b>
     <div class="note">{{ v.summary or v.failed_check or '' }} · {{ v.decided_by }} · {{ v.at | day }}</div></div></div>
   {% else %}<div class="note">No verdicts yet.</div>{% endfor %}
-  <div class="note">Overriding a verdict (one tap, it becomes a precedent) arrives in the next update.</div>
+  <div class="note">To keep or reject a company, open it: its page has Keep / Reject (your call becomes an example for future judgments).</div>
+</div>
+
+<div class="sect"><h3>YOUR EMPLOYERS · NEVER WATCHED OR CONTACTED</h3>
+  {% for e in employers %}
+  <div class="kv"><span><b>{{ e.name }}</b> <span class="note">{{ 'current' if e.current else 'past' }}</span></span>
+    <span>{{ e.domain or 'website not found yet: matched by exact name only' }}{% if e.blocked %} · keeps off: {{ e.blocked | join(', ') }}{% endif %}</span></div>
+  <form class="stack" method="post" action="/do/employer">{{ ui.hidden({'name': e.name}) }}<input name="domain" placeholder="right website, or none" aria-label="Right website for {{ e.name }}" required><button type="submit">Set website</button></form>
+  {% else %}<div class="note">No employers in your profile yet.</div>{% endfor %}
 </div>
 {% endblock %}

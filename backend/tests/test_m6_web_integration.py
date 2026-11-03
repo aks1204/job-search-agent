@@ -66,7 +66,8 @@ def roles(db_session):
 
 
 SCREENS = ["/jobs", "/jobs?tab=fast", "/jobs?tab=maybe", "/jobs?tab=applied", "/review", "/companies",
-           "/companies?status=all", "/profile", "/memory", "/audit", "/audit?group=outreach", "/settings", "/maintenance"]
+           "/companies?status=all", "/profile", "/memory", "/memory?archived=1", "/audit", "/audit?group=outreach",
+           "/settings", "/maintenance", "/pings", "/pings?everything=1"]
 
 
 def test_every_screen_opens(client, roles):

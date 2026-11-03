@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Profile{% endblock %}
 {% block content %}
 {% set cr = data.current_role or {} %}
@@ -10,10 +11,12 @@
 <h1>{{ data.name or 'Your profile' }}</h1>
 <div class="sub">{{ data.location or '' }}{% if data.mobile %} · {{ data.mobile }}{% endif %}{% if data.linkedin_url %} · <a href="{{ data.linkedin_url | href }}" target="_blank" rel="noopener noreferrer">LinkedIn</a>{% endif %}
   {% if prof.confirmed %} · confirmed {{ prof.confirmed.confirmed_at | day }}{% else %} · not confirmed yet — the agent uses config/owner_stub.yaml{% endif %}</div>
-{% if prof.draft %}<div class="card s-red"><div class="ttl">A new reading of your résumé is waiting for you</div><div class="det">From {{ prof.draft.created_at | day }} · check review/profile.yaml, then <code>profile confirm</code> (a button arrives in the next update)</div></div>{% endif %}
+{% if prof.draft %}<div class="card s-red"><div class="ttl">A new reading of your résumé is waiting for you</div><div class="det">From {{ prof.draft.created_at | day }} · check review/profile.yaml in your project folder (Notepad is fine), fix anything, save, then:</div>
+  <div class="act">{{ ui.button('/do/profile-confirm', 'Confirm profile', cls='primary') }}</div></div>{% endif %}
 
 <div class="sect"><h3>RÉSUMÉ</h3>
   <div class="kv"><span><b>{{ resume.name }}</b></span><span>{% if resume.exists %}updated {{ resume.updated | day }}{% else %}missing — add config/resume.pdf{% endif %}</span></div>
+  {% if resume.exists %}<div class="act">{{ ui.button('/do/run/resume', 'Read my résumé again', title='An AI read (a few cents) unless it already read this file; you check the result before anything changes') }}</div>{% endif %}
 </div>
 
 <div class="sect"><h3>EMPLOYMENT HISTORY · DRIVES BRAND & LEVEL RULES</h3>
@@ -45,8 +48,10 @@
   <div class="kv"><span class="k">Target roles</span><span>{% for t in direction.target_roles %}{{ t.title }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}</span></div>
   <div class="kv"><span class="k">Openness to sideways moves</span><span>{{ direction.lateral_appetite }}</span></div>
   {% for s in direction.suggestions %}
-  <div class="card s-red"><div class="ttl">Suggestion</div><div class="det">{{ s.text }} · Yes / No buttons arrive in the next update</div></div>
+  <div class="card s-red"><div class="ttl">Suggestion</div><div class="det">{{ s.text }}</div>
+    <div class="act">{{ ui.button('/do/direction/' ~ s.id, 'Yes', {'answer': 'yes'}, 'primary') }}{{ ui.button('/do/direction/' ~ s.id, 'No', {'answer': 'no'}) }}</div></div>
   {% endfor %}
+  <div class="act">{{ ui.button('/do/run/direction', 'Re-work my career direction', title='About 3 cents; only suggests — nothing changes without your yes') }}</div>
   {% else %}<div class="note">No career direction yet.</div>{% endif %}
 </div>
 {% endblock %}

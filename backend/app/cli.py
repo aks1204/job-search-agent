@@ -528,9 +528,9 @@ def names_cmd(action: str | None = None, key: str | None = None) -> int:
     """Kept companies whose name doesn't fit their website — worth a look. `names ok <site>`: it's correct."""
     from sqlalchemy import select
 
-    from app.core import audit
     from app.db import session_scope
     from app.models import Company
+    from app.modules.m1_companies import fix_website as F
     from app.modules.maintenance.sources import fits_website   # the same check as the source report
 
     with session_scope() as s:
@@ -539,10 +539,7 @@ def names_cmd(action: str | None = None, key: str | None = None) -> int:
             if c is None or not c.domain:
                 print("Usage: names ok <website or company number>   (a company that has a website)")
                 return 1
-            owner = {**((c.source_data or {}).get("owner") or {}), "name_ok": c.domain}
-            c.source_data = {**(c.source_data or {}), "owner": owner}
-            audit.record(s, "m1", "name_confirmed", f"You confirmed {c.name} ↔ {c.domain} is correct",
-                         subject_type="company", subject_id=str(c.id))
+            F.confirm_name(s, c)
             print(f"{c.name} ↔ {c.domain}: marked correct — never flagged again (unless its website changes)")
             return 0
         rows = s.scalars(select(Company).where(Company.status.in_(("passed", "watching", "dormant")))

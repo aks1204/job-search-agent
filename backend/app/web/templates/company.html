@@ -1,8 +1,31 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}{{ c.name }}{% endblock %}
 {% block content %}
 <h1>{{ c.name }}</h1>
 <div class="sub">{% if c.domain %}<a href="{{ ("https://" ~ c.domain) | href }}" target="_blank" rel="noopener noreferrer">{{ c.domain }}</a>{% else %}{{ c.domain or 'no website' }}{% endif %} · {{ c.type or 'type unknown' }} · {{ c.status }} · found by {{ c.sources | join(', ') or '—' }}</div>
+
+<div class="sect"><h3>YOUR CALLS</h3>
+  <div class="act">
+    <form class="inline" method="post" action="/do/verdict/{{ c.id }}">{{ ui.hidden({'decision': 'keep'}) }}<input name="reason" placeholder="Why keep it" aria-label="Why keep it"><button type="submit" class="primary">Keep</button></form>
+    <form class="inline" method="post" action="/do/verdict/{{ c.id }}">{{ ui.hidden({'decision': 'reject'}) }}<input name="reason" placeholder="Why reject it" aria-label="Why reject it"><label class="pick"><input type="checkbox" name="permanent" value="1"> for good</label><button type="submit">Reject</button></form>
+  </div>
+  <div class="act">
+    {{ ui.button('/do/run/evaluate', 'Judge again', {'arg': c.id}, title='One AI judgment, in the background') }}
+    {{ ui.button('/do/run/activate', 'Set up its job feed now', {'arg': c.id}) }}
+    <form class="inline" method="post" action="/do/brand/{{ c.id }}">{{ ui.hidden() }}<select name="level" aria-label="Brand compared with your employer"><option value="up">A step up</option><option value="lateral">Sideways</option><option value="down">A step down</option></select><input name="reason" placeholder="Why (optional)" aria-label="Why"><button type="submit">Brand call</button></form>
+  </div>
+  <details class="more"><summary>Wrong website or name?</summary>
+    <form class="stack" method="post" action="/do/fix-website/{{ c.id }}">{{ ui.hidden() }}<input name="domain" placeholder="the right website, e.g. acme.com" aria-label="Right website" required><button type="submit">Fix website…</button></form>
+    <form class="stack" method="post" action="/do/rename/{{ c.id }}">{{ ui.hidden() }}<input name="name" placeholder="the right name" aria-label="Right name" required><button type="submit">Rename…</button></form>
+    {% if not name_fits %}<div class="note">Its name doesn't look like its website. If it's right anyway:</div>{{ ui.button('/do/name-ok/' ~ c.id, 'Name is right') }}{% endif %}
+  </details>
+  <div class="act"><span class="note">Outreach to this company:</span>
+    {{ ui.button('/do/outreach/' ~ c.id, 'Hold', {'action': 'hold'}, title='Pause every unsent email; resume later') }}
+    {{ ui.button('/do/outreach/' ~ c.id, 'Resume', {'action': 'release'}) }}
+    {{ ui.button('/do/outreach/' ~ c.id, 'Stop…', {'action': 'stop'}, title='Cancel every unsent email') }}
+  </div>
+</div>
 
 <div class="sect"><h3>HOW ITS JOBS ARE READ</h3>
   {% if c.feed %}

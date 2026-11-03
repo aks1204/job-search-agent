@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.config_loader import get_config
 from app.db import get_session
 from app.models import (
-    Application, Company, CompanyFeed, JobAssessment, JobCluster, JobPosting, JobScore, OutreachCampaign,
+    Application, Company, CompanyFeed, JobAssessment, JobCluster, JobPosting, JobScore, Notification, OutreachCampaign,
 )
 
 router = APIRouter(include_in_schema=False)
@@ -83,8 +83,9 @@ def _nav(session: Session) -> dict:
     pending = session.scalar(select(func.count()).select_from(OutreachCampaign)
                              .where(OutreachCampaign.status == "pending_review")) or 0
     last_sync = session.scalar(select(func.max(CompanyFeed.last_sync_at)))
+    pings = session.scalar(select(func.count()).select_from(Notification).where(Notification.read_at.is_(None))) or 0
     return {"new": len(visible(session, fresh)), "review": pending, "last_sync": last_sync,
-            "next_mail": _next_mail()}
+            "next_mail": _next_mail(), "pings": pings}
 
 
 def _next_mail() -> str:
@@ -101,7 +102,26 @@ def _next_mail() -> str:
 
 
 def _page(request: Request, session: Session, template: str, screen: str, **context) -> HTMLResponse:
-    return templates.TemplateResponse(request, template, {"screen": screen, "nav": _nav(session), **context})
+    """Every screen: the sidebar, this browser's button code (6b), and the line saying what a button just did."""
+    from app.web.actions import FLASH_COOKIE, read_flash
+    from app.web.safety import form_token, remember_token
+
+    here = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    flash = read_flash(request)
+    response = templates.TemplateResponse(request, template, {
+        "screen": screen, "nav": _nav(session), "token": form_token(request), "here": here, "flash": flash,
+        **context})
+    remember_token(request, response)
+    if flash is not None:
+        response.delete_cookie(FLASH_COOKIE, path="/")
+    return response
+
+
+def _chips() -> dict:
+    """The one-tap reasons for Skip / 👎 (Part 5c)."""
+    from app.modules.m5_profile.reasons import CHIPS
+
+    return CHIPS
 
 
 @router.get("/")
@@ -131,7 +151,8 @@ def jobs(request: Request, tab: str = "inbox", session: Session = Depends(get_se
         limit = MAYBE_CARDS if tab == "maybe" else 500
         cards = shortlist(band=BANDS[tab], limit=limit, session=session)
         more = max(counts[tab] - len(cards), 0)
-    return _page(request, session, "jobs.html", "jobs", tab=tab, counts=counts, cards=cards, more=more)
+    return _page(request, session, "jobs.html", "jobs", tab=tab, counts=counts, cards=cards, more=more,
+                 chips=_chips())
 
 
 # --- Role detail ------------------------------------------------------------------------------------------
@@ -168,7 +189,7 @@ def role(request: Request, cluster_id: int, session: Session = Depends(get_sessi
     return _page(request, session, "role.html", "jobs", cluster=cluster, company=company, score=score,
                  assessment=assessment, job=job, postings=postings, req_ids=sibling_req_ids(session, cluster_id),
                  links=[] if hidden else role_links(session, cluster_id), channel=channel, draft=draft, app=app,
-                 story=story(session, cluster_id), hidden=hidden)
+                 story=story(session, cluster_id), hidden=hidden, chips=_chips())
 
 
 # --- Review (read-only until 6c) ----------------------------------------------------------------------------
@@ -205,13 +226,24 @@ def companies(request: Request, status: str = "kept", q: str = "", session: Sess
     statuses = dict(session.execute(select(Company.status, func.count()).group_by(Company.status)).all())
     return _page(request, session, "companies.html", "companies", rows=rows, status=status, q=q, statuses=statuses,
                  coverage=coverage_report(session),
-                 verdicts=list_verdicts(passed=None, decided_by=None, limit=15, offset=0, session=session))
+                 verdicts=list_verdicts(passed=None, decided_by=None, limit=15, offset=0, session=session),
+                 employers=_employers(session))
+
+
+def _employers(session: Session) -> list[dict]:
+    """Your current and past employers (never watched or contacted), each with what it keeps off the list."""
+    from app.modules.m1_companies import employers as E
+
+    return [{"name": e.name, "domain": e.domain, "current": e.current,
+             "blocked": [c.name for c in E.blocked_for(session, e)]} for e in E.employers(session)]
 
 
 @router.get("/companies/{company_id}", response_class=HTMLResponse)
 def company(request: Request, company_id: int, session: Session = Depends(get_session)):
     from app.api.companies import get_company
     from app.api.contacts import company_benches
+    from app.modules.maintenance.sources import fits_website
+    from app.web.actions import CONTACT_KINDS
     from app.modules.m3_outreach.reopening import visible
 
     data = get_company(company_id, session)
@@ -220,7 +252,8 @@ def company(request: Request, company_id: int, session: Session = Depends(get_se
         .where(JobCluster.company_id == company_id, JobScore.band != "archive")
         .order_by(JobScore.score.desc())).all()
     return _page(request, session, "company.html", "companies", c=data,
-                 benches=company_benches(company_id, session), roles=visible(session, roles, 50))
+                 benches=company_benches(company_id, session), roles=visible(session, roles, 50),
+                 name_fits=fits_website(session.get(Company, company_id)), kinds=CONTACT_KINDS)
 
 
 # --- Profile ----------------------------------------------------------------------------------------------
@@ -248,13 +281,13 @@ def profile(request: Request, session: Session = Depends(get_session)):
 # --- Memory -----------------------------------------------------------------------------------------------
 
 @router.get("/memory", response_class=HTMLResponse)
-def memory(request: Request, q: str = "", session: Session = Depends(get_session)):
+def memory(request: Request, q: str = "", archived: int = 0, session: Session = Depends(get_session)):
     from app.api.profile import list_memory, search_memory
 
-    entries = search_memory(q.strip(), session) if q.strip() else list_memory(kind=None, archived=False,
+    entries = search_memory(q.strip(), session) if q.strip() else list_memory(kind=None, archived=bool(archived),
                                                                               session=session)
     groups = {k: [e for e in entries if e["kind"] == k] for k in ("answer", "precedent", "taste_signal")}
-    return _page(request, session, "memory.html", "memory", groups=groups, q=q)
+    return _page(request, session, "memory.html", "memory", groups=groups, q=q, archived=bool(archived))
 
 
 # --- Audit log --------------------------------------------------------------------------------------------
@@ -340,9 +373,31 @@ def maintenance(request: Request, session: Session = Depends(get_session)):
     from app.api.feeds import coverage_report, list_feeds
     from app.api.maintenance import sources
     from app.api.scouts import list_scouts
+    from app.web import runs
 
     feeds = list_feeds(health=None, method=None, limit=1, session=session)["summary"]
     failing = list_feeds(health="failing", method=None, limit=50, session=session)["items"]
     return _page(request, session, "maintenance.html", "maintenance", coverage=coverage_report(session),
                  feeds=feeds, failing=failing, report=sources(days=90, all_time=False, session=session),
-                 scouts=list_scouts(session))
+                 scouts=list_scouts(session), jobs=[(k, runs.JOBS[k][0]) for k in runs.MAINTENANCE_JOBS])
+
+
+# --- Pings ------------------------------------------------------------------------------------------------
+
+@router.get("/pings", response_class=HTMLResponse)
+def pings(request: Request, everything: int = 0, session: Session = Depends(get_session)):
+    """What the agent wants you to know: things that need you first, then news. Unread only, unless asked."""
+    from app.models import InboxMessage
+
+    q = select(Notification).order_by(Notification.kind != "needs_you", Notification.id.desc()).limit(100)
+    if not everything:
+        q = q.where(Notification.read_at.is_(None))
+    rows = session.scalars(q).all()
+    emails = {}                                # "which role is this email about?": the roles it could be
+    for n in rows:
+        if n.subject_type == "inbox" and n.subject_id and n.subject_id.isdigit() and n.read_at is None:
+            m = session.scalar(select(InboxMessage).where(InboxMessage.no == int(n.subject_id)))
+            if m is not None and m.outcome == "ambiguous":
+                emails[n.id] = {"no": m.no, "roles": [r for cid in m.candidates
+                                                      if (r := session.get(JobCluster, cid)) is not None]}
+    return _page(request, session, "pings.html", "pings", rows=rows, emails=emails, everything=bool(everything))

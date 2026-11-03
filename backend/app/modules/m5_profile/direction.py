@@ -176,7 +176,7 @@ def refresh(session: Session, llm) -> dict:
         open_keys.add(_key(p))  # the AI listing the same thing twice asks once
     session.flush()
     if new:
-        lines = [f"[{s.id}] {describe(s)}" for s in new]
+        lines = [f"[{s.id}] {describe(s, private=True)}" for s in new]
         notify(session, "needs_you", "needs_you", f"Your career direction: {len(new)} suggestion(s) to answer",
                detail=" · ".join(lines) + " — answer with: direction yes <id> / direction no <id>",
                subject=("direction", str(direction.id)))

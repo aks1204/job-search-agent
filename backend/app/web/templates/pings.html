@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block title %}Pings{% endblock %}
+{% block content %}
+<h1>Pings</h1>
+<div class="sub">What the agent wants you to know · {% if everything %}<a href="/pings">unread only</a>{% else %}<a href="/pings?everything=1">show read ones too</a>{% endif %}</div>
+{% if rows %}<div class="act">{{ ui.button('/do/pings-read', 'Mark all read') }}<span class="note">(the ones that need you stay until answered)</span></div>{% endif %}
+<div class="sect">
+  {% for n in rows %}
+  <div class="row"><div>
+    <span class="chip {{ 'ch-red' if n.kind == 'needs_you' else ('ch-blue' if n.kind == 'ping' else 'ch-gray') }}">{{ {'needs_you': 'needs you', 'ping': 'ping', 'update': 'update'}.get(n.kind, n.kind) }}</span>
+    <b>{{ n.title | private }}</b> <span class="note">{{ n.created_at | local("%d %b %H:%M") }}</span>
+    {% if n.detail %}<div class="note">{{ n.detail | private }}</div>{% endif %}
+    {% if n.link %}<div class="note"><a href="{{ n.link | href }}" target="_blank" rel="noopener noreferrer">Open in Gmail</a></div>{% endif %}
+    {% if n.id in emails %}{% set m = emails[n.id] %}
+    <form class="stack" method="post" action="/do/assign/{{ m.no }}">{{ ui.hidden() }}
+      {% for r in m.roles %}<label class="pick"><input type="radio" name="choice" value="{{ r.id }}"> {{ r.title }}</label>{% endfor %}
+      <label class="pick"><input type="radio" name="choice" value="other"> Another job:</label> <input name="other" placeholder="Job title (typing one picks this)" aria-label="Other job title">
+      <label class="pick"><input type="radio" name="choice" value="ignore"> Not mine</label>
+      <button type="submit" class="primary">That's it</button></form>
+    {% endif %}
+    {% if n.subject_type == 'memory' and (n.subject_id or '').startswith('undo:') and n.read_at is none %}
+      {{ ui.button('/do/memory-undo/' ~ n.subject_id[5:], 'Undo') }}
+    {% endif %}
+  </div>
+  {% if n.read_at is none and n.id not in emails %}{{ ui.button('/do/ping-read/' ~ n.id, 'Read') }}{% endif %}</div>
+  {% else %}<div class="empty">Nothing new.</div>{% endfor %}
+</div>
+{% endblock %}

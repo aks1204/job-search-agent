@@ -73,6 +73,9 @@ services:
   worker:
     <<: *backend
     command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=info", "--concurrency=3"]
+    volumes:
+      - ./config:/config:ro
+      - ./review:/review      # "Read my résumé again" (a Run-now job) writes review/profile.yaml here
     depends_on:
       migrate:
         condition: service_completed_successfully

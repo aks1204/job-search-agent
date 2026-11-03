@@ -20,10 +20,13 @@ def create_app() -> FastAPI:
 
     from fastapi.staticfiles import StaticFiles
 
-    from app.web import pages
+    from app.web import actions, pages
+    from app.web.safety import Guard
 
     app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "web" / "static")), name="static")
     app.include_router(pages.router)
+    app.include_router(actions.router)
+    app.add_middleware(Guard)   # 6b: only this laptop, and no button pressed from another site
     return app
 
 

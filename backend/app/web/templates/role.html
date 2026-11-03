@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}{{ cluster.title }} · {{ company.name }}{% endblock %}
 {% block content %}
 <h1>{{ cluster.title }}</h1>
@@ -11,6 +12,7 @@
   {% for r in score.grade.reasons or [] %}<div class="kv"><span class="k">Why it fits</span><span>{{ r }}</span></div>{% endfor %}
   {% if score.grade.missing %}<div class="kv"><span class="k">Skill gaps</span><span>{{ score.grade.missing | join(', ') }}</span></div>{% endif %}
   {% for p in (score.breakdown or {}).get('penalties', []) %}<div class="kv"><span class="k">Penalty</span><span>{{ p.points }} {{ p.name }}</span></div>{% endfor %}
+  {% if not hidden %}{{ ui.feedback(cluster.id, score.band, chips) }}{% endif %}
 </div>
 {% endif %}
 
@@ -32,6 +34,12 @@
   {% if req_ids|length > 1 %}<div class="note">Job IDs: {{ req_ids | join(', ') }}</div>{% endif %}
   {% for l in links %}<div class="kv"><span class="k">Apply{% if l.req_id %} ({{ l.req_id }}){% endif %}</span><span><a href="{{ l.url | href }}" target="_blank" rel="noopener noreferrer">{{ l.url }}</a>{% if l.why %} · {{ l.why }}{% endif %}</span></div>{% endfor %}
   {% if app %}<div class="note">Application: {{ app.status.replace('_', ' ') }}{% if app.applied_at %} · applied {{ app.applied_at | day }}{% endif %}</div>{% endif %}
+  {% if not hidden and (app is none or app.status == 'queued') %}
+  <div class="act">
+    <form class="inline" method="post" action="/do/applied/{{ cluster.id }}">{{ ui.hidden() }}<input name="note" placeholder="Note (optional)" aria-label="Note"><button type="submit" class="primary">Mark applied</button></form>
+    {% if app and app.status == 'queued' %}<form class="inline" method="post" action="/do/apply-skip/{{ cluster.id }}">{{ ui.hidden() }}<input name="reason" placeholder="Why not (optional)" aria-label="Why not applying"><button type="submit">Not applying</button></form>{% endif %}
+  </div>
+  {% endif %}
 </div>
 
 <div class="sect"><h3>OUTREACH</h3>
@@ -42,6 +50,19 @@
       <div class="kv"><span>{{ p.name }}{% if p.title %} — {{ p.title }}{% endif %}</span><span>{{ p.email or 'no address yet' }}{% if p.confidence %} · {{ p.confidence }}{% endif %}</span></div>
     {% endfor %}{% endif %}
   {% else %}<div class="note">No contact route decided yet.</div>{% endif %}
+  <details class="more"><summary>Change who it goes to</summary>
+    <form class="stack" method="post" action="/do/designate/{{ cluster.id }}">{{ ui.hidden() }}
+      <input name="email" type="email" placeholder="the only address to use, e.g. a referral" aria-label="Only address" required>
+      <input name="reason" placeholder="Why (optional)" aria-label="Why"><button type="submit">Use only this address</button></form>
+    {% if channel and channel.manual %}{{ ui.button('/do/designate/' ~ cluster.id, 'Back to automatic', {'email': ''}) }}{% endif %}
+    <form class="stack" method="post" action="/do/add-contact/{{ company.id }}">{{ ui.hidden() }}
+      <input name="name" placeholder="First and last name" aria-label="Name" required>
+      <input name="email" type="email" placeholder="Email (optional)" aria-label="Email">
+      <input name="title" placeholder="Job title (optional)" aria-label="Job title">
+      <select name="kind" aria-label="Kind of contact"><option value="recruiting">Recruiter</option><option value="hiring_manager">Hiring manager</option><option value="founder">Founder</option></select>
+      <button type="submit">Add a person you know</button></form>
+  </details>
+  {% if not hidden %}<div class="act">{{ ui.button('/do/run/drafts', 'Write the draft now', {'arg': cluster.id}) }}</div>{% endif %}
   {% if draft %}
     <details><summary>Draft v{{ draft.version }} · {{ draft.scenario.replace('_', ' ') }} · {{ draft.status }}</summary>
       <div class="draftbox"><div class="hdr">Subject: {{ draft.subject }}</div><div class="body-text">{{ draft.preview }}</div></div>

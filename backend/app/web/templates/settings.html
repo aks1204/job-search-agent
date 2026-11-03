@@ -1,13 +1,15 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Settings{% endblock %}
 {% block content %}
 <h1>Settings</h1>
 <div class="sub">Rhythms, services and rules · changing them from here arrives in the next update (for now: the files in config/)</div>
 
 <div class="sect"><h3>SENDING</h3>
-  <div class="kv"><span class="k">Outreach sending</span><span>{% if sending.on is none %}<span class="chip ch-gray">unknown</span>{% else %}<span class="chip {{ 'ch-green' if sending.on else 'ch-red' }}">{{ 'on' if sending.on else 'off (paused)' }}</span>{% endif %}</span></div>
-  <div class="kv"><span class="k">Bounce breaker</span><span>{{ sending.breaker }}{% if sending.breaker_reason %} · {{ sending.breaker_reason }}{% endif %}</span></div>
-  <div class="kv"><span class="k">Gmail</span><span>{% if gmail.connected %}connected · {{ gmail.email }}{% elif gmail.configured %}not connected{% else %}not set up{% endif %}</span></div>
+  <div class="kv"><span class="k">Outreach sending</span><span>{% if sending.on is none %}<span class="chip ch-gray">unknown</span>{% else %}<span class="chip {{ 'ch-green' if sending.on else 'ch-red' }}">{{ 'on' if sending.on else 'off (paused)' }}</span>
+    {% if sending.on %}{{ ui.button('/do/sending', 'Turn off', {'on': '0'}) }}{% else %}{{ ui.button('/do/sending', 'Turn on…', {'on': '1'}, title='Shows what would go out, then asks you to confirm') }}{% endif %}{% endif %}</span></div>
+  <div class="kv"><span class="k">Bounce breaker</span><span>{{ sending.breaker }}{% if sending.breaker_reason %} · {{ sending.breaker_reason }}{% endif %}{% if sending.breaker not in ('ok', 'unknown') %} {{ ui.button('/do/breaker-reset', 'Reset') }}{% endif %}</span></div>
+  <div class="kv"><span class="k">Gmail</span><span>{% if gmail.connected %}connected · {{ gmail.email }} {{ ui.button('/do/gmail-test', 'Send me a test email') }}{% elif gmail.configured %}not connected · <a href="/api/gmail/connect">Connect Gmail</a>{% else %}not set up (README: Connect Gmail){% endif %}</span></div>
 </div>
 
 <div class="sect"><h3>SUMMARY MAIL & ALERTS</h3>

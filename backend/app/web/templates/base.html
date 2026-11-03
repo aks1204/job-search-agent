@@ -15,6 +15,7 @@
       <a href="/review" class="{{ 'on' if screen == 'review' }}">Review {% if nav.review %}<span class="badge b-red" title="campaigns waiting for you">{{ nav.review }}</span>{% endif %}</a>
       <a href="/companies" class="{{ 'on' if screen == 'companies' }}">Companies</a>
       <a href="/profile" class="{{ 'on' if screen == 'profile' }}">Profile</a>
+      <a href="/pings" class="{{ 'on' if screen == 'pings' }}">Pings {% if nav.pings %}<span class="badge b-red" title="unread">{{ nav.pings }}</span>{% endif %}</a>
       <a href="/memory" class="{{ 'on' if screen == 'memory' }}">Memory</a>
       <a href="/audit" class="{{ 'on' if screen == 'audit' }}">Audit log</a>
       <a href="/settings" class="{{ 'on' if screen == 'settings' }}">Settings</a>
@@ -23,6 +24,7 @@
     <div class="foot">Last sync {{ nav.last_sync | local("%d %b %H:%M") }}<br>Next summary mail {{ nav.next_mail }}</div>
   </aside>
   <main class="main">
+{% if flash %}<div class="flash {{ 'ok' if flash.ok else 'bad' }}" role="status"><span>{{ '✓' if flash.ok else '!' }} {{ flash.text }}</span>{% if flash.undo %}<form class="inline" method="post" action="{{ flash.undo }}"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="next" value="{{ here }}"><button type="submit" class="mailbtn">Undo</button></form>{% endif %}</div>{% endif %}
 {% block content %}{% endblock %}
   </main>
 </div>

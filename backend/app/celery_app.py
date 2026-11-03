@@ -61,7 +61,7 @@ celery_app = Celery(
     backend=_settings.redis_url,
     include=["app.tasks.system", "app.modules.m1_companies.tasks", "app.modules.m2_jobs.tasks",
              "app.modules.m3_outreach.tasks", "app.modules.m4_apply.tasks",
-             "app.modules.m5_profile.tasks", "app.modules.maintenance.tasks"],
+             "app.modules.m5_profile.tasks", "app.modules.maintenance.tasks", "app.web.runs"],
 )
 
 celery_app.conf.update(

@@ -1,0 +1,32 @@
+{#- Part 6b: buttons. Every one is a small form carrying this browser's code (see web/safety.py). -#}
+{% macro hidden(fields={}) -%}
+<input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="next" value="{{ here }}">
+{%- for k, v in fields.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor -%}
+{%- endmacro %}
+
+{% macro button(url, label, fields={}, cls='', title='') -%}
+<form class="inline" method="post" action="{{ url }}">{{ hidden(fields) }}<button type="submit" class="{{ cls }}"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</button></form>
+{%- endmacro %}
+
+{#- Skip / 👎 with one-tap reasons: a small panel that opens on click (no JavaScript needed). -#}
+{% macro reasons(url, action, label, chips) -%}
+<details class="pop"><summary class="btnlike">{{ label }}</summary>
+  <form method="post" action="{{ url }}" class="popbody">{{ hidden({'action': action}) }}
+    <div class="chips">{% for key, text in chips.items() %}<label class="pick"><input type="checkbox" name="chips" value="{{ key }}"> {{ text }}</label>{% endfor %}</div>
+    <input name="reason" placeholder="In your words (optional)" aria-label="Reason in your words">
+    <button type="submit" class="primary">{{ label }}</button>
+    <div class="note">No reason? The agent guesses one from the role and marks it "probably".</div>
+  </form>
+</details>
+{%- endmacro %}
+
+{#- The feedback buttons on a role card / page. -#}
+{% macro feedback(cluster_id, band, chips) -%}
+<div class="act">
+  {{ button('/do/feedback/' ~ cluster_id, 'Pursue', {'action': 'act'}, 'primary') }}
+  {{ reasons('/do/feedback/' ~ cluster_id, 'skip', 'Skip', chips) }}
+  {{ button('/do/feedback/' ~ cluster_id, '👍', {'action': 'thumbs_up'}, title='More like this') }}
+  {{ reasons('/do/feedback/' ~ cluster_id, 'thumbs_down', '👎', chips) }}
+  {% if band in ('maybe', 'archive') %}{{ button('/do/feedback/' ~ cluster_id, 'Rescue', {'action': 'maybe_rescue'}, title='Move it up to the Inbox') }}{% endif %}
+</div>
+{%- endmacro %}

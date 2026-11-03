@@ -1,14 +1,19 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Memory{% endblock %}
 {% block content %}
 <h1>Memory</h1>
-<div class="sub">What the agent has learned from you · pin, edit or forget arrive in the next update</div>
+<div class="sub">What the agent has learned from you · {% if archived %}<a href="/memory">hide forgotten and older ones</a>{% else %}<a href="/memory?archived=1">show forgotten and older ones too</a>{% endif %}</div>
 <form class="search" method="get" action="/memory"><input name="q" value="{{ q }}" placeholder="Search by meaning, e.g. relocation" aria-label="Search memory"><button type="submit">Search</button></form>
 {% for kind, label in [('answer', 'ANSWERS · ASKED AT MOST ONCE'), ('precedent', 'PRECEDENTS · YOUR DECISIONS, REMEMBERED'), ('taste_signal', 'TASTE PATTERNS')] %}
 <div class="sect"><h3>{{ label }}</h3>
   {% for e in groups[kind] %}
   <div class="row"><div><b>{{ e.meaning }}</b><div class="note">learned {{ e.created_at | day }}{% if e.last_used_at %} · last used {{ e.last_used_at | day }}{% endif %}{% if e.expires_at %} · re-check after {{ e.expires_at | day }}{% endif %}{% if e.similarity is defined %} · match {{ e.similarity }}{% endif %}</div></div>
-    <div style="display:flex;gap:6px">{% if e.pinned %}<span class="chip ch-blue">pinned</span>{% endif %}{% if e.clash %}<span class="chip ch-red">clashes</span>{% endif %}{% if e.status != 'active' %}<span class="chip ch-gray">{{ e.status }}</span>{% endif %}</div></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">{% if e.pinned %}<span class="chip ch-blue">pinned</span>{% endif %}{% if e.clash %}<span class="chip ch-red">clashes</span>{% endif %}{% if e.status != 'active' %}<span class="chip ch-gray">{{ e.status }}</span>{% endif %}
+      {{ ui.button('/do/memory/' ~ e.id, 'Unpin' if e.pinned else 'Pin', {'action': 'unpin' if e.pinned else 'pin'}, title='A pinned memory never fades') }}
+      {% if e.clash %}{{ ui.button('/do/memory/' ~ e.id, 'Keep', {'action': 'keep'}, title='Still true despite the clash') }}{% endif %}
+      {% if e.status == 'superseded' %}<span class="note">replaced by a newer one</span>{% elif e.status == 'archived' %}{{ ui.button('/do/memory/' ~ e.id, 'Restore', {'action': 'restore'}) }}{% else %}{{ ui.button('/do/memory/' ~ e.id, 'Forget…', {'action': 'forget'}) }}{% endif %}
+    </div></div>
   {% else %}<div class="note">Nothing yet.</div>{% endfor %}
 </div>
 {% endfor %}

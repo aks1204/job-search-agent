@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Confirm{% endblock %}
+{% block content %}
+<h1>{{ c.title }}</h1>
+<div class="sect">
+  {% for line in c.lines %}<div class="kv"><span>{{ line | private }}</span></div>{% endfor %}
+</div>
+<div class="act">
+  <form class="inline" method="post" action="{{ action }}"><input type="hidden" name="token" value="{{ token }}"><input type="hidden" name="confirmed" value="1">
+    {% for k, v in fields %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button type="submit" class="primary">{{ c.button }}</button></form>
+  <a href="{{ back }}">Cancel</a>
+</div>
+{% endblock %}

@@ -352,3 +352,16 @@ def _remember_time_sensitive(session: Session, data: dict) -> None:
         if nested is not None and nested.is_active:
             nested.rollback()
         log.warning("couldn't remember pay / notice: %r", e)
+
+
+def confirm_review_file(session: Session, path: Path = REVIEW_FILE) -> OwnerProfile:
+    """`profile confirm` and the Profile screen's Confirm: the review file you checked becomes your profile."""
+    if not path.is_file():
+        raise ProfileError("no review/profile.yaml yet: read your résumé first")
+    text = path.read_text(encoding="utf-8")
+    draft = store.latest_draft(session)
+    if draft is None:
+        raise ProfileError("no draft waiting: read your résumé again, or edit your profile")
+    if draft_id_in(text) != draft.id:
+        raise ProfileError("this file is older than the agent's latest draft: export it again, check it, then confirm")
+    return confirm(session, parse_review(text), row=draft)

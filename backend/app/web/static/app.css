@@ -111,3 +111,22 @@ table.grid{width:100%;border-collapse:collapse;font-size:13px}
 table.grid td,table.grid th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 table.grid th{color:var(--faint);font-weight:600;font-size:12px}
 @media (max-width:880px){.nav a{white-space:nowrap;padding:7px 11px;width:auto}}
+/* Part 6b: buttons and small forms */
+form.inline{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0}
+form.stack{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.main input,.main select{font:inherit;font-size:12.5px;padding:5px 9px;border:1px solid var(--line2);border-radius:8px;background:#fff;color:var(--ink)}
+.main input[type=checkbox],.main input[type=radio]{padding:0;margin:0}
+.sect .act{margin-top:10px;display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.pick{display:inline-flex;gap:5px;align-items:center;font-size:12.5px;color:var(--ink);margin-right:6px}
+.chips{display:flex;flex-wrap:wrap;gap:4px 8px;margin-bottom:8px}
+details.pop{display:inline-block;position:relative}
+details.pop summary{list-style:none}
+details.pop summary::-webkit-details-marker{display:none}
+.btnlike{display:inline-block;border:1px solid var(--line2);background:#fff;color:var(--ink);border-radius:8px;padding:5px 13px;font-size:12.5px;font-weight:500}
+.btnlike:hover{background:#F0F2EF}
+.popbody{position:absolute;z-index:5;top:34px;left:0;width:320px;background:#fff;border:1px solid var(--line2);border-radius:var(--r);padding:12px;box-shadow:0 6px 22px rgba(20,30,25,.12);display:flex;flex-direction:column;gap:8px}
+details.more{margin-top:10px}
+details.more[open] summary{margin-bottom:6px}
+.flash{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:9px 14px;border-radius:var(--r);margin-bottom:14px;font-size:13px}
+.flash.ok{background:var(--green-bg);color:var(--green)}
+.flash.bad{background:var(--red-bg);color:var(--red)}

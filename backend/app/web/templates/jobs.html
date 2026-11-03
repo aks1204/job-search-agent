@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Jobs{% endblock %}
 {% block content %}
 <h1>Jobs</h1>
@@ -24,6 +25,7 @@
   <div class="card {{ 's-none' if tab == 'maybe' else 's-blue' }}">
     <div class="top"><span class="ttl"><a href="/roles/{{ j.cluster_id }}">{{ j.title }} · {{ j.company }}</a></span><span class="score">{{ j.score }}</span></div>
     <div class="det">{{ j.one_liner or '' }}{% if j.location %} · {{ j.location }}{% endif %}{% if j.req_ids > 1 %} · {{ j.req_ids }} openings{% endif %}{% for f in j.flags[:3] %} · {{ f }}{% endfor %}{% if not j.graded %} · similarity only{% endif %}</div>
+    {{ ui.feedback(j.cluster_id, j.band, chips) }}
   </div>
   {% else %}<div class="empty">Nothing here right now.</div>{% endfor %}
   {% if more %}<div class="empty">+{{ more }} more</div>{% endif %}

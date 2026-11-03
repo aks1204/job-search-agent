@@ -45,3 +45,12 @@ def _no_real_employers(monkeypatch):
     from app.modules.m1_companies import employers
 
     monkeypatch.setattr(employers, "_from_profile", lambda: [])
+
+
+@pytest.fixture(autouse=True)
+def _test_client_host(monkeypatch):
+    """pytest's web client calls itself "testserver"; the running app only answers on localhost (6b guard)."""
+    from app.web import safety
+
+    real = safety.allowed_hosts
+    monkeypatch.setattr(safety, "allowed_hosts", lambda: real() | {"testserver"})

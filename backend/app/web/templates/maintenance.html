@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Maintenance{% endblock %}
 {% block content %}
 <h1>Maintenance</h1>
@@ -34,5 +35,11 @@
   {% for s in scouts %}
   <div class="kv"><span>{{ s.scout }}</span><span><span class="chip {{ 'ch-green' if s.health == 'ok' else ('ch-red' if s.health == 'failing' else 'ch-gray') }}">{{ s.health.replace('_', ' ') }}</span>{% if s.last_run %} <span class="note">last {{ s.last_run.started_at | local("%d %b %H:%M") }}</span>{% endif %}{% if s.reason %} <span class="note">{{ s.reason }}</span>{% endif %}</span></div>
   {% endfor %}
+</div>
+<div class="sect"><h3>RUN NOW · EACH ALSO RUNS ON ITS SCHEDULE</h3>
+  {% for key, label in jobs %}
+  <div class="kv"><span>{{ label }}</span><span>{{ ui.button('/do/run/' ~ key, 'Run now') }}</span></div>
+  {% endfor %}
+  <div class="note">Each runs in the background; you get a ping when it's done. One run of each at a time.</div>
 </div>
 {% endblock %}

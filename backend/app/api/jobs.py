@@ -45,6 +45,9 @@ def jobs_funnel(session: Session = Depends(get_session)) -> dict:
     return funnel(session)
 
 
+PRIVATE_COMP = ("current_inr", "ratio")   # your current pay, and the job's pay as a share of it
+
+
 def listed_query(*entities):
     """Scored roles you can be shown (the shortlist, the Jobs counts and the sidebar badge all start here):
     never a blocked or rejected company, e.g. your employer or a dropped company. Rows start with `entities`;
@@ -76,7 +79,8 @@ def shortlist(
         {"cluster_id": cl.id, "score": sc.score, "band": sc.band, "graded": sc.graded,
          "company": c.name, "title": j.title, "location": j.location, "url": j.url, "req_ids": cl.size,
          "one_liner": sc.grade.get("one_liner") or a.read.get("one_liner"), "reasons": sc.grade.get("reasons", []),
-         "missing": sc.grade.get("missing", []), "flags": a.flags, "comp": a.comp, "level": a.level,
+         "missing": sc.grade.get("missing", []), "flags": a.flags, "level": a.level,
+         "comp": {k: v for k, v in (a.comp or {}).items() if k not in PRIVATE_COMP},   # your pay stays on Profile
          "breakdown": sc.breakdown, "similarity": round(sc.similarity, 3)}
         for sc, a, j, c, cl in rows
     ]

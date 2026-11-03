@@ -229,3 +229,13 @@ def apply(session: Session, p: Correction) -> Company:
                          "to": {"name": p.new_name, "domain": p.new_domain}, "combined_with": p.other_id,
                          "left_behind": p.stay_ids})
     return c
+
+
+def confirm_name(session: Session, c: Company) -> None:
+    """You say a kept company's name does fit its website: never flagged again (unless its website changes)."""
+    if not c.domain:
+        raise ValueError("only a company with a website can be marked correct")
+    owner = {**((c.source_data or {}).get("owner") or {}), "name_ok": c.domain}
+    c.source_data = {**(c.source_data or {}), "owner": owner}
+    audit.record(session, "m1", "name_confirmed", f"You confirmed {c.name} ↔ {c.domain} is correct",
+                 subject_type="company", subject_id=str(c.id))

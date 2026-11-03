@@ -128,6 +128,24 @@ def record_role_feedback(session: Session, *, company: str, title: str, family: 
     return entry
 
 
+def undo_role_feedback(session: Session, cluster_id: int, action: str, since: datetime) -> None:
+    """Undo of your latest decision on a role: the precedent it made is archived and the one it replaced (your
+    earlier decision on that role) is active again. Only a precedent made by THAT decision (same action, made
+    when it was or later) — if remembering it had failed, your earlier one stays untouched."""
+    latest = session.scalar(select(MemoryEntry).where(
+        MemoryEntry.kind == "precedent", MemoryEntry.status == "active",
+        MemoryEntry.context["module"].astext == "m2",
+        MemoryEntry.context["cluster_id"].astext == str(cluster_id),
+        MemoryEntry.content["action"].astext == action, MemoryEntry.created_at >= since)
+        .order_by(MemoryEntry.id.desc()))
+    if latest is None:
+        return
+    latest.status = "archived"
+    for old in session.scalars(select(MemoryEntry).where(MemoryEntry.superseded_by_id == latest.id,
+                                                         MemoryEntry.status == "superseded")).all():
+        old.status, old.superseded_by_id = "active", None
+
+
 def examples_for_job(session: Session, text: str, k: int = 3) -> list[str]:
     """Your most similar past decisions on roles, plus your active patterns — for the job grade."""
     hits = search(session, "precedent", text, k=k * 2, module="m2", mark_used=False)

@@ -210,6 +210,40 @@ def record_feedback(session: Session, row: JobScore, action: str, reason: str | 
     return feedback
 
 
+def undo_feedback(session: Session, feedback_id: int) -> JobScore:
+    """The screen's Undo: your latest decision on a role is taken back — the role returns to where it was
+    (your earlier decision on it, if any, stands again) and so does what memory learned from it."""
+    from app.core import audit
+    from app.models.score import JobFeedback
+
+    fb = session.get(JobFeedback, feedback_id)
+    if fb is None:
+        raise ValueError("nothing to undo (it was already undone)")
+    if session.scalar(select(JobFeedback.id).where(JobFeedback.cluster_id == fb.cluster_id,
+                                                   JobFeedback.id > fb.id).limit(1)) is not None:
+        raise ValueError("you've decided on this role again since; that newer decision stands")
+    row = session.scalar(select(JobScore).where(JobScore.cluster_id == fb.cluster_id))
+    if row is None:
+        raise ValueError("this role isn't scored any more")
+    earlier = session.scalar(select(JobFeedback).where(JobFeedback.cluster_id == fb.cluster_id,
+                                                       JobFeedback.id < fb.id).order_by(JobFeedback.id.desc()))
+    action, cluster_id, at = fb.action, fb.cluster_id, fb.created_at
+    session.delete(fb)
+    row.owner_action = earlier.action if earlier else None
+    _rebanding(row, session.get(JobAssessment, row.assessment_id))
+    try:
+        from app.modules.m5_profile.memory import undo_role_feedback
+
+        with session.begin_nested():
+            undo_role_feedback(session, cluster_id, action, at)
+    except Exception as e:
+        log.warning("couldn't undo the remembered decision: %r", e)
+    audit.record(session, "m2", "job_feedback_undone", f"You undid '{action}' on a role",
+                 subject_type="job_cluster", subject_id=str(cluster_id), detail={"score": row.score})
+    session.flush()
+    return row
+
+
 def update_similarities(session: Session, limit: int = 400) -> Counter:
     """Stage 1 for passed assessments without a current similarity. Free (local embeddings)."""
     counts: Counter = Counter()
