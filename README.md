@@ -1,12 +1,23 @@
 # Job Agent
 
-A self-hosted AI agent that finds relevant job openings, prepares outreach for your approval, and tracks your pipeline. It runs 24/7 on your own server. Full design: [ARCHITECTURE.md](ARCHITECTURE.md).
+A self-hosted AI agent that finds relevant job openings, prepares outreach for your approval, and tracks your pipeline. It runs on your own machine, with your own keys. Full design: [ARCHITECTURE.md](ARCHITECTURE.md).
 
-> **Status:** Module 0 ✅ · Module 1: discovery ✅ · judgment ✅ · watching (Part 1c) — in review.
+> **Status:** v1 complete. Modules 0–6 ✅: companies · jobs · outreach · apply tracker · profile & memory · the app, summary mail and audit log.
 
-## You need an always-on host
+## What it does, end to end
 
-The agent works on a schedule, whether or not you have it open. **A laptop that sleeps won't work.** Use a small VPS (2 vCPU / 4 GB RAM is plenty) or a home server that stays on, with Docker and Docker Compose v2 installed.
+1. **Finds companies** worth watching (your seed list, curated packs, YC, Hacker News, job sites) and judges each one against your rules, with a one-line reason you can overrule.
+2. **Watches their careers pages** and reads every new opening: free filters first, then a short AI read, then a score. Roles land in **Fast lane**, **Inbox** or **Maybe**.
+3. **For the roles you pursue,** it finds the right people (public search snippets only), finds and checks their addresses, and **drafts** one outreach email from your résumé.
+4. **You review every email.** Nothing goes out until you approve it, press **Begin outreach**, and the **Sending** switch is on.
+5. **You apply yourself.** The agent never fills in forms. It gives you the company's own apply link, then follows the application through your inbox: applied, interviewing, offer, or ended.
+6. **It tells you what matters,** twice a day in one summary mail, plus two optional real-time email alerts. Everything else waits quietly in the app.
+
+## Where to run it
+
+The agent works on a schedule, whether or not you have the app open, and **nothing runs while the machine is off or asleep**.
+- **Best:** a small always-on server (2 vCPU / 4 GB RAM is plenty) or a home server, with Docker and Docker Compose v2.
+- **A laptop works,** if you accept the gaps: company searches missed while it slept catch up within 15 minutes of waking, but a summary mail due while it was asleep is skipped, and outreach waves wait until it's back.
 
 ## Quick start
 
@@ -32,15 +43,15 @@ docker compose exec api pytest -q
 
 `selftest` checks config, database and pgvector, Redis, embeddings, memory search and dedupe, a worker round-trip, and the scheduler heartbeat.
 
-### Reaching the API from your laptop
+### Open the app
 
-The API listens on the server's `localhost` only, because there's no login yet. Use an SSH tunnel:
+Open **http://localhost:8000** in your browser. The API's own docs are at http://localhost:8000/docs.
+
+The app has **no login**, so it listens on `localhost` only: keep it that way. On a server, reach it through an SSH tunnel:
 
 ```bash
 ssh -L 8000:localhost:8000 you@your-server
 ```
-
-Then open http://localhost:8000/docs on your laptop.
 
 ## Services
 
@@ -52,6 +63,60 @@ Then open http://localhost:8000/docs on your laptop.
 | `api` | FastAPI backend (`:8000`) |
 | `worker` | Celery worker: does the background work |
 | `beat` | Celery scheduler: what makes the agent run unattended |
+
+## Using the app (Module 6)
+
+Everything you do happens in the app at http://localhost:8000; the terminal commands further down do the same things, if you prefer them. Every screen has its own address, and every card links to the page where you act on it.
+
+### The screens
+
+| Screen | What it's for |
+|---|---|
+| **Jobs** | Your matches, in tabs: **Fast lane** (strong matches; they move to Pursuing by themselves), **Inbox**, **Maybe**, and **Pursuing** (the roles you're working on: apply links, Mark applied, where outreach stands). On each match: **Pursue** or **Skip** (with a one-tap reason). |
+| **Role page** | One opening's whole story: the posting, why it scored as it did, its apply links, outreach and replies, the application. Every role card opens it. |
+| **Review** | Every outreach email before it goes, exactly as it will arrive, with who it goes to day by day. **Approve** or **Skip** each person, **Edit** the text, or ask for a fresh draft, then press **Begin outreach**. |
+| **Companies** | The companies watched and why each was kept or dropped, their fact cards and job feeds. **Keep** / **Reject**, fix a wrong website or name, **Hold** / **Stop** outreach to a company. |
+| **Profile** | You: identity, résumé, work history, and the fields your rules use. The only place your pay is shown. Edit and confirm here. |
+| **Pings** | What the agent wants you to know: things that need you first, then news. Simple answers (Yes / No, which role, Apply) happen right on the ping. |
+| **Memory** | What the agent has learned from you (answers, precedents, taste) and a summary of what it believes. Pin, forget or restore any entry. |
+| **Audit log** | Every decision the agent made, why, and what it touched. Correct its judgment calls here (see below). |
+| **Settings** | The **Sending** switch, Gmail, the summary mail and email alerts, your services and how much of each free tier is used, and your rule files (read-only). |
+| **Maintenance** | How each source of companies is doing, job-feed coverage, and **Run now** for every scheduled job. |
+
+Sidebar badges: **blue** = new matches this week, **red** = outreach waiting for your review, or unread pings.
+
+**The same words everywhere** (app, mail, Settings). **Pursuing** is the list of roles you're working on: the Jobs tab, the mail section, "2 pursuing" in the mail's subject. Where a role stands: **to apply**, **to review** (a draft on Review), **outreach on** (or **outreach on hold**), **applied**, **interviewing**, **offer**, and **ended** with the reason (rejected, no reply, posting closed, skipped). **Pings** are what the agent wants you to know; **email alerts** are the two pings that can also reach your inbox at once.
+
+### From a match to outreach
+
+1. **Pursue** a role on Jobs (fast-lane roles are pursued for you). It moves to **Pursuing**, with its apply link.
+2. The agent finds people to write to and drafts one email. The role then shows **to review**, and the Review badge turns red.
+3. On **Review**, approve or skip each person. Edit the text if you like (approvals reset, so you approve the final words).
+4. Press **Begin outreach.** Only this starts the waves (day 1, day 2, day 3); it asks you to confirm first.
+5. Emails actually leave only while the **Sending** switch in Settings is on. It starts **off**. With it off, approved emails simply wait.
+6. When someone replies, every unsent email to that company stops, and you're told (a ping, and an email alert if you've switched that on). **The conversation is yours: the agent never replies or follows up.**
+
+### Your summary mail and email alerts
+
+The agent writes to you in two ways, both from your connected Gmail to your own inbox. **Both start switched off**: turn each on in **Settings → Summary mail & email alerts**. **Send me the summary now** sends a preview at any time.
+
+- **Summary mail**, at the times in `config/app.yaml` (default 08:00 and 20:00). Sections: ⚡ Needs you, 📥 New matches, 📤 What happened (per role), 📊 Pursuing (the roles still in play that aren't already shown above) and 🔧 Housekeeping, each only when it has something. Each role appears once, in the first section where it matters. A day with nothing new sends nothing.
+- **Two email alerts**, each with its own switch: a **fast-lane find**, and **someone replying to your outreach** (with an Open in Gmail link). They are checked every 3 minutes, arrive together as one email, and wait during quiet hours (22:00 to 08:00).
+
+The buttons in the mail open the right screen in the app (`app_url` in `config/app.yaml`, default `http://localhost:8000`), so they work on the machine that runs the app, not on your phone. Nothing is sent or changed from the mail itself. Your pay never appears in the mail, and roles held back by a wait after a rejection never appear in the mail or an email alert.
+
+### The Audit log
+
+Every consequential decision, in plain words: what the agent did, **why**, and what it **affected** (a link to the role or company). **More detail** shows the record behind it. Filter by area (Companies, Jobs, Outreach, Applications, Profile & memory, Mail, Housekeeping), by time (7 days, 30 days, everything), by a search word, or **only judgment calls**. The Audit log never notifies you.
+
+**Correcting a judgment call:**
+- **A company kept or rejected:** **Keep it instead** / **Reject it instead**, on that company's latest judgment. Your reason is kept in Memory as an example for future judgments.
+- **A website the agent found:** **Fix it on the company's page →**. Once fixed, the entry shows *corrected by you*.
+- **A reply the AI read:** **Re-sort…** and pick what it really was. It asks first. If it was in fact a person answering, every unsent email to that company is cancelled; your correction is kept in Memory.
+
+These ask you to confirm rather than offering Undo, because some effects can't be taken back (a cancelled email, a company judged again). A company's verdict can always be flipped back.
+
+Entries over **12 months** old are condensed on the 1st of each month to one line per kind per month ("Mar 2026 · 212 × Judged a company"); entries you corrected are kept in full. **Maintenance → Run now** does it at once.
 
 ## Company discovery (Module 1, Part 1a)
 
@@ -346,7 +411,7 @@ Each wave goes out only if nobody at the company has replied.
 - **2 a day per company**;
 - **30–60 minutes** between any two emails.
 
-**When someone replies,** every unsent email to that company is held, and you're told. Read the reply in Gmail, then release or stop that company. Part 3d will sort replies into interested, redirect, out-of-office and so on, and act as the spec says. **The agent never replies and never sends follow-ups.**
+**When someone replies,** the reply is sorted (Part 3d, below) and the outreach follows what it means: a person's answer stops every unsent email to that company. **The agent never replies and never sends follow-ups.**
 
 **When an email bounces:**
 - That address is dead, and a guessed address pattern at that domain is no longer trusted.
@@ -381,7 +446,7 @@ If a reply names someone without an address, the agent looks the address up the 
 
 When the waves end and nobody has answered for 7 days, the campaign is marked **silent** and you're told once: "follow up yourself if you'd like".
 
-Campaign outcomes (interested, forwarded, question, rejected, silent, stopped) feed Module 4 and the pipeline. Alerts are kept for Module 6 (instant alerts plus the summary mail); until then, see them with:
+Campaign outcomes (interested, forwarded, question, rejected, silent, stopped) feed Module 4 and the pipeline. You see each reply on the Pings screen, in the summary mail, and (if switched on) in an email alert. In the terminal:
 
 ```bash
 docker compose exec api python -m app.cli pings            # what the agent wants you to know (--read marks them read)
@@ -531,17 +596,6 @@ docker compose exec api python -m app.cli memory pin 12           # unpin | forg
 
 API: `GET /api/memory` · `GET /api/memory/search?q=` · `GET /api/memory/beliefs` · `POST /api/memory/{id}/{pin|unpin|forget|restore|keep}`.
 
-## Your summary mail and email alerts (Module 6, Part 6d)
-
-The agent writes to you in two ways, both from your connected Gmail to your own inbox. **Both start switched off**: turn each on in **Settings → Summary mail & email alerts**. **Send me the summary now** sends a preview at any time.
-
-- **Summary mail**, at the times in `config/app.yaml` (default 08:00 and 20:00). Sections: ⚡ Needs you, 📥 New matches, 📤 What happened (per role), 📊 Pursuing (the roles still in play that aren't already shown above) and 🔧 Housekeeping, each only when it has something. Each role appears once, in the first section where it matters. A day with nothing new sends nothing.
-- **Two email alerts**, each with its own switch: a **fast-lane find**, and **someone replying to your outreach** (with an Open in Gmail link). They are checked every 3 minutes, arrive together as one email, and wait during quiet hours (22:00 to 08:00).
-
-The buttons in the mail open the right screen in the app on your laptop (`app_url` in `config/app.yaml`, default `http://localhost:8000`); nothing is sent or changed from the mail itself. Your pay never appears in the mail, and roles held back by a wait after a rejection never appear in the mail or an email alert.
-
-**The same words everywhere** (app, mail, Settings): **Pursuing** is the list of roles you're working on (the Jobs tab, the mail section, "2 pursuing" in the subject). Where a role stands: **to apply**, **to review** (a draft on Review), **outreach on** (or **outreach on hold**), **applied**, **interviewing**, **offer**, and **ended** with the reason (rejected, no reply, posting closed, skipped). **Pings** are what the agent wants you to know (the Pings screen); **email alerts** are the two pings that can also come to your inbox at once.
-
 ## Configuration
 
 - **Secrets and API keys:** `.env`. Only `ANTHROPIC_API_KEY` is required. Everything else is an optional free tier, and the app degrades gracefully without it.
@@ -550,4 +604,35 @@ The buttons in the mail open the right screen in the app on your laptop (`app_ur
 
 ## Costs
 
-The LLM is expected to cost about **$3–8/month** at steady state, using your own Anthropic key. Everything else uses free tiers. A full cost table will be added as modules land.
+You pay only for the AI, on your own Anthropic key. Everything else is a free tier, and every one of them is optional.
+
+**AI (Anthropic).** Two models: a cheap one (`fast`, Claude Haiku) for reading websites, postings and replies, and a stronger one (`judge`, Claude Sonnet) for judging companies, grading roles against you, and drafting emails. The agent's own estimate is about **$3–8 a month** once it's settled; the first weeks cost more, while it judges every company it finds for the first time. Your real spend is shown by `docker compose exec api python -m app.cli stats`.
+
+| What uses the AI | Model | Roughly |
+|---|---|---|
+| Judging a new company | judge | once per company; again only when your rules change or you press **Judge again** |
+| Reading a job description | fast | once per new posting (an unchanged posting is never read again) |
+| Grading a role against your résumé | judge | once per role that passes the filters, with a daily cap; again only when your résumé or profile changes |
+| Drafting an outreach email | judge | about 2 cents a draft; shown before you ask for a fresh one |
+| Sorting a reply | fast | once per message |
+| Reading your résumé / re-working your career direction | judge | only when you change your résumé or press the button (about 3 cents) |
+
+**Free tiers (optional; without a key, that part simply does less):**
+
+| Service | Used for | Monthly budget the agent keeps to |
+|---|---|---|
+| Brave Search | company websites, careers pages, startup news, people | 600 + 300 + 800 + 80 searches (`config/scouts.yaml`, `company_rules.yaml`, `outreach.yaml`) |
+| Hunter | email finder and verifier | 20 finds, 5 domain searches, 40 checks |
+| Apollo | email finder (after Hunter) | 50 |
+| MyEmailVerifier | mailbox checks | 100 a day |
+| Adzuna, Jooble | job-site scouts | their free API limits |
+
+Settings shows how much of each is used this month.
+
+## Honest notes
+
+- **It's only on while your machine is.** See *Where to run it*.
+- **People and addresses are often not found.** Expect many roles to end up with no one to write to, especially at small companies, and many addresses at large companies to stay **not proven** (their mail servers accept any address). An unproven address is never emailed without your explicit **Approve anyway**. The role still goes to your apply list either way.
+- **Public data only.** The agent never logs into anything but your own Gmail, and never crawls LinkedIn, Indeed or Glassdoor: people are found from public search snippets. Work at a Startup is read from its public pages only (your choice; see Company discovery). It respects `robots.txt` and rate-limits itself on every site. Whether reading a given careers portal fits its terms of use is **your judgment**: use it accordingly.
+- **It never speaks for you.** No email goes out without your approval of that exact text, it never replies or follows up, never fills in an application form, and never edits your résumé.
+- **Your data stays with you.** Everything is in your own database; embeddings run locally; your pay and notice period are never sent to the AI, and your pay is shown only on the Profile screen (never in the mail).
