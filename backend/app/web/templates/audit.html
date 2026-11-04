@@ -1,18 +1,53 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Audit log{% endblock %}
 {% block content %}
+{% macro link(a=area, w=when, s=q, j=judgments) -%}
+/audit?area={{ a | urlencode }}&when={{ w | urlencode }}{% if s %}&q={{ s | urlencode }}{% endif %}{% if j %}&judgments=1{% endif %}
+{%- endmacro %}
 <h1>Audit log</h1>
-<div class="sub">Every consequential decision the agent made, and why — nothing here needs you</div>
+<div class="sub">What the agent decided, why, and what it touched. Nothing here needs you, and none of it is sent to you —
+  but where the agent made a judgment call, you can correct it right here.</div>
+
+<form class="search" method="get" action="/audit">
+  <input type="hidden" name="area" value="{{ area }}">
+  <input name="q" value="{{ q }}" placeholder="Search: a company or role name, a word…" aria-label="Search the log">
+  <select name="when" aria-label="How far back">{% for k, label in whens %}<option value="{{ k }}"{{ ' selected' if when == k }}>{{ label }}</option>{% endfor %}</select>
+  <label class="pick"><input type="checkbox" name="judgments" value="1"{{ ' checked' if judgments }}> only judgment calls</label>
+  <button type="submit">Show</button>
+</form>
 <div class="filters">
-  {% for g in groups %}<a href="/audit?group={{ g }}" class="{{ 'on' if group == g }}">{{ g.capitalize() }}</a>{% endfor %}
+  {% for k, label in areas %}<a href="{{ link(a=k) }}" class="{{ 'on' if area == k }}">{{ label }}</a>{% endfor %}
 </div>
-<div class="sect">
-  {% for a in rows %}
-  <div class="row"><div>{{ a.created_at | local }} · <b>{{ a.summary | private }}</b>
-    <div class="note">{{ a.module }} · {{ a.action.replace('_', ' ') }}{% if a.subject_type %} · {{ a.subject_type.replace('_', ' ') }} {{ a.subject_id }}{% endif %}</div>
-    {% if a.detail %}<details><summary>Detail</summary><pre class="rules">{{ a.detail | tojson(indent=2) }}</pre></details>{% endif %}</div>
-    {% if a.is_judgment %}<span class="chip {{ 'ch-gray' if a.overridden_at else 'ch-amber' }}">{{ 'overridden' if a.overridden_at else 'judgment' }}</span>{% else %}<span class="chip ch-gray">auto</span>{% endif %}</div>
-  {% else %}<div class="empty">Nothing recorded yet.</div>{% endfor %}
+
+{% for e in entries %}
+<div class="card s-none audit" id="a{{ e.id }}">
+  <div class="top"><div class="ttl">{{ e.summary }}</div>
+    {% if e.state %}<span class="chip {{ e.state[0] }}">{{ e.state[1] }}</span>{% endif %}</div>
+  <div class="det">{{ e.at | local }} · {{ e.area }} · {{ e.kind }}</div>
+  {% if e.why %}<div class="why"><span class="k">Why</span> {{ e.why }}</div>{% endif %}
+  {% if e.affected %}<div class="why"><span class="k">Affected</span> <a href="{{ e.affected[1] }}">{{ e.affected[0] }}</a></div>{% endif %}
+  {% if e.overridden_at %}<div class="why"><span class="k">Corrected</span> by you, {{ e.overridden_at | local }}</div>{% endif %}
+
+  {% if e.fix %}<div class="act">
+    {% if e.fix.kind == 'verdict' %}
+      <form class="inline" method="post" action="/do/verdict/{{ e.fix.company }}">{{ ui.hidden({'decision': e.fix.to}) }}<input name="reason" placeholder="Why (kept as an example for next time)" aria-label="Why"><button type="submit">{{ e.fix.label }}</button></form>
+    {% elif e.fix.kind == 'website' %}
+      <span class="note inline">Wrong website?</span> <a href="/companies/{{ e.fix.company }}#calls">Fix it on the company's page →</a>
+    {% elif e.fix.kind == 'reply' %}
+      <form class="inline" method="post" action="/do/reply-sort/{{ e.id }}">{{ ui.hidden() }}<span class="note inline">Read wrong? It was really:</span>
+        <select name="category" aria-label="What the reply really was">{% for k, label in categories.items() if k != e.fix.now %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select><button type="submit">Re-sort…</button></form>
+    {% endif %}
+  </div>{% endif %}
+
+  {% if e.lines %}<details class="more"><summary>More detail</summary>
+    {% for k, v in e.lines %}<div class="kv"><span class="k">{{ k }}</span><span>{{ v }}</span></div>{% endfor %}
+  </details>{% endif %}
 </div>
-<div class="note">{% if page > 1 %}<a href="/audit?group={{ group }}&page={{ page - 1 }}">← newer</a>{% endif %}{% if more %} <a href="/audit?group={{ group }}&page={{ page + 1 }}">older →</a>{% endif %}</div>
+{% else %}
+<div class="empty">{% if q or judgments or area != 'all' or when != 'all' %}Nothing matches. <a href="{{ link('all', 'all', '', False) }}">Show everything</a>{% else %}Nothing recorded yet.{% endif %}</div>
+{% endfor %}
+
+<div class="note">{% if page > 1 %}<a href="{{ link() }}&page={{ page - 1 }}">← newer</a>{% endif %}{% if more %} <a href="{{ link() }}&page={{ page + 1 }}">older →</a>{% endif %}
+  · Entries over 12 months old are condensed to one line per kind per month; ones you corrected are kept in full.</div>
 {% endblock %}

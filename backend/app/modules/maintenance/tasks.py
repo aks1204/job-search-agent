@@ -16,3 +16,14 @@ def source_check_task() -> dict:
         result = weekly_check(s)
     log.info("maintenance.source_check: %s", result)
     return result
+
+
+@celery_app.task(name="maintenance.audit_compact")
+def audit_compact_task() -> dict:
+    """Part 6e: Audit log entries over 12 months old → one line per kind per month."""
+    from app.modules.maintenance.audit_compact import compact
+
+    with session_scope() as s:
+        result = compact(s)
+    log.info("maintenance.audit_compact: %s", result)
+    return result

@@ -5,7 +5,7 @@
 <h1>{{ c.name }}</h1>
 <div class="sub">{% if c.domain %}<a href="{{ ("https://" ~ c.domain) | href }}" target="_blank" rel="noopener noreferrer">{{ c.domain }}</a>{% else %}{{ c.domain or 'no website' }}{% endif %} · {{ c.type or 'type unknown' }} · {{ c.status }} · found by {{ c.sources | join(', ') or '—' }}</div>
 
-<div class="sect"><h3>YOUR CALLS</h3>
+<div class="sect" id="calls"><h3>YOUR CALLS</h3>
   <div class="act">
     <form class="inline" method="post" action="/do/verdict/{{ c.id }}">{{ ui.hidden({'decision': 'keep'}) }}<input name="reason" placeholder="Why keep it" aria-label="Why keep it"><button type="submit" class="primary">Keep</button></form>
     <form class="inline" method="post" action="/do/verdict/{{ c.id }}">{{ ui.hidden({'decision': 'reject'}) }}<input name="reason" placeholder="Why reject it" aria-label="Why reject it"><label class="pick"><input type="checkbox" name="permanent" value="1"> for good</label><button type="submit">Reject</button></form>

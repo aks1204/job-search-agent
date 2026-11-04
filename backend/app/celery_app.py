@@ -38,6 +38,9 @@ def build_beat_schedule(cfg: LoadedConfig) -> dict:
         "m1-scout-catchup": {"task": "m1.scout_catchup", "schedule": 900.0},
         "maintenance-source-check": {"task": "maintenance.source_check",
                                      "schedule": crontab(minute="30", hour="7", day_of_week="mon")},
+        # Module 6e: the Audit log keeps 12 months in full; older entries condensed, 1st of each month
+        "maintenance-audit-compact": {"task": "maintenance.audit_compact",
+                                      "schedule": crontab(minute="45", hour="3", day_of_month="1")},
     }
     # Module 6d: the summary mail at each of your mail times (app.yaml), and the alerts (both off until you
     # switch them on in Settings)

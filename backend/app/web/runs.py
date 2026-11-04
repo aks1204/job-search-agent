@@ -151,6 +151,11 @@ def _sources(_):
     return source_check_task()
 
 
+def _audit(_):
+    from app.modules.maintenance.tasks import audit_compact_task
+    return audit_compact_task()
+
+
 # key → (what the button says, what it does). Order = the Maintenance screen's order.
 JOBS: dict[str, tuple[str, object]] = {
     **{f"scout:{n}": (f"Look for companies: {n}", lambda _arg, n=n: _scout(n)) for n in SCOUT_NAMES},
@@ -174,6 +179,7 @@ JOBS: dict[str, tuple[str, object]] = {
     "direction": ("Re-work your career direction (about 3 cents)", _direction),
     "resume": ("Read your résumé again", _resume),
     "sources": ("Check the sources for warning signs", _sources),
+    "audit": ("Condense Audit log entries over 12 months old", _audit),
 }
 MAINTENANCE_JOBS = [k for k in JOBS if k not in ("resume",)]
 TARGETED = ("evaluate", "activate", "drafts")      # jobs that can be aimed at one company / role

@@ -814,3 +814,27 @@ async def assign(no: int, request: Request, session: Session = Depends(get_sessi
         return "Ignored." if choice == "ignore" else "Done: the email's news is recorded on that role."
 
     return await _run(request, session, do, fallback="/pings")
+
+
+# --- Audit log (6e): correct how the agent read a reply ------------------------------------------------------
+
+@router.post("/reply-sort/{audit_id}")
+async def reply_sort(audit_id: int, request: Request, session: Session = Depends(get_session)):
+    from app.models import AuditLog
+    from app.modules.m3_outreach import reply_fix as R
+
+    def do(form):
+        entry = session.get(AuditLog, audit_id)
+        if entry is None:
+            raise NotFound("that entry is gone (condensed or removed)")
+        new = _text(form, "category")
+        if new not in R.CATEGORIES:
+            raise ValueError("pick what the reply really was")
+        if not _confirmed(form):
+            R.target(session, entry)                       # refused now if it can't be done
+            if new == (entry.detail or {}).get("category"):
+                raise ValueError(f"it's already sorted as {R.CATEGORIES[new].lower()}")
+            raise Confirm("Re-sort this reply?", R.effects(session, entry, new), "Yes, re-sort it")
+        return R.resort(session, entry, new)
+
+    return await _run(request, session, do, fallback="/audit")

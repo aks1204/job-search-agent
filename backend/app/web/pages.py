@@ -29,7 +29,6 @@ BANDS = {"fast": "fast_lane", "inbox": "inbox", "maybe": "maybe"}
 APPLIED = ("applied", "confirmed", "in_review", "interviewing", "offer", "rejected", "silent")
 KEPT = ("passed", "watching", "dormant")
 MAYBE_CARDS = 25
-AUDIT_GROUPS = {"verdicts": "m1", "jobs": "m2", "outreach": "m3", "applications": "m4", "profile": "m5"}
 
 
 def _now() -> datetime:
@@ -384,21 +383,26 @@ def memory(request: Request, q: str = "", archived: int = 0, session: Session = 
 
 # --- Audit log --------------------------------------------------------------------------------------------
 
-@router.get("/audit", response_class=HTMLResponse)
-def audit(request: Request, group: str = "all", page: int = 1, session: Session = Depends(get_session)):
-    from app.models import AuditLog
+AUDIT_PAGE = 50
 
-    stmt = select(AuditLog)
-    if group in AUDIT_GROUPS:
-        stmt = stmt.where(AuditLog.module == AUDIT_GROUPS[group])
-    elif group == "housekeeping":
-        stmt = stmt.where(AuditLog.module.not_in(tuple(AUDIT_GROUPS.values())))
-    else:
-        group = "all"
+
+@router.get("/audit", response_class=HTMLResponse)
+def audit(request: Request, area: str = "all", when: str = "30", q: str = "", judgments: int = 0, page: int = 1,
+          session: Session = Depends(get_session)):
+    """Part 6e: what the agent did, why, and what it affected; judgment calls carry their correction."""
+    from app.modules.m3_outreach.reply_fix import CATEGORIES
+    from app.web import audit_view as V
+
+    area = area if area in V.AREAS else "all"
+    when = when if when in V.WHEN else "30"
+    q = q.strip()[:100]
     page = max(page, 1)
-    rows = session.scalars(stmt.order_by(AuditLog.created_at.desc()).limit(51).offset((page - 1) * 50)).all()
-    return _page(request, session, "audit.html", "audit", rows=rows[:50], more=len(rows) > 50, group=group,
-                 page=page, groups=["all", *AUDIT_GROUPS, "housekeeping"])
+    rows = session.scalars(V.query(area, when, q, bool(judgments)).limit(AUDIT_PAGE + 1)
+                           .offset((page - 1) * AUDIT_PAGE)).all()
+    return _page(request, session, "audit.html", "audit", entries=V.entries(session, rows[:AUDIT_PAGE]),
+                 more=len(rows) > AUDIT_PAGE, area=area, when=when, q=q, judgments=bool(judgments), page=page,
+                 areas=[("all", "All")] + [(k, v[0]) for k, v in V.AREAS.items()],
+                 whens=[(k, v[0]) for k, v in V.WHEN.items()], categories=CATEGORIES)
 
 
 # --- Settings ---------------------------------------------------------------------------------------------

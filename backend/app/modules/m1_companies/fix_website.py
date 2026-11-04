@@ -219,6 +219,17 @@ def apply(session: Session, p: Correction) -> Company:
         for lead in stay_leads:
             lead.company_id = left.id
         session.flush()
+    if p.new_domain != p.domain:                       # the website the agent found was wrong: say so in the log
+        from datetime import datetime, timezone
+
+        from sqlalchemy import update
+
+        from app.models.audit import AuditLog
+
+        session.execute(update(AuditLog).where(
+            AuditLog.subject_type == "company", AuditLog.subject_id == str(c.id),
+            AuditLog.action == "domain_resolved", AuditLog.overridden_at.is_(None))
+            .values(overridden_at=datetime.now(timezone.utc)).execution_options(synchronize_session=False))
     audit.record(session, "m1", "company_corrected",
                  f"You corrected {p.name}" + (f": website {p.domain or '(none)'} → {p.new_domain}"
                                               if p.new_domain != p.domain else f" → {p.new_name}")
