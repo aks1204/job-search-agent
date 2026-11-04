@@ -56,6 +56,8 @@ def _person(e) -> dict:
         state = "bounced"
     elif e.status == "cancelled" and e.decision != "skipped":
         state = e.status_reason or "cancelled"
+    elif e.status == "failed" and (e.status_reason or "").startswith("unsure"):
+        state = e.status_reason                # stopped mid-send: maybe sent, never re-sent
     elif e.status == "failed":
         state = "couldn't send" + (f": {e.status_reason}" if e.status_reason else "")
     return {"id": e.id, "name": e.to_name, "email": e.to_email, "wave": e.wave, "decision": e.decision,

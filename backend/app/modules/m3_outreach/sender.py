@@ -166,6 +166,7 @@ def send_one(session: Session, e: OutreachEmail, c: OutreachCampaign, *, sender=
     message_id, thread_id = sender(session, msg)
     now = _now()
     e.status, e.sent_at, e.gmail_message_id, e.gmail_thread_id = "sent", now, message_id, thread_id
+    e.status_reason = None                                   # (was "sending since …")
     e.sent_subject, e.sent_body = subject, body
     c.status = "running"
     audit.record(session, "m3", "email_sent", f"Sent to {e.to_email} (wave {e.wave + 1}, campaign {c.id})",
@@ -182,11 +183,81 @@ def _maybe_finish(session: Session, c: OutreachCampaign) -> None:
         c.status_reason = c.status_reason or "all waves sent"
 
 
+SEND_LOCK = "m3:send:running"
+SEND_LOCK_SECONDS = 600          # a turn that died without cleaning up frees the lock after this
+STUCK_AFTER = timedelta(minutes=30)
+SENDING = "sending since "       # status_reason of an email being handed to Gmail right now
+
+
 def send_tick(*, now: datetime | None = None, sender=gmail.send) -> dict:
-    """Called every few minutes. Sends at most one email per call."""
+    """Called every few minutes. Sends at most one email per call. One turn at a time (owner 2026-11-04): two
+    overlapping turns could otherwise both pick the same email and send it twice."""
+    import uuid
+
+    r, mine = get_redis(), uuid.uuid4().hex
+    if not r.set(SEND_LOCK, mine, nx=True, ex=SEND_LOCK_SECONDS):
+        return {"skipped": "another send turn is still running"}
+    try:
+        return _send_tick(now=now, sender=sender)
+    finally:
+        try:
+            if r.get(SEND_LOCK) == mine:
+                r.delete(SEND_LOCK)
+        except Exception:                      # Redis hiccup: the lock frees itself after SEND_LOCK_SECONDS
+            pass
+
+
+def claim(session: Session, e: OutreachEmail, now: datetime) -> bool:
+    """Mark the email as being sent, and save that, before Gmail is called: a second turn (or worker) that
+    picked the same email sees it's taken and leaves it. False = someone else has it."""
+    from sqlalchemy import update
+
+    done = session.execute(update(OutreachEmail).where(OutreachEmail.id == e.id, OutreachEmail.status == "queued")
+                           .values(status="sending", status_reason=f"{SENDING}{now.isoformat()}"))
+    if done.rowcount != 1:
+        return False
+    session.commit()
+    return True
+
+
+def unclaim(session: Session, e: OutreachEmail) -> None:
+    """Gmail said no (nothing went out): back in the queue, as before."""
+    e.status, e.status_reason = "queued", None
+
+
+def stuck(session: Session, now: datetime) -> int:
+    """An email left "being sent" for 30 minutes (the worker stopped mid-send): it may or may not have gone
+    out, so it's never sent again — marked, and you're told to look in your Gmail Sent folder."""
+    from app.core.notify import notify
+
+    n = 0
+    for e in session.scalars(select(OutreachEmail).where(OutreachEmail.status == "sending")).all():
+        try:
+            since = datetime.fromisoformat((e.status_reason or "").removeprefix(SENDING))
+        except ValueError:
+            since = now - STUCK_AFTER
+        if now - since < STUCK_AFTER:
+            continue
+        e.status = "failed"
+        e.status_reason = "unsure whether it went out: look in your Gmail Sent folder (not sent again)"
+        c = session.get(OutreachCampaign, e.campaign_id)
+        notify(session, "needs_you", "needs_you", f"An outreach email to {e.to_email} may not have gone out",
+               detail="Sending stopped part-way through. To be safe it isn't sent again: look in your Gmail Sent "
+                      "folder, and if it isn't there, write to them yourself if you'd like.",
+               subject=("campaign", str(e.campaign_id)))
+        audit.record(session, "m3", "email_unsure", f"Not sure the email to {e.to_email} went out (campaign "
+                     f"{e.campaign_id}); not sent again", subject_type="campaign", subject_id=str(e.campaign_id))
+        if c is not None:
+            _maybe_finish(session, c)
+        n += 1
+    return n
+
+
+def _send_tick(*, now: datetime | None = None, sender=gmail.send) -> dict:
     now = now or _now()
     rules = get_config().outreach.sending
     with session_scope() as s:
+        stuck(s, now)
         if paused():
             return {"skipped": "sending paused by you"}
         acct = gmail.account(s)
@@ -219,11 +290,15 @@ def send_tick(*, now: datetime | None = None, sender=gmail.send) -> dict:
                 continue
             if e.wave > 0 and not _company_silent(s, c):
                 continue
+            if not claim(s, e, now):
+                continue                       # another turn has it
             try:
                 outcome = send_one(s, e, c, sender=sender)
             except gmail.GmailNotConnected as err:
+                unclaim(s, e)
                 return {"skipped": str(err)}
             except gmail.GmailError as err:
+                unclaim(s, e)
                 log.warning("send failed for email %s: %s", e.id, err)
                 get_redis().set(NEXT_SEND_KEY, (now + timedelta(minutes=15)).isoformat())
                 return {"error": str(err)[:200]}

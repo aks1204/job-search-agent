@@ -291,3 +291,60 @@ def test_two_people_with_the_named_name_means_no_guess(db_session, campaign, mon
     assert not [x for x in C.emails(db_session, c) if "meena" in x.to_email]
     note = db_session.scalars(select(Notification).where(Notification.subject_id == str(c.id))).one()
     assert "2 people called Meena Joshi" in note.detail
+
+
+# --- One send turn at a time (owner 2026-11-04): an email can never go out twice ----------------------------
+
+def test_an_email_is_claimed_before_gmail_so_a_second_turn_leaves_it(db_session, campaign):
+    _approve_all(db_session, campaign)
+    campaign.armed_at = NOON_IST
+    e, c = due_here(db_session, campaign, NOON_IST)[0]
+    assert S.claim(db_session, e, NOON_IST) and e.status == "sending"
+    assert not S.claim(db_session, e, NOON_IST)                          # a second turn: taken, left alone
+    assert e not in [x for x, _ in due_here(db_session, campaign, NOON_IST)]
+    assert S.send_one(db_session, e, c, sender=FakeGmail()) == "sent" and e.status_reason is None
+
+
+def test_an_email_stuck_mid_send_is_never_sent_again_and_you_are_told(db_session, campaign):
+    from app.models import Notification
+
+    _approve_all(db_session, campaign)
+    campaign.armed_at = NOON_IST
+    e, _c = due_here(db_session, campaign, NOON_IST)[0]
+    S.claim(db_session, e, NOON_IST)
+    S.stuck(db_session, NOON_IST + timedelta(minutes=10))
+    assert e.status == "sending"                                         # still being sent: left alone
+    S.stuck(db_session, NOON_IST + timedelta(minutes=31))
+    assert e.status == "failed" and "Gmail Sent folder" in e.status_reason
+    assert db_session.scalars(select(Notification).where(
+        Notification.title == f"An outreach email to {e.to_email} may not have gone out")).first() is not None
+    assert e not in [x for x, _ in due_here(db_session, campaign, NOON_IST + timedelta(hours=1))]
+
+
+class FakeRedis:
+    def __init__(self, held=False):
+        self.store = {S.SEND_LOCK: "someone-else"} if held else {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.store:
+            return None
+        self.store[key] = value
+        return True
+
+    def get(self, key):
+        return self.store.get(key)
+
+    def delete(self, key):
+        self.store.pop(key, None)
+
+
+def test_only_one_send_turn_runs_at_a_time(monkeypatch):
+    held = FakeRedis(held=True)
+    monkeypatch.setattr(S, "get_redis", lambda: held)
+    monkeypatch.setattr(S, "_send_tick", lambda **k: pytest.fail("must not run while another turn is"))
+    assert S.send_tick() == {"skipped": "another send turn is still running"}
+
+    free = FakeRedis()
+    monkeypatch.setattr(S, "get_redis", lambda: free)
+    monkeypatch.setattr(S, "_send_tick", lambda **k: {"nothing_due": True})
+    assert S.send_tick() == {"nothing_due": True} and S.SEND_LOCK not in free.store   # freed afterwards
